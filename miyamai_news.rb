@@ -21,7 +21,7 @@ require "date"
 require "fileutils"
 
 require_relative "lib/config"
-require_relative "lib/slot"
+require_relative "lib/episode"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"
 require_relative "lib/audio_mixer"
@@ -32,8 +32,8 @@ WORK_DIR = File.join(BASE_DIR, "work")
 DIST_DIR = File.join(BASE_DIR, "dist")
 
 # dist/ に置く成果物のパス。generate と publish で同じ命名規則を共有する。
-def episode_mp3_path(date_tag, slot)  = File.join(DIST_DIR, "miyamai_news_#{date_tag}_#{slot}.mp3")
-def episode_used_path(date_tag, slot) = File.join(DIST_DIR, "miyamai_news_#{date_tag}_#{slot}.used.txt")
+def episode_mp3_path(episode)  = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.mp3")
+def episode_used_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.used.txt")
 
 def main
   args = parse_args(ARGV)
@@ -43,41 +43,40 @@ def main
     return
   end
 
-  date = args[:date] || Time.now
-  date_tag = date.strftime("%Y%m%d")
-  slot = args[:slot] || Slot.for(date)
+  # 番組コンテキスト（日付・slot）は実行時刻から Episode が導く。--date/--slot の明示
+  # 指定があればそれを尊重する（Episode 側で自動判定を上書き）。
+  episode = Episode.new(now: args[:date] || Time.now, date: args[:date]&.to_date, slot: args[:slot])
 
   FileUtils.mkdir_p(WORK_DIR)
   FileUtils.mkdir_p(DIST_DIR)
 
   if args[:script_only]
-    run_script(date, slot)
+    run_script(episode)
     return
   end
 
-  run_generate(date, date_tag, slot, args[:bgm]) unless args[:publish_only]
-  run_publish(date, date_tag, slot) unless args[:generate_only]
+  run_generate(episode, args[:bgm]) unless args[:publish_only]
+  run_publish(episode) unless args[:generate_only]
 end
 
 # 台本だけ生成して停止する。中身を確認・手直ししたうえで、フラグなしで再実行すれば
 # 既存の台本キャッシュが再利用され、音声合成〜publish まで続きから進む。
-def run_script(date, slot)
-  generator = ScriptGenerator.new(work_dir: WORK_DIR, date: date, slot: slot)
-  script_path = generator.generate
+def run_script(episode)
+  script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).generate
 
   warn "台本を生成: #{script_path}"
   warn "内容を確認し、必要なら手直ししてください。フラグなしで再実行すると音声生成〜publish まで進みます。"
 end
 
-def run_generate(date, date_tag, slot, bgm_override)
+def run_generate(episode, bgm_override)
   # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
   bgm_path = bgm_override || File.expand_path(Config.get("assets.bgm_path"), BASE_DIR)
-  output_path = episode_mp3_path(date_tag, slot)
-  used_news_output = episode_used_path(date_tag, slot)
+  output_path = episode_mp3_path(episode)
+  used_news_output = episode_used_path(episode)
 
-  generator = ScriptGenerator.new(work_dir: WORK_DIR, date: date, slot: slot)
+  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode)
   script_path = generator.generate
-  voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, date: date, slot: slot).synthesize(script_path)
+  voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, episode: episode).synthesize(script_path)
   AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
 
   # 使用ニュース一覧を mp3 と並べて成果物として残す（work/ 側はキャッシュとして温存）。
@@ -87,19 +86,19 @@ def run_generate(date, date_tag, slot, bgm_override)
   warn "使用ニュース: #{used_news_output}"
 end
 
-def run_publish(date, date_tag, slot)
-  mp3_path = episode_mp3_path(date_tag, slot)
+def run_publish(episode)
+  mp3_path = episode_mp3_path(episode)
   abort "mp3 が見つかりません: #{mp3_path}（先に生成が必要）" unless File.exist?(mp3_path)
 
-  used_path = episode_used_path(date_tag, slot)
+  used_path = episode_used_path(episode)
   used_path = nil unless used_path && File.exist?(used_path)
 
-  Publisher.new(date: date.to_date).run(mp3_path, used_path)
+  Publisher.new(date: episode.date).run(mp3_path, used_path)
 
   # publish が成功した実行時刻で収集 window の起点を確定する。以後の収集はこの時刻より
   # 後の記事だけを対象にする。Publisher#run は失敗時に内部で abort するので、ここへ
   # 到達するのは成功時のみ。起点は実行時刻(Time.now)。過去回を publish し直しても未来の
-  # window を巻き戻さないよう、回の日付(date)ではなく実行時刻を使う。
+  # window を巻き戻さないよう、回の日付ではなく実行時刻を使う。
   ScriptGenerator.record_publish(work_dir: WORK_DIR, at: Time.now)
 end
 

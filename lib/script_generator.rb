@@ -12,7 +12,6 @@ require "fileutils"
 require "tty-spinner"
 require_relative "config"
 require_relative "template_renderer"
-require_relative "slot"
 
 class ScriptGenerator
   # 収集元定義。category は台本の番組構成（4本立て）に対応
@@ -113,14 +112,14 @@ class ScriptGenerator
   end
 
   # @param work_dir [String] 中間ファイルの置き場
-  # @param date [Time] 番組の日付
-  # @param slot [String] 時間帯 slot（morning/afternoon/evening）。中間ファイル名に付く
-  def initialize(work_dir:, date: Time.now, slot: Slot.for(date))
+  # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
+  def initialize(work_dir:, episode:)
     @work_dir = work_dir
-    @date = date
-    @slot = slot
-    @date_tag = date.strftime("%Y%m%d")
-    @today_ja = date.strftime("%Y年%m月%d日")
+    # 収集の時刻演算(cutoff・経過時間・iso8601)には時刻精度のある now を使う。
+    @now = episode.now
+    @slot = episode.slot
+    @date_tag = episode.date_tag
+    @today_ja = episode.today_ja
   end
 
   # 台本テキストのパスを返す。
@@ -262,7 +261,7 @@ class ScriptGenerator
 
   def cache_stale?(cache)
     collected_at = Time.iso8601(cache["collected_at"])
-    stale = (@date - collected_at) >= RECOLLECT_THRESHOLD_HOURS * 3600
+    stale = (@now - collected_at) >= RECOLLECT_THRESHOLD_HOURS * 3600
     warn "収集から#{RECOLLECT_THRESHOLD_HOURS.to_i}時間以上経過。ニュースを再収集します。" if stale
     stale
   rescue ArgumentError, TypeError
@@ -274,7 +273,7 @@ class ScriptGenerator
   def write_news_cache(news_body, since)
     cache = {
       "since_datetime" => since&.iso8601,
-      "collected_at" => @date.iso8601,
+      "collected_at" => @now.iso8601,
       "news" => JSON.parse(news_body),
     }
     File.write(news_json_path, JSON.pretty_generate(cache))
@@ -295,12 +294,12 @@ class ScriptGenerator
   def effective_lookback_hours(since)
     return LOOKBACK_HOURS unless since
 
-    elapsed_hours = (@date - since) / 3600.0
+    elapsed_hours = (@now - since) / 3600.0
     [LOOKBACK_HOURS, elapsed_hours].min
   end
 
   def collect_news(since = nil)
-    cutoff = @date - (effective_lookback_hours(since) * 3600)
+    cutoff = @now - (effective_lookback_hours(since) * 3600)
     jobs = SOURCES.flat_map { |category, sources| sources.map { |src| [category, src] } }
     items_per_job = fetch_jobs_in_parallel(jobs, cutoff)
 

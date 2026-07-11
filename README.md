@@ -70,6 +70,8 @@ ruby miyamai_news.rb --publish-only --date 2026-07-10 --slot morning
 ruby miyamai_news.rb --bgm path/to/bgm.mp3
 ```
 
-`--date` / `--slot` を省略すると実行時刻から自動で決まる（時間帯 `slot` は
-morning=0〜11時 / afternoon=12〜17時 / evening=18時〜）。
+`--date` / `--slot` を省略すると実行時刻から自動で決まる。1日を 3:00 起点で 8 時間
+ずつ 3 分割し、時間帯 `slot` は morning=3〜11時 / afternoon=11〜19時 / evening=19〜
+翌3時。evening は日付をまたぐため、0〜3時に実行した回は前日の夜（前日 evening）の
+番組として扱う（日付が 1 日戻る）。
 1日に複数回まわしてもファイル名が衝突せず、別エピソードとして共存する。

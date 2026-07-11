@@ -4,7 +4,6 @@ require "open3"
 require "tempfile"
 require "fileutils"
 require_relative "config"
-require_relative "slot"
 
 class VoiceSynthesizer
   VOICEPEAK_BIN = Config.get("voicepeak.bin")
@@ -14,10 +13,11 @@ class VoiceSynthesizer
   # VOICEPEAK の 1 回あたり合成できる文字数の上限。
   MAX_CHARS = 140
 
-  def initialize(work_dir:, date: Time.now, slot: Slot.for(date))
+  # @param episode [Episode] 番組コンテキスト（中間ファイル名の date_tag/slot に使う）
+  def initialize(work_dir:, episode:)
     @work_dir = work_dir
-    @slot = slot
-    @date_tag = date.strftime("%Y%m%d")
+    @slot = episode.slot
+    @date_tag = episode.date_tag
   end
 
   # 台本テキストを合成し、生成した mp3 のパスを返す。
