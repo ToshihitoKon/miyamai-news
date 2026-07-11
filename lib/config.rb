@@ -11,7 +11,6 @@ require "yaml"
 # 使い方:
 #   Config.get("gcs.bucket")            # => "your-bucket"
 #   Config.get("voicepeak.timeout_sec") # => 10.0
-#   Config.fetch("mixer.bgm_volume", 0.15)  # キー欠落時のフォールバック付き
 module Config
   # config.yaml はプロジェクトルート（lib/ の一つ上）に置く。
   ROOT_DIR     = File.expand_path("..", __dir__)
@@ -28,18 +27,6 @@ module Config
       raise MissingKeyError, "config.yaml に設定がありません: #{dotted_key}" if value.nil?
 
       value
-    end
-
-    # キーが欠けていれば default を返す版。任意項目に使う。
-    def fetch(dotted_key, default)
-      value = dig(dotted_key)
-      value.nil? ? default : value
-    end
-
-    # テスト用途などで明示的に読み込み直したいとき用。
-    def reload!
-      @data = nil
-      data
     end
 
     private

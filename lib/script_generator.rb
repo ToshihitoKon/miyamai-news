@@ -161,9 +161,6 @@ class ScriptGenerator
   # 収集 window の起点と、既存 JSON の再収集判定の両方に使う。
   def last_fetch_path = File.join(@work_dir, "last_fetch.txt")
 
-  # --- ニュース収集 ---
-
-  # 同日の JSON があれば再取得せず、それを返す。
   # ステップ1: ライター（記事本文の取得に WebFetch を使う）。
   # ドラフトが残っていれば再利用し、Claude 呼び出しをスキップする。
   def load_or_write_draft(news_json)
@@ -211,6 +208,8 @@ class ScriptGenerator
 
     lines[start..].join.strip + "\n"
   end
+
+  # --- ニュース収集 ---
 
   def load_or_collect_news
     if File.exist?(news_json_path) && !recollect?
@@ -312,13 +311,9 @@ class ScriptGenerator
     items_per_job
   end
 
-  # タイトルの重複除去（大文字小文字・空白を無視）
+  # タイトルの重複除去（大文字小文字・空白を無視。先勝ち）
   def dedup_by_title(items)
-    seen = {}
-    items.reject do |i|
-      key = i[:title].downcase.gsub(/\s+/, "")
-      seen[key] ? true : (seen[key] = true; false)
-    end
+    items.uniq { |i| i[:title].downcase.gsub(/\s+/, "") }
   end
 
   # 1ソース分の記事を取得し、ソース名などのメタ情報を付けて返す。

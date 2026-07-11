@@ -127,7 +127,7 @@ class VoiceSynthesizer
   end
 
   # 台本を合成単位のチャンクに分割する。
-  # まず「。」で文に切り、140 文字を超える文は句読点でさらに詰め込みながら分割する。
+  # まず「。」で文に切り、MAX_CHARS を超える文は句読点でさらに詰め込みながら分割する。
   def split_chunks(script)
     script
       .gsub(/\r\n?/, "\n")
@@ -137,7 +137,7 @@ class VoiceSynthesizer
       .flat_map { |sentence| split_long_sentence(sentence) }
   end
 
-  # 140 文字を超える1文を、読点（、）優先で MAX_CHARS 以内の断片に分ける。
+  # MAX_CHARS を超える1文を、読点（、）優先で MAX_CHARS 以内の断片に分ける。
   # 読点でも切れない場合は文字数で強制的に切る。
   def split_long_sentence(sentence)
     return [sentence] if sentence.length <= MAX_CHARS
