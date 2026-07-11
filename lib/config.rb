@@ -2,15 +2,8 @@
 
 require "yaml"
 
-# config.yaml を読み込み、ドット区切りのキーで設定値を引くためのローダー。
-#
-# 環境依存する値（VOICEPEAK のパス、BGM・カバー画像のパス、GCS バケット名など）は
-# すべて config.yaml に集約する。git 管理下にはダミー値入りの config.sample.yaml
-# だけを置き、実体の config.yaml は各自がコピーして書き換える。
-#
-# 使い方:
-#   Config.get("gcs.bucket")            # => "your-bucket"
-#   Config.get("voicepeak.timeout_sec") # => 10.0
+# config.yaml を読み込み、ドット区切りのキー（例: "gcs.bucket"）で設定値を引くローダー。
+# 環境依存値をここに集約し、実体の config.yaml は git 管理外に置く（セットアップは README 参照）。
 module Config
   # config.yaml はプロジェクトルート（lib/ の一つ上）に置く。
   ROOT_DIR     = File.expand_path("..", __dir__)

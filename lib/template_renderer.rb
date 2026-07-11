@@ -2,16 +2,11 @@
 
 require "erb"
 
-# templates/ 以下の ERB テンプレートを読み込み、呼び出し側の binding で描画する。
-# プロンプト（*.prompt.erb）と HTML/XML（*.erb）の両方をここで一元的に扱う。
+# templates/ 以下の ERB テンプレート（プロンプト *.prompt.erb と HTML/XML *.erb）を
+# 読み込み、呼び出し側の binding で描画する。
 #
-# テンプレートを Ruby コードから切り離すことで、プロンプトの調整やページの
-# マークアップ変更を、ロジックに触れず templates/ 内で完結できるようにする。
-#
-# 使い方:
-#   TemplateRenderer.render("writer.prompt", binding)  # => 展開後の文字列
-#   # 呼び出し側の binding に見えるローカル変数・インスタンス変数がそのまま
-#   # テンプレート内の <%= ... %> から参照できる。
+# 描画時に値を引数で渡さず binding を受け取るのは、呼び出し側のローカル変数・
+# インスタンス変数をそのままテンプレートの <%= ... %> から参照させるため。
 module TemplateRenderer
   # templates/ はプロジェクトルート（lib/ の一つ上）に置く。
   DIR = File.join(File.expand_path("..", __dir__), "templates")

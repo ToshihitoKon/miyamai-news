@@ -12,8 +12,7 @@ class Publisher
   PUBLIC_BASE    = Config.get("gcs.public_base")
   DEFAULT_BUCKET = Config.get("gcs.bucket")
   # 横長バナー画像。Slack のリンクプレビューと再生ページの両方で使う。
-  # 事前に GCS へアップロードしておく:
-  #   gcloud storage cp <cover_image> gs://<bucket>/<cover_image>
+  # GCS への事前アップロードが前提（README 参照）。
   COVER_IMAGE = Config.get("assets.cover_image")
 
   # ページ/フィードのマークアップは templates/*.erb。埋め込み変数は
