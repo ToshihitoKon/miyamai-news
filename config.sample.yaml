@@ -22,7 +22,6 @@ assets:
 
 # VOICEPEAK(音声合成)まわり。
 voicepeak:
-  # VOICEPEAK の実行ファイルパス(macOS 既定)。
   bin: /Applications/voicepeak.app/Contents/MacOS/voicepeak
   # 各チャンク合成後に空ける秒数。連続起動によるクラッシュ避け。
   interval_sec: 1
