@@ -13,7 +13,8 @@ require "erb"
 #   # 呼び出し側の binding に見えるローカル変数・インスタンス変数がそのまま
 #   # テンプレート内の <%= ... %> から参照できる。
 module TemplateRenderer
-  DIR = File.join(__dir__, "templates")
+  # templates/ はプロジェクトルート（lib/ の一つ上）に置く。
+  DIR = File.join(File.expand_path("..", __dir__), "templates")
 
   class << self
     # name は拡張子 .erb を除いたテンプレート名（例: "writer.prompt", "index.html"）。

@@ -3,7 +3,6 @@
 require "yaml"
 
 # config.yaml を読み込み、ドット区切りのキーで設定値を引くためのローダー。
-# miyamai_news.rb と publish.rb の両方から使う。
 #
 # 環境依存する値（VOICEPEAK のパス、BGM・カバー画像のパス、GCS バケット名など）は
 # すべて config.yaml に集約する。git 管理下にはダミー値入りの config.sample.yaml
@@ -14,8 +13,10 @@ require "yaml"
 #   Config.get("voicepeak.timeout_sec") # => 10.0
 #   Config.fetch("mixer.bgm_volume", 0.15)  # キー欠落時のフォールバック付き
 module Config
-  DEFAULT_PATH = File.join(__dir__, "config.yaml")
-  SAMPLE_PATH  = File.join(__dir__, "config.sample.yaml")
+  # config.yaml はプロジェクトルート（lib/ の一つ上）に置く。
+  ROOT_DIR     = File.expand_path("..", __dir__)
+  DEFAULT_PATH = File.join(ROOT_DIR, "config.yaml")
+  SAMPLE_PATH  = File.join(ROOT_DIR, "config.sample.yaml")
 
   class MissingConfigError < StandardError; end
   class MissingKeyError < StandardError; end

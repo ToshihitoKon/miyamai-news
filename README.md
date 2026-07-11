@@ -5,12 +5,20 @@ GCS 上のペライチ再生ページと Atom フィードを更新する。
 
 ## 構成
 
+各工程はコンポーネントとして `lib/` 以下に分かれ、`miyamai_news.rb` はそれらを
+束ねる薄いエントリポイントに徹する。
+
 | ファイル | 役割 |
 | --- | --- |
-| `miyamai_news.rb` | 台本生成 → 音声合成 → BGM 合成 → 公開までを担う本体 |
-| `config.rb` | `config.yaml` を読み込む共有ローダー |
+| `miyamai_news.rb` | エントリポイント。CLI 解析と工程のオーケストレーション |
+| `lib/script_generator.rb` | 台本生成（RSS 収集 → ライター → VOICEPEAK 向け整形） |
+| `lib/voice_synthesizer.rb` | 台本を VOICEPEAK（宮舞モカ）で音声合成 |
+| `lib/audio_mixer.rb` | ナレーションに BGM を当てて完成版 mp3 を書き出す |
+| `lib/publisher.rb` | 完成版 mp3 を GCS に置き、再生ページ / フィードを更新 |
+| `lib/config.rb` | `config.yaml` を読み込む共有ローダー |
+| `lib/template_renderer.rb` | `templates/` の ERB を描画する共有ローダー |
+| `lib/slot.rb` | 実行時刻から時間帯 slot を決める |
 | `config.sample.yaml` | 設定のサンプル。これを元に `config.yaml` を作る |
-| `template_renderer.rb` | `templates/` の ERB を描画する共有ローダー |
 | `templates/` | プロンプト（`*.prompt.erb`）と再生ページ / フィード（`*.erb`） |
 | `Makefile` | `run` / `generate` / `upload` / `clean` の入り口 |
 
