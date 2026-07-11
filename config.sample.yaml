@@ -38,12 +38,15 @@ claude:
 
 # RSS 収集まわり。
 collect:
-  # 何時間前までの記事を拾うかの上限。
+  # 前回 publish 記録が無い初回に、何時間前までさかのぼって収集するかの上限。
   lookback_hours: 24
-  # 収集済みキャッシュがこの時間以上古ければ、新着を取りこぼさないよう自動で作り直す。
-  recollect_threshold_hours: 1
+  # フィードキャッシュ(feed_cache.json)が entry を保持する日数。
+  # 初登場(seen_at)からこの日数を過ぎた entry はキャッシュから破棄する。
+  retention_days: 3
   # 各カテゴリの最大件数。
   max_per_category: 100
+  # 1ソースあたりの既定の最大件数（max_items 未指定のソースに適用）。
+  default_max_per_source: 20
   # フィード取得の並列数。
   fetch_threads: 5
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。

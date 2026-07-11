@@ -1,17 +1,13 @@
 # frozen_string_literal: true
 
-require "rss"
-require "rexml/document"
 require "json"
-require "net/http"
-require "uri"
 require "time"
 require "open3"
-require "tempfile"
 require "fileutils"
 require "tty-spinner"
 require_relative "config"
 require_relative "template_renderer"
+require_relative "feed_cache"
 
 class ScriptGenerator
   # 収集元定義。category は台本の番組構成（4本立て）に対応
@@ -57,8 +53,9 @@ class ScriptGenerator
         url: "https://www.infoq.com/jp/feed/" },
       { name: "DevelopersIO",
         url: "https://dev.classmethod.jp/feed/" },
-      # まとめ系・コミュニティ系は玉石混交かつ流量が多いので、
-      # 件数を絞ったうえで優先度を下げる（priority はライターへの指示に使う）。
+      # まとめ系・コミュニティ系は玉石混交かつ流量が多いので優先度を下げる。
+      # priority: :low はカテゴリ内の件数枠を一次情報源より後回しにするのと、
+      # ライターに「補欠扱い」と伝えるプロンプトの両方に使う。
       # はてブはホットエントリと新着の両フィードを読み、ブクマ数上位だけを採用する
       # （RSS は各30件が上限で、オフセット等のパラメータは効かない）。
       { name: "はてブ テクノロジー",
@@ -69,23 +66,21 @@ class ScriptGenerator
         url: "https://qiita.com/popular-items/feed.atom", priority: :low, max_items: 10 },
       { name: "Zenn 新着",
         url: "https://zenn.dev/feed", priority: :low, max_items: 10 },
-      { name: "Ruby Releases",
-        url: "https://github.com/ruby/ruby/releases.atom" },
-      { name: "Go Releases",
-        url: "https://github.com/golang/go/releases.atom" },
-      { name: "Terraform Releases",
-        url: "https://github.com/hashicorp/terraform/releases.atom" },
     ],
   }.freeze
 
   # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
   # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
   LOOKBACK_HOURS = Config.get("collect.lookback_hours").to_i
-  # 収集済みキャッシュがあるとき、収集した時刻(collected_at)からこの時間以上
-  # 経っていれば古いとみなして作り直す。未満なら再利用する。
-  RECOLLECT_THRESHOLD_HOURS = Config.get("collect.recollect_threshold_hours").to_f
+  # FeedCache が entry を保持する日数。seen_at がこれより古い entry はパージされる。
+  # もともと LOOKBACK_HOURS より前の記事は対象にしないので、それを日数に直した程度でよい。
+  RETENTION_DAYS = Config.get("collect.retention_days").to_i
   # 各カテゴリの最大件数（台本が長くなりすぎるのを防ぐ）
   MAX_PER_CATEGORY = Config.get("collect.max_per_category").to_i
+  # 1ソースあたりの既定の最大件数。max_items も top_by_bookmarks も指定していない
+  # ソースに適用する。掲載日時ではなく登場(seen_at)で拾うようになり、1ソースが 24h 分の
+  # 新着を大量に返すため、カテゴリ集約時に流量の多いソースが他を押し出さないよう上限を設ける。
+  DEFAULT_MAX_PER_SOURCE = Config.get("collect.default_max_per_source").to_i
   # フィード取得の並列数
   FETCH_THREADS = Config.get("collect.fetch_threads").to_i
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
@@ -94,9 +89,6 @@ class ScriptGenerator
   # リトライし尽くしても取れないソースがあれば実行ごと中断する。
   FETCH_MAX_RETRIES = Config.get("collect.fetch_max_retries").to_i
   FETCH_RETRY_BASE_SEC = Config.get("collect.fetch_retry_base_sec").to_f
-
-  # フィードが取得できなかったことを表す。呼び出し側で実行の中断に使う。
-  class FetchError < StandardError; end
 
   # 始めの挨拶。前置き除去の目印にも使う。
   OPENING_GREETING = "宮舞モカです。"
@@ -115,11 +107,17 @@ class ScriptGenerator
   # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
   def initialize(work_dir:, episode:)
     @work_dir = work_dir
-    # 収集の時刻演算(cutoff・経過時間・iso8601)には時刻精度のある now を使う。
+    # 収集の時刻演算(since・seen_at・iso8601)には時刻精度のある now を使う。
     @now = episode.now
     @slot = episode.slot
     @date_tag = episode.date_tag
     @today_ja = episode.today_ja
+    @feed_cache = FeedCache.new(
+      path: File.join(work_dir, "feed_cache.json"),
+      retention_days: RETENTION_DAYS,
+      max_retries: FETCH_MAX_RETRIES,
+      retry_base_sec: FETCH_RETRY_BASE_SEC
+    )
   end
 
   # 台本テキストのパスを返す。
@@ -220,63 +218,26 @@ class ScriptGenerator
 
   # ニュース JSON（Claude に渡す本体部分）を返す。
   #
-  # 収集 window の起点は last_fetch.txt（＝前回 publish 時点）で、これは publish 成功
-  # 時にしか進まない。よって「まだ publish していない回を作り直す」間は起点が固定され、
-  # 破棄→再収集しても前回の window 分を取りこぼさない。
+  # その回に選ばれた entry 集合を news_*.json にスナップショットとして残し、あれば再利用
+  # する（台本を作り直すとき収集入力を固定するため）。無ければ FeedCache から集めて作る。
   def load_or_collect_news
-    cached = load_cached_news
-    return cached if cached
+    if File.exist?(news_json_path)
+      warn "既存のニュースを利用: #{news_json_path}"
+      return File.read(news_json_path)
+    end
 
-    since = last_fetch_time
-    news_body = collect_news(since)
-    write_news_cache(news_body, since)
+    news_body = collect_news
+    File.write(news_json_path, news_body)
     warn "ニュースを保存: #{news_json_path}"
     news_body
   end
 
-  # キャッシュを再利用してよければその本体(Claude に渡す news 部分)を返す。
-  # 作り直すべき、または壊れている場合は nil。
-  #
-  # 再利用の条件は次の両方:
-  # - 収集時の起点(since_datetime)が今の起点(last_fetch)と一致する。publish が挟まって
-  #   起点が動いていれば、古い window で集めたキャッシュなので作り直す。
-  # - 収集時刻(collected_at)から RECOLLECT_THRESHOLD_HOURS 未満。起点が同じでも古すぎる
-  #   キャッシュは新着を取りこぼすので作り直す。
-  def load_cached_news
-    return nil unless File.exist?(news_json_path)
-
-    cache = JSON.parse(File.read(news_json_path))
-    return nil unless cache_window_matches?(cache)
-    return nil if cache_stale?(cache)
-
-    warn "既存のニュースを利用: #{news_json_path}"
-    JSON.pretty_generate(cache.fetch("news"))
-  rescue JSON::ParserError, KeyError
-    nil
-  end
-
-  def cache_window_matches?(cache)
-    cache["since_datetime"] == last_fetch_time&.iso8601
-  end
-
-  def cache_stale?(cache)
-    collected_at = Time.iso8601(cache["collected_at"])
-    stale = (@now - collected_at) >= RECOLLECT_THRESHOLD_HOURS * 3600
-    warn "収集から#{RECOLLECT_THRESHOLD_HOURS.to_i}時間以上経過。ニュースを再収集します。" if stale
-    stale
-  rescue ArgumentError, TypeError
-    true
-  end
-
-  # 本体を since_datetime / collected_at でくるんでキャッシュに書き出す。
-  # Claude に渡すのは news 部分だけなので、メタ情報はここでだけ持つ。
-  def write_news_cache(news_body, since)
-    cache = {
-      "since_datetime" => since&.iso8601,
-      "collected_at" => @now.iso8601,
-      "news" => JSON.parse(news_body),
-    }
-    File.write(news_json_path, JSON.pretty_generate(cache))
+  # 収集 window の起点。last_fetch.txt（＝前回 publish 時点）を使う。これは publish
+  # 成功時にしか進まないので、publish していない回を作り直す間は起点が固定され、破棄→
+  # 再収集しても前回の window 分を取りこぼさない。前回時刻が無い初回は LOOKBACK_HOURS
+  # ぶんさかのぼる（もともと古すぎる記事は対象にしない）。
+  def collect_since
+    last_fetch_time || (@now - (LOOKBACK_HOURS * 3600))
   end
 
   # last_fetch.txt に記録された前回 publish 時刻。無い/壊れていれば nil。
@@ -289,35 +250,37 @@ class ScriptGenerator
     nil
   end
 
-  # 今回の収集で「何時間前までさかのぼるか」。LOOKBACK_HOURS を上限に、前回 publish からの
-  # 経過時間があればその短い方を採る。前回時刻が無ければ LOOKBACK_HOURS をそのまま使う。
-  def effective_lookback_hours(since)
-    return LOOKBACK_HOURS unless since
-
-    elapsed_hours = (@now - since) / 3600.0
-    [LOOKBACK_HOURS, elapsed_hours].min
-  end
-
-  def collect_news(since = nil)
-    cutoff = @now - (effective_lookback_hours(since) * 3600)
+  # FeedCache から since 以降に「初めて登場した」記事を集め、カテゴリ別の JSON にする。
+  # 掲載日時ではなく登場時刻(seen_at)で拾うので、昔書かれて今話題化した記事も取れる。
+  def collect_news
+    since = collect_since
     jobs = SOURCES.flat_map { |category, sources| sources.map { |src| [category, src] } }
-    items_per_job = fetch_jobs_in_parallel(jobs, cutoff)
+    items_per_job = fetch_jobs_in_parallel(jobs, since)
 
     result = SOURCES.keys.to_h { |category| [category, []] }
     jobs.zip(items_per_job) do |(category, _src), items|
       result[category].concat(items)
     end
-    result.transform_values! { |items| dedup_by_title(items).first(MAX_PER_CATEGORY) }
+    # カテゴリ内はタイトル重複を除いたうえで、件数枠(MAX_PER_CATEGORY)を priority 順に
+    # 埋める。一次情報源(priority なし)を先に、コミュニティ系(priority: :low)を後ろに置き、
+    # 同順内は新しく登場した順(seen_at 降順)。流量の多いコミュニティ系が一次情報源を枠から
+    # 押し出さないようにするため。seen_at はソート用の内部情報なので最終出力からは落とす。
+    result.transform_values! do |items|
+      dedup_by_title(items)
+        .sort_by { |i| [source_rank(i), -seen_at_epoch(i)] }
+        .first(MAX_PER_CATEGORY)
+        .each { |i| i.delete(:seen_at) }
+    end
 
     JSON.pretty_generate(result)
-  rescue FetchError => e
+  rescue FeedCache::FetchError => e
     # 不完全なニュースのまま Claude 呼び出し（トークン消費）へ進まないよう、ここで止める
     abort "ニュースが揃わないため中断します: #{e.message}"
   end
 
-  # 全ソースを FETCH_THREADS 並列で取得する。戻り値は jobs と同じ順の items 配列。
-  # cutoff より古い記事は各ソースの取り込み時に足切りする。
-  def fetch_jobs_in_parallel(jobs, cutoff)
+  # 全ソースを FETCH_THREADS 並列で収集する。戻り値は jobs と同じ順の items 配列。
+  # FeedCache はソース単位の fetch を並列に呼んでよい（内部でキャッシュ更新を直列化する）。
+  def fetch_jobs_in_parallel(jobs, since)
     queue = Queue.new
     jobs.each_with_index { |(_category, src), i| queue << [src, i] }
     queue.close
@@ -331,7 +294,7 @@ class ScriptGenerator
         while (job = queue.pop)
           src, i = job
           warn "collecting: #{src[:name]}"
-          items_per_job[i] = collect_source(src, cutoff)
+          items_per_job[i] = collect_source(src, since)
         end
       end
     end
@@ -344,113 +307,36 @@ class ScriptGenerator
     items.uniq { |i| i[:title].downcase.gsub(/\s+/, "") }
   end
 
-  # 1ソース分の記事を取得し、ソース名などのメタ情報を付けて返す。
-  def collect_source(src, cutoff)
-    bodies = Array(src[:urls] || src[:url]).map { |url| http_get(url) }
-    items = bodies.flat_map { |body| extract_items(parse_feed(body), cutoff) }
+  # カテゴリ内の件数枠を埋める優先順位。小さいほど先。一次情報源は 0、
+  # priority: :low のコミュニティ系は 1。（この経路の entry は収集直後の Ruby ハッシュで、
+  # priority はシンボル。JSON 再利用パスはここを通らない）
+  def source_rank(item) = item[:priority] == :low ? 1 : 0
+
+  # seen_at（初登場時刻）を数値(epoch 秒)にする。新しい順ソートで -値 を使うため。
+  def seen_at_epoch(item) = Time.iso8601(item[:seen_at]).to_f
+
+  # 1ソース分の新着記事を FeedCache から取得し、ソース名などのメタ情報を付けて返す。
+  def collect_source(src, since)
+    items = @feed_cache.fetch(src[:urls] || src[:url], now: @now, since: since)
 
     if src[:top_by_bookmarks]
-      # はてブ用: 全フィードを合わせてブクマ数の多い順に採用する
-      items = pick_top_by_bookmarks(items, bodies, src[:top_by_bookmarks])
-    elsif src[:max_items]
-      # 流量の多いソースはフィード先頭（人気・新着上位）だけに絞る
-      items = items.first(src[:max_items])
+      # はてブ用: ブクマ数の多い順に採用する
+      items = items.sort_by { |i| -i[:bookmarks].to_i }.first(src[:top_by_bookmarks])
+    else
+      # それ以外は、新しく登場した順(seen_at 降順)の上位だけに絞る。
+      # max_items 指定があればそれを、なければ既定の上限を使う。
+      limit = src[:max_items] || DEFAULT_MAX_PER_SOURCE
+      items = items.sort_by { |i| -seen_at_epoch(i) }.first(limit)
     end
 
-    items.each do |item|
-      item[:source] = src[:name]
+    items.map do |item|
+      # seen_at はカテゴリ集約時のソートに使う内部情報。最終出力前に collect_news で落とす。
+      picked = { title: item[:title], link: item[:link], date: item[:date],
+                 source: src[:name], seen_at: item[:seen_at] }
+      picked[:bookmarks] = item[:bookmarks] if item[:bookmarks]
       # 優先度付きソースの記事に印を付け、ライターの取捨選択に使わせる
-      item[:priority] = src[:priority] if src[:priority]
-    end
-  end
-
-  # 記事一覧をブクマ数の多い順に limit 件へ絞る。両フィードに同じ記事が
-  # 載ることがあるためリンクで重複除去し、採用した記事にはブクマ数を残して
-  # ライターが人気の度合いを判断できるようにする。
-  def pick_top_by_bookmarks(items, bodies, limit)
-    counts = {}
-    bodies.each do |body|
-      hatena_bookmark_counts(body).each do |link, count|
-        counts[link] = [counts[link].to_i, count].max
-      end
-    end
-
-    items
-      .uniq { |i| i[:link] }
-      .sort_by { |i| -counts[i[:link]].to_i }
-      .first(limit)
-      .each { |i| i[:bookmarks] = counts[i[:link]].to_i }
-  end
-
-  # はてブ RSS(RDF) から link → ブックマーク数 の対応を作る。
-  # rss gem は hatena 名前空間の要素を公開しないため、REXML で直接引く。
-  def hatena_bookmark_counts(body)
-    doc = REXML::Document.new(body)
-    doc.get_elements("//item").to_h do |item|
-      [item.elements["link"]&.text.to_s.strip,
-       item.elements["hatena:bookmarkcount"]&.text.to_i]
-    end
-  rescue REXML::ParseException
-    {}
-  end
-
-  # フィードを取得して本文を返す。失敗時は指数バックオフで FETCH_MAX_RETRIES 回まで
-  # 再試行し、それでも取れなければ FetchError を投げる。
-  def http_get(url)
-    attempt = 0
-    begin
-      http_get_once(url)
-    rescue StandardError => e
-      attempt += 1
-      raise FetchError, "#{url} の取得に失敗: #{e.message}" if attempt > FETCH_MAX_RETRIES
-
-      wait = FETCH_RETRY_BASE_SEC * (2**(attempt - 1))
-      warn "  ! #{url} の取得に失敗（#{attempt}/#{FETCH_MAX_RETRIES} 回目）: #{e.message} / #{wait}秒後に再試行"
-      sleep wait
-      retry
-    end
-  end
-
-  def http_get_once(url)
-    res = Net::HTTP.get_response(URI.parse(url))
-    # GitHub の releases.atom 等は 302 でリダイレクトすることがある
-    res = Net::HTTP.get_response(URI.parse(res["location"])) if res.is_a?(Net::HTTPRedirection)
-    raise "HTTP #{res.code}" unless res.is_a?(Net::HTTPSuccess)
-
-    res.body
-  end
-
-  def parse_feed(body)
-    RSS::Parser.parse(body, false)
-  rescue StandardError => e
-    # HTTP は成功しているのに中身が壊れているケース。リトライしても直らないので即中断へ回す
-    raise FetchError, "フィードのパースに失敗: #{e.message}"
-  end
-
-  def extract_items(feed, cutoff)
-    return [] unless feed
-
-    feed.items.filter_map do |item|
-      title = item.respond_to?(:title) && item.title or next
-      title = title.respond_to?(:content) ? title.content : title.to_s
-      link  = item.link.respond_to?(:href) ? item.link.href : item.link.to_s
-      date  = item_date(item)
-
-      # 日付が取れないソースは足切りせず通す
-      next if date && date < cutoff
-
-      { title: title.strip, link: link.strip, date: date&.iso8601 }
-    end
-  end
-
-  # RSS 2.0 / RDF / Atom で日付の入り方が違うので吸収する。
-  def item_date(item)
-    if item.respond_to?(:updated) && item.updated
-      item.updated.content
-    elsif item.respond_to?(:date) && item.date
-      item.date
-    elsif item.respond_to?(:pubDate) && item.pubDate
-      item.pubDate
+      picked[:priority] = src[:priority] if src[:priority]
+      picked
     end
   end
 
