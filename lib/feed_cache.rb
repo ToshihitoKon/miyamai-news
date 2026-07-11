@@ -29,7 +29,6 @@ class FeedCache
 
   # @param path [String] キャッシュファイルのパス
   # @param retention_days [Integer] seen_at がこれより古い entry はパージする保持日数
-  # @param threads [Integer] フィード取得の並列数
   # @param max_retries [Integer] フィード取得のリトライ回数
   # @param retry_base_sec [Float] 指数バックオフの初期待機秒数
   def initialize(path:, retention_days:, max_retries: 3, retry_base_sec: 2.0)
@@ -37,6 +36,10 @@ class FeedCache
     @retention_days = retention_days
     @max_retries = max_retries
     @retry_base_sec = retry_base_sec
+    # キャッシュファイルがまだ無い初回起動か。初回は全 entry の seen_at を「今」にすると
+    # 掲載が古い記事まで新着扱いになってしまうので、掲載日時(date)を seen_at の初期値に
+    # 使う（bootstrap）。生成時点で 1 度だけ判定する（並列 fetch でぶれないため）。
+    @bootstrap = !File.exist?(path)
     # 単一キャッシュファイルを複数スレッドから更新する際の競合を防ぐ。
     # 取得（http_get）自体はロック外で並列に走り、キャッシュ反映だけ直列化する。
     @cache_mutex = Mutex.new
@@ -76,16 +79,27 @@ class FeedCache
 
   # 今回フィードに登場した entry を seen_at 付きでキャッシュに反映する。
   # 既にある link は seen_at を据え置き（初登場時刻を保つ）、title/date だけ最新に更新する。
+  #
+  # 新規 link の seen_at は原則「今(now)」。ただし初回起動(bootstrap)時だけは、掲載が
+  # 古い記事まで新着として大量に流入するのを防ぐため、掲載日時(date)を初期値に使う
+  # （date が無ければ now）。2 回目以降の新規登場は now なので、昔書かれて今登場した
+  # 記事も拾える。
   def record_seen(cache, entries, now)
     entries.each do |entry|
       existing = cache[entry[:link]]
       cache[entry[:link]] = {
-        "seen_at" => existing ? existing["seen_at"] : now.iso8601,
+        "seen_at" => existing ? existing["seen_at"] : initial_seen_at(entry, now),
         "title" => entry[:title],
         "date" => entry[:date],
         "bookmarks" => entry[:bookmarks],
       }
     end
+  end
+
+  def initial_seen_at(entry, now)
+    return now.iso8601 unless @bootstrap && entry[:date]
+
+    entry[:date]
   end
 
   # seen_at が保持期間より古い entry をキャッシュから削除する。
