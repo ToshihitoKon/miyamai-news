@@ -1,0 +1,25 @@
+# 実設定（各自 config.sample.yaml からコピーして作る）
+/config.yaml
+
+# 素材（BGM・カバー画像など。各自で用意する。README 参照）
+*.mp3
+*.wav
+*.png
+*.webm
+
+# 生成物
+/feed.xml
+/index.html
+
+# 中間ファイル・成果物（ディレクトリ構造だけ .gitkeep で残す）
+/work/*
+!/work/.gitkeep
+/dist/*
+!/dist/.gitkeep
+
+# ツール類
+/.ruby-lsp/
+/.serena/cache/
+
+# Ruby バージョンはチームで共有する（グローバル gitignore の除外を上書き）
+!.tool-versions

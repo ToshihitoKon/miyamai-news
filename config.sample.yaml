@@ -1,0 +1,63 @@
+# 宮舞モカ ニュース番組 生成パイプラインの設定。
+#
+# このファイルはサンプル。実際に使うときは:
+#   cp config.sample.yaml config.yaml
+# としてから、環境に合わせて値を書き換える。config.yaml は git 管理外。
+
+# GCS への公開まわり。
+gcs:
+  # 成果物を置く GCS バケット名。
+  bucket: your-bucket-name
+  # 公開 URL のベース。通常はこのままでよい。
+  public_base: https://storage.googleapis.com
+
+# 音声・ページに使うアセットのパス。
+assets:
+  # 既定の BGM。miyamai_news.rb に BGM を渡さなかったときに使う。
+  # 絶対パス、または miyamai_news.rb からの相対パスで指定する。
+  bgm_path: 古びた魔法書_気まぐれBGM工房.mp3
+  # 再生ページ / Slack プレビュー用の横長バナー画像のオブジェクト名。
+  # 事前に gs://<bucket>/<cover_image> へ手動アップロードしておく。
+  cover_image: miyamai_news.png
+
+# VOICEPEAK(音声合成)まわり。
+voicepeak:
+  # VOICEPEAK の実行ファイルパス(macOS 既定)。
+  bin: /Applications/voicepeak.app/Contents/MacOS/voicepeak
+  # 各チャンク合成後に空ける秒数。連続起動によるクラッシュ避け。
+  interval_sec: 1
+  # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数。
+  max_retries: 4
+  retry_base_sec: 2
+  # 1チャンク合成に許す最大秒数。超えたら kill してリトライへ回す。
+  timeout_sec: 10
+
+# 台本整形に使う Claude の設定。
+claude:
+  model: claude-opus-4-8
+  effort: xhigh
+
+# RSS 収集まわり。
+collect:
+  # 何時間前までの記事を拾うかの上限。
+  lookback_hours: 24
+  # 前回収集からこの時間以上経っていれば、問い合わせず自動で再収集する。
+  recollect_threshold_hours: 10
+  # 各カテゴリの最大件数。
+  max_per_category: 100
+  # フィード取得の並列数。
+  fetch_threads: 5
+  # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
+  fetch_max_retries: 3
+  fetch_retry_base_sec: 2
+
+# BGM 合成(ミキシング)まわり。
+mixer:
+  # BGM の音量(ナレーションを 1.0 としたときの相対値)。
+  bgm_volume: 0.15
+  # BGM 開始からナレーション開始までの秒数。
+  intro_sec: 3
+  # ナレーション終了からフェードアウト開始までの秒数。
+  tail_sec: 3
+  # フェードアウトにかける秒数。
+  fade_sec: 4
