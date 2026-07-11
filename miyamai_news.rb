@@ -50,8 +50,23 @@ def main
   FileUtils.mkdir_p(WORK_DIR)
   FileUtils.mkdir_p(DIST_DIR)
 
+  if args[:script_only]
+    run_script(date, slot)
+    return
+  end
+
   run_generate(date, date_tag, slot, args[:bgm]) unless args[:publish_only]
   run_publish(date, date_tag, slot) unless args[:generate_only]
+end
+
+# 台本だけ生成して停止する。中身を確認・手直ししたうえで、フラグなしで再実行すれば
+# 既存の台本キャッシュが再利用され、音声合成〜publish まで続きから進む。
+def run_script(date, slot)
+  generator = ScriptGenerator.new(work_dir: WORK_DIR, date: date, slot: slot)
+  script_path = generator.generate
+
+  warn "台本を生成: #{script_path}"
+  warn "内容を確認し、必要なら手直ししてください。フラグなしで再実行すると音声生成〜publish まで進みます。"
 end
 
 def run_generate(date, date_tag, slot, bgm_override)
@@ -119,6 +134,7 @@ def parse_args(argv)
   while i < argv.length
     case argv[i]
     when "--clean"         then opts[:clean] = true
+    when "--script-only"   then opts[:script_only] = true
     when "--generate-only" then opts[:generate_only] = true
     when "--publish-only"  then opts[:publish_only] = true
     when "--bgm"           then opts[:bgm] = argv[i += 1]
