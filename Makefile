@@ -1,7 +1,8 @@
 # 宮舞モカ ニュース番組パイプライン
 #
-#   make generate  … 台本生成 → 音声合成 → BGM 合成。成果物は dist/ へ
-#   make upload    … dist/ の該当回 mp3(+used.txt)を GCS へアップロード
+#   make run       … 生成 → 公開まで一気通し（引数なし実行）
+#   make generate  … 台本生成 → 音声合成 → BGM 合成のみ。成果物は dist/ へ
+#   make upload    … dist/ の該当回 mp3(+used.txt)を GCS へ公開
 #   make clean     … work/ を削除し、GCS にアップロード済みの成果物を dist/ から削除
 #
 # 日付を指定する場合: make upload DATE=20260710
@@ -10,6 +11,7 @@
 
 RUBY   ?= ruby
 # バケット名は config.yaml (gcs.bucket) を正とする。BUCKET=... で上書きも可能。
+# clean の GCS 存在確認でだけ使う（公開自体は miyamai_news.rb が config を読む）。
 BUCKET ?= $(shell $(RUBY) -ryaml -e 'puts YAML.safe_load_file("config.yaml").dig("gcs","bucket")' 2>/dev/null)
 DATE   ?= $(shell date +%Y%m%d)
 # 現在時刻から時間帯 slot を決める。miyamai_news.rb の slot_for と同じ境界:
@@ -22,21 +24,29 @@ DIST      := dist
 WORK      := work
 MP3       := $(DIST)/miyamai_news_$(DATE)_$(SLOT).mp3
 USED      := $(DIST)/miyamai_news_$(DATE)_$(SLOT).used.txt
-GCS_MP3   := gs://$(BUCKET)/miyamai_news_$(DATE)_$(SLOT).mp3
 
-.PHONY: generate upload clean help
+# --bgm は BGM が空なら付けない（付けると空文字を渡してしまうため）。
+BGM_ARG   := $(if $(BGM),--bgm $(BGM),)
+# DATE(YYYYMMDD)を CLI の --date 用に YYYY-MM-DD へ整形する。
+DATE_ISO  := $(shell echo "$(DATE)" | sed -E 's/([0-9]{4})([0-9]{2})([0-9]{2})/\1-\2-\3/')
+
+.PHONY: run generate upload clean help
 
 help:
-	@echo "make generate [BGM=...]          台本→音声→BGM合成。成果物は $(DIST)/"
-	@echo "make upload   [DATE=... SLOT=...] $(DIST)/ の該当回を GCS へアップロード"
-	@echo "make clean                       work/ を削除し、アップロード済み成果物を $(DIST)/ から削除"
+	@echo "make run                          生成→公開まで一気通し"
+	@echo "make generate [BGM=...]           台本→音声→BGM合成のみ。成果物は $(DIST)/"
+	@echo "make upload   [DATE=... SLOT=...]  $(DIST)/ の該当回を GCS へ公開"
+	@echo "make clean                        work/ を削除し、公開済み成果物を $(DIST)/ から削除"
+
+run:
+	$(RUBY) miyamai_news.rb $(BGM_ARG)
 
 generate:
-	$(RUBY) miyamai_news.rb $(BGM)
+	$(RUBY) miyamai_news.rb --generate-only $(BGM_ARG)
 
 upload:
 	@test -f "$(MP3)" || { echo "mp3 が見つかりません: $(MP3) (make generate 済み? DATE=$(DATE) SLOT=$(SLOT) は正しい?)"; exit 1; }
-	$(RUBY) publish.rb "$(MP3)" "$(BUCKET)"
+	$(RUBY) miyamai_news.rb --publish-only --date "$(DATE_ISO)" --slot "$(SLOT)"
 
 # work/ の中間キャッシュを削除する。ただし last_fetch.txt は残す
 # （前回収集時刻の記録。消すと収集 window が上限にリセットされ、次回に

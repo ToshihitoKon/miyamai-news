@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= h(@title) %></title>
+  <link rel="alternate" type="application/atom+xml" title="宮舞モカ 技術ニュース" href="<%= h(feed_url) %>">
+
+  <!-- Open Graph (Slack のリンクプレビュー用) -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="<%= h(@title) %>">
+  <meta property="og:description" content="<%= h(description) %>">
+  <meta property="og:url" content="<%= h(page_url) %>">
+  <meta property="og:image" content="<%= h(cover_url) %>">
+  <meta property="og:audio" content="<%= h(current_url) %>">
+  <meta property="og:audio:type" content="audio/mpeg">
+
+  <!-- Twitter Summary Card (大きな画像付きプレビュー) -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="<%= h(@title) %>">
+  <meta name="twitter:description" content="<%= h(description) %>">
+  <meta name="twitter:image" content="<%= h(cover_url) %>">
+
+  <style>
+    /* 宮舞モカのイメージカラー #8DA7C2 を基調にした明るい配色 */
+    :root {
+      color-scheme: light;
+      --moca: #8DA7C2;
+      --moca-deep: #5f7d9e;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      /* sticky footer 構成。主コンテンツ領域(.content)が残り高さを埋めるので
+         footer は常にビューポート最下部に来る。 */
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      background: var(--moca);
+      color: #2b3440;
+    }
+    /* card を内包する主コンテンツ領域。flex:1 で残り高さを占め、footer を
+       画面最下部へ押し下げる。card はこの中で中央寄せ。縦長になっても
+       card の縦マージンが footer との間隔を保つ（密着しない）。 */
+    .content {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 32px 0;
+    }
+    .card {
+      width: min(520px, 92vw);
+      padding: 28px;
+      border-radius: 14px;
+      background: #ffffff;
+      box-shadow: 0 8px 32px rgba(95, 125, 158, .25);
+    }
+    .art {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 0 auto 16px;
+      border-radius: 12px;
+      border: 3px solid var(--moca);
+    }
+    h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; letter-spacing: .02em; text-align: center; color: var(--moca-deep); }
+    .sub { font-size: 12px; color: #7a8896; margin: 0 0 20px; text-align: center; }
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 16px;
+      border-radius: 8px;
+      border: 1px solid var(--moca);
+      background: #f5f8fb;
+      color: #2b3440;
+      font-size: 13px;
+    }
+    audio { width: 100%; }
+    .news {
+      margin-top: 20px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 16px;
+    }
+    .news h2 { font-size: 12px; font-weight: 600; margin: 0 0 10px; color: var(--moca-deep); }
+    .news pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #3a4652;
+    }
+    .news a { color: var(--moca-deep); }
+    /* ビューポート最下部に敷く半透明の帯。モカ背景の上に置くため
+       白の半透明地に濃色文字で、どの背景でも読めるようにする。 */
+    .site-footer {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 14px 20px;
+      background: rgba(255, 255, 255, .82);
+      backdrop-filter: blur(6px);
+      text-align: center;
+    }
+    .site-footer .subscribe {
+      margin: 0 0 8px;
+      font-size: 12px;
+    }
+    /* クレジット各項目は横並び。横幅が足りなければ折り返して縦積みになる。
+       column-gap が項目間、row-gap が折り返し時の行間。 */
+    .site-footer .credits {
+      margin: 0;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 4px 20px;
+      font-size: 11px;
+      line-height: 1.7;
+      color: #5f6b78;
+    }
+    .site-footer .credits p { margin: 0; }
+    .site-footer a { color: var(--moca-deep); }
+  </style>
+</head>
+<body>
+  <main class="content">
+    <div class="card">
+      <img class="art" src="<%= h(cover_url) %>" alt="宮舞モカ">
+      <h1>宮舞モカ 技術ニュース</h1>
+      <p class="sub" id="nowplaying"><%= h(date_with_slot(current[0], current[1])) %> — <%= h(current[2]) %></p>
+      <select id="archive" aria-label="アーカイブ選択">
+        <%= options %>
+      </select>
+      <audio id="player" controls src="<%= h(current_url) %>"></audio>
+      <div class="news">
+        <h2>この回で紹介したニュース</h2>
+        <pre id="newslist">読み込み中…</pre>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p class="subscribe"><a href="<%= h(feed_url) %>">フィード（Atom）で購読</a></p>
+    <div class="credits">
+      <p>音声：VOICEPEAK 宮舞モカ（© 株式会社AHS）<a href="https://www.ah-soft.com/voice/moca/eula.html" target="_blank" rel="noopener">使用許諾</a></p>
+      <p>立ち絵：からい 様（<a href="https://seiga.nicovideo.jp/seiga/im11390154" target="_blank" rel="noopener">宮舞モカ立ち絵素材</a>）</p>
+      <p>BGM：猫きまぐれBGM工房 様「古びた魔法書」（<a href="https://kim4gure.com/" target="_blank" rel="noopener">猫きまぐれBGM工房</a>）</p>
+    </div>
+  </footer>
+
+  <script>
+    const sel = document.getElementById('archive');
+    const player = document.getElementById('player');
+    const now = document.getElementById('nowplaying');
+    const newslist = document.getElementById('newslist');
+
+    const escapeHtml = (s) => s
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;');
+
+    // 先にエスケープしてから URL だけをリンク化する(挿入する href/文字列はエスケープ済み)
+    const linkify = (text) =>
+      escapeHtml(text).replace(/https?:\/\/[^\s<]+/g,
+        (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+
+    // mp3 の URL から used.txt の URL を導出(miyamai_news_YYYYMMDD.mp3 → .used.txt)
+    const usedUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.used.txt');
+
+    const loadNews = async (mp3Url) => {
+      newslist.textContent = '読み込み中…';
+      try {
+        const res = await fetch(usedUrlFor(mp3Url), { cache: 'no-cache' });
+        if (!res.ok) throw new Error(res.status);
+        newslist.innerHTML = linkify(await res.text());
+      } catch (e) {
+        newslist.textContent = 'ニュース一覧はありません';
+      }
+    };
+
+    // アーカイブ選択では src とニュース一覧だけ差し替え、再生はしない。
+    // 再生はユーザーが再生ボタンを押したときだけ始まるようにする。
+    sel.addEventListener('change', () => {
+      player.src = sel.value;
+      now.textContent = sel.options[sel.selectedIndex].text;
+      loadNews(sel.value);
+    });
+
+    loadNews(player.src);
+  </script>
+</body>
+</html>

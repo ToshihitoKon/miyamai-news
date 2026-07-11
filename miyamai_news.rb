@@ -17,11 +17,14 @@
 require "bundler/inline"
 
 # 単体で完結するよう bundler/inline で依存 gem を取得する。
-# Ruby 4.0 で rss は bundled gem になり、gemfile ブロック内では明示しないと require できない。
+# Ruby 4.0 で rss/csv/rexml は bundled gem になり、gemfile ブロック内では
+# 明示しないと require できない。
 gemfile do
   source "https://rubygems.org"
   gem "tty-spinner"
   gem "rss"
+  gem "csv"
+  gem "rexml"
 end
 
 require "rss"
@@ -30,11 +33,18 @@ require "json"
 require "net/http"
 require "uri"
 require "time"
+require "date"
+require "csv"
+require "cgi"
+require "erb"
+require "shellwords"
+require "tmpdir"
 require "open3"
 require "tempfile"
 require "fileutils"
 require "tty-spinner"
 require_relative "config"
+require_relative "template_renderer"
 
 # 実行時刻から番組の時間帯 slot を決める。1日に朝・昼・夜と複数回まわしても
 # ファイル名が衝突せず、それぞれ別エピソードとして共存できるようにするための区分。
@@ -513,192 +523,28 @@ class ScriptGenerator
   end
 
   # --- プロンプト ---
+  # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
+  # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # モカのキャラクター設定。ライターの前段に置く。
-  MOKA_PROMPT = <<~PROMPT
-    # 指示
-    あなたは「宮舞モカ（みやまい もか）」というキャラクターとして振る舞います。
+  # モカのキャラクター設定。ライターの前段に埋め込む部品。
+  def moka_prompt = TemplateRenderer.render("moka.prompt", binding)
 
-    # 会話・口調のルール
-    - 一人称：「わたし」
-    - テンション：若干ダウナー寄りの普通の女子高生。落ち着いていてテンションは低めだが、**学校や人との会話を「だるい」「面倒くさい」と思うようなネガティブな性格（斜に構えた性格）ではない。**単にフラットで口数が少ないだけ。
-    - 言葉選びの制限：
-      - 三点リーダー（… や ・・・）は使用しない。
-      - 「りょうかい」などのネットスラングや男っぽい言葉は使わない。「わかった」「そっか」「そうなんだ」など、自然な相槌を使う。
-  PROMPT
-
-  # ライター用タスク。ニュース JSON を差し込んで完成させる。
+  # ライター用タスク。ニュース JSON とモカ設定を差し込んで完成させる。
   def writer_prompt(news_json)
-    <<~PROMPT
-      #{MOKA_PROMPT}
-
-      # 今回のタスク
-      あなたは宮舞モカとして、上記の口調・キャラクター設定を厳密に守りながら、
-      技術ニュースを紹介するラジオ番組の読み上げ台本を作成します。
-
-      ## 番組構成
-      今日は #{@today_ja} です。以下の4本立てを基本に進めます。
-      1. 生成AIニュース
-      2. AIエージェント・AIコーディングツールのニュース（Claude Code、Devin、Cursor など）
-      3. セキュリティニュース
-      4. その他エンジニア向けトピック
-
-      ## トピックの選び方
-      - 各トピックにつき2本程度を選んで紹介する。それ以上詰め込まない。
-      - AIエージェントツールのリリースノート（Claude Code Releases、Cursor Changelog など）は
-        毎日のように更新されるため、単なるバグ修正やマイナーな変更は拾わず、
-        注目に値する新機能や大きな変更があるものだけ紹介する。なければスキップしてよい。
-        紹介する際は、そのリリースの目玉となる新機能を1つか2つに絞り、それが何をするもので
-        何が便利になるのかを具体的に語る。「詳しくはリリースノートを見てください」
-        「詳細はホームページで」のような、聞き手に確認を丸投げする締め方はしない。
-        更新項目を網羅列挙するのではなく、注目機能に絞って中身を伝えることを優先する。
-      - セキュリティニュースは、特定の製品に閉じた脆弱性（個別アプリのインストーラの権限昇格など）は
-        リスナーの参考になりにくいため、原則として拾わない。
-        Linux、OpenSSH、OpenSSL、systemd、コンテナ、CI/CD など、開発環境やインフラに広く関わる
-        ニュースを優先して拾う。
-      - 該当するセキュリティニュースがなければ、セキュリティトピック自体をスキップしてよい。
-        その場合は他のトピック（生成AI、その他）の本数を増やして全体の尺を保つ。
-      - "priority": "low" が付いた記事は、まとめサイト・コミュニティ経由で玉石混交なため、
-        一次情報源（それ以外のソース）の記事を優先し、他に良い候補がないときの補欠として扱う。
-      - "bookmarks" ははてなブックマークでのブックマーク数。読者の関心の高さの目安として、
-        補欠から選ぶ際の参考にしてよい。
-
-      ## 台本作成のルール
-      - 口語の範囲の丁寧な敬語を使う。尊敬語や謙譲語になるかしこまりすぎた敬語は使わない。
-      - 始めの挨拶は「宮舞モカです。エンジニア向けのニュースをお届けします。」
-      - 締めの挨拶は「以上、宮舞モカがお伝えしました。」
-      - 各ニュースは、まず「誰の・何の話か」を示してから、モカの言葉で要約を続ける。
-        要約はかみくだきすぎて内容がぼやけないよう、何が新しいのか・何が要点なのかが
-        1つ2つはっきり残るようにする。
-      - 冒頭の切り出しは「〇〇が出した、〇〇についての記事です」の一択に固定しない。
-        記事とその主体の関係に合わせて自然な言い回しを選ぶ。硬い・不自然な文型にしない。
-        - 当事者が自分の成果・発表を出した記事（企業の新プロダクト発表、公式リリースなど）は
-          「オープンエーアイがジーピーティーごーてんろくを発表しました」のように、
-          その当事者を主語にして語ってよい。
-        - メディアや技術ブログが第三者の動きを報じた記事は、「ブログが出した」と硬く言わず、
-          報じられている当事者や出来事を主役にする。たとえばゾゾのテックブログがジットアクセスの
-          導入を書いた記事なら「ゾゾのテックブログが出した記事です」ではなく
-          「ゾゾが、エーダブリューエスの強い権限をジットアクセスに切り替えた話です」のように、
-          何が起きたかを主役にして、媒体名は必要なら軽く添える程度にする。
-      - 話の主役や発行元にする固有名詞は、記事を実際に書いた・出した発行元（企業名・製品名・
-        ブログ名・著者名）にする。"source" の RSS フィード名をそのまま使わない。
-        はてなブックマークや Hacker News、Lobsters などは他サイトの記事へのリンク集なので、
-        「はてなブックマークが出した」のようには言わず、link 先の実際の発行元を使う。
-        link だけで発行元がわからないときは WebFetch で記事を開いて確認する。
-        Publickey や gihyo.jp、DevelopersIO のように媒体が自ら出している記事は、その媒体名を
-        使ってよい。
-      - ニュースの区切りに「一本目」「二本目」のような番号は使わない。
-        「次のニュースです。」「続いては、」「もう一本。」のような自然なつなぎ言葉で切り替える。
-      - 主体や対象の固有名詞は、エンジニアなら知っている前提の教養として扱い、抽象化しない。
-        企業名・プロダクト名・ツール名・研究者や組織の名前はそのまま出す。
-        たとえば「エーアイエージェントの研究をしている人たちが出した」ではなく主体名をそのまま、
-        「バンというツールを開発しているチームが出した」ではなく「バンを開発しているチームが出した」
-        のように、名前を知っている前提で簡潔に述べる。
-      - タイトルをそのまま読むのではなく、モカが自分の言葉で紹介する。
-      - 「詳しくは記事を読んでください」「詳細は公式サイトで」のように、内容を語らず
-        聞き手に確認を丸投げする締め方はしない。要点そのものを台本の中で言葉にする。
-      - 早口で読み上げて、全体で5-8分で読み終わる程度の文章量にする。
-
-      ## 入力ニュース（JSON）
-      以下のニュースから、各カテゴリで新規性の高そうなものを選んで紹介してください。
-      全部を無理に使う必要はありません。
-
-      ```json
-      #{news_json}
-      ```
-
-      台本本文を作成してください。この出力は次の整形ステップに渡されるので、
-      表記の細かい整形（英字のカタカナ化など）はここでは気にしなくてよいです。
-    PROMPT
+    moka = moka_prompt
+    today_ja = @today_ja
+    TemplateRenderer.render("writer.prompt", binding)
   end
 
-  # 整形用タスク。ライターの出力を差し込んで完成させる。
+  # 整形用タスク。ライターの出力(ドラフト)を差し込んで完成させる。
   def format_prompt(draft)
-    <<~PROMPT
-      あなたは、ラジオ番組の読み上げ台本を、音声合成ソフトVOICEPEAK用に整える校正担当です。
-      入力として台本のドラフトを受け取り、内容は変えずに、以下のルールで整形したテキストだけを出力します。
-
-      ## 整形ルール
-      - 台本本文だけを出力する。「整形しました」「以下が結果です」のような前置き・報告・
-        メタな説明は一切書かず、いきなり本文から始める。ドラフトの冒頭に思考メモや前置きが
-        含まれていた場合は、それらを取り除き、始めの挨拶（「宮舞モカです。…」）から始める。
-      - 台本の内容・構成・語り口は変えない。表記の整形だけを行う。
-      - 三点リーダー（…）、感嘆符の連続、顔文字、記号の羅列があれば取り除く。
-      - URLやハッシュ値などの機械的な文字列があれば取り除く。
-      - 英字表記は、例外なくすべてカタカナに開く。VOICEPEAKは英単語や英字を正しく
-        読めないため、アルファベットを1文字たりとも本文に残さない。固有名詞であっても
-        表記はカタカナにする（名前自体を言い換えるのではなく、読みをカタカナで書くという意味）。
-        「生成AI」「生成 AI」のように紛れ込みやすいものも必ず「生成エーアイ」と開く。
-        - 略語: CVE→シーブイイー、API→エーピーアイ、AI→エーアイ、URL→ユーアールエル
-        - プロダクト/技術名: TypeScript→タイプスクリプト、Bun→バン、Go→ゴー、Rust→ラスト、
-          Zig→ジグ、PostgreSQL→ポストグレスキューエル、Microsoft→マイクロソフト、
-          Claude Code→クロードコード、Devin→デビン、Cursor→カーソル、
-          Antigravity→アンチグラビティ
-        - 論文・記事タイトル: 英語のタイトルもカタカナ読みに開く。
-          例 Memory in the Loop→メモリー・イン・ザ・ループ、
-          Beyond the Leaderboard→ビヨンド・ザ・リーダーボード、
-          Rewriting Bun in Rust→リライティング・バン・イン・ラスト。
-          カタカナ読みだけでは意味が伝わりにくいときは、日本語の言い換えを添えてもよい。
-        - サービス/媒体名: arXiv→アーカイブ、Publickey→パブリックキー、Qiita→キータ、
-          Zenn→ゼン、Lobsters→ロブスターズ、InfoQ→インフォキュー
-        - バージョン番号は原則として日本語読みにする。
-          例 PostgreSQL 19→ポストグレスキューエル・じゅうきゅう、TypeScript 7→タイプスクリプト・なな。
-          ただし、数字が製品名の一部として英語読みで定着している場合はその読みを尊重する
-          （例 S3→エススリー、log4j→ログフォージェイ のように、名前と一体化した数字は英語読み）。
-
-      ## 整形するドラフト
-      #{draft}
-    PROMPT
+    TemplateRenderer.render("format.prompt", binding)
   end
 
   # 台本と収集済みニュース JSON を渡し、台本で実際に触れられたニュースだけを
   # JSON から登場順に抜き出させるプロンプト。
-  # source 欄には JSON のフィード名ではなく「記事の実際の発行元」を書かせる。
   def used_news_prompt(script, news_json)
-    <<~PROMPT
-      あなたは、ラジオ番組の台本と、その素材として渡したニュース一覧（JSON）を照合する担当です。
-      台本の中で実際に紹介・言及されたニュースを、ニュース JSON の中から特定し、
-      台本に登場する順番で一覧テキストを出力します。
-
-      ## 照合のルール
-      - 出力するニュースは、必ずニュース JSON に含まれる項目だけにする。JSON にない
-        ニュースを新たに作り出さない（title・link・date は JSON の値をそのまま使う）。
-      - 台本は音声合成用に英字をすべてカタカナへ開いてある（例 OpenAI→オープンエーアイ、
-        Bun→バン）。JSON 側は英字のままなので、読みや意味で対応付けること。文字列の
-        完全一致では照合できない点に注意する。
-      - 台本で触れられていない JSON の項目は出力しない。
-      - 判断に迷う（台本で触れたか確信が持てない）項目は含めない。
-
-      ## source 欄の書き方（重要）
-      source には JSON の "source"（RSS フィード名）をそのまま書くのではなく、
-      その記事を実際に書いた・出した発行元を書く。
-      - はてなブックマークや Hacker News、Lobsters などのまとめ系フィードは、
-        他サイトの記事へのリンク集にすぎず、フィード名は発行元にならない。
-        link 先の実際の発行元（企業名・製品名・ブログ名・個人の著者名）を書く。
-        link の URL とタイトルだけで発行元が確定できないときは、WebFetch で link 先を
-        開いて発行元を確認してよい。
-      - Publickey、gihyo.jp、DevelopersIO、InfoQ Japan のように、企業やメディアが
-        自ら出しているフィードは、その媒体名（ブログ名・メディア名）をそのまま source にする。
-      - 公式リリース（Claude Code、Cursor、Ruby、Go などの Releases）は、その製品・
-        プロジェクト名を source にする。
-      - どうしても発行元を特定できないときだけ、JSON の "source" をそのまま使う。
-
-      ## 出力フォーマット
-      - 前置きやメタな説明、照合の思考メモ、WebFetch の確認過程などは一切書かない。
-        いきなり下記フォーマットの一覧だけを出力する。
-      - 各ニュースを次の3行で、登場順に番号を振って出力する。2行目は必ず link（http で始まる
-        URL）、3行目は必ず「(<date> / <source>)」にする。この3行以外の行を挟まない。
-
-        1. <title>
-           <link>
-           (<date> / <source>)
-
-      ## 台本
-      #{script}
-
-      ## ニュース JSON
-      #{news_json}
-    PROMPT
+    TemplateRenderer.render("used_news.prompt", binding)
   end
 end
 
@@ -944,39 +790,312 @@ class AudioMixer
 end
 
 # ---------------------------------------------------------------------------
-# メイン: 台本生成 → 音声合成 → BGM 合成 を順に実行
+# 公開: 生成済み mp3 を GCS に置き、CSV 駆動でペライチ再生ページ(index.html)と
+# Atom フィード(feed.xml)を更新する
 # ---------------------------------------------------------------------------
+#
+# 前提:
+#   - gcloud が設定済み(認証・プロジェクト)
+#   - バケットが公開読み取り可能(または署名URL運用なら別途調整)
+#
+# GCS 上のレイアウト:
+#   gs://<bucket>/miyamai_news_YYYYMMDD[_slot].mp3      … 音声本体
+#   gs://<bucket>/miyamai_news_YYYYMMDD[_slot].used.txt … その回で紹介したニュース一覧(任意)
+#   gs://<bucket>/archives.csv                          … アーカイブ台帳
+#   gs://<bucket>/index.html                            … 再生ページ(毎回再生成)
+#   gs://<bucket>/feed.xml                              … Atom フィード(毎回再生成)
+#   gs://<bucket>/<cover_image>                         … 横長バナー(事前に手動アップロード)
+class Publisher
+  PUBLIC_BASE    = Config.get("gcs.public_base")
+  DEFAULT_BUCKET = Config.get("gcs.bucket")
+  # 横長バナー画像。Slack のリンクプレビューと再生ページの両方で使う。
+  # 事前に GCS へアップロードしておく:
+  #   gcloud storage cp <cover_image> gs://<bucket>/<cover_image>
+  COVER_IMAGE = Config.get("assets.cover_image")
+
+  # ページ/フィードのマークアップは templates/*.erb。埋め込み変数は
+  # render_html / render_feed / render_feed_entry のローカル変数を binding 経由で
+  # 参照する。値の HTML エスケープは呼び出し側の h() で行い、テンプレートでは素通しする。
+
+  def initialize(bucket: DEFAULT_BUCKET, date: Date.today, title: nil)
+    @bucket = bucket
+    @date   = date
+    @title  = title || "宮舞モカ 技術ニュース #{date.strftime('%Y-%m-%d')}"
+  end
+
+  # GCS 上のオブジェクト名は、渡された mp3 のファイル名をそのまま使う
+  # （例: miyamai_news_20260710_afternoon.mp3）。日付から組み立て直すと
+  # slot が落ちて朝昼夜が同名で上書きし合うため、呼び出し側のファイル名を正とする。
+  def run(mp3_path, used_txt_path = nil)
+    filename = File.basename(mp3_path)
+    used_object = filename.sub(/\.mp3\z/, ".used.txt")
+
+    upload_mp3(mp3_path, filename)
+    upload_used_news(used_txt_path, used_object) if used_txt_path
+    used_news = used_txt_path && File.exist?(used_txt_path) ? File.read(used_txt_path) : ""
+    rows = update_archives(filename, used_news)
+    write_index(rows)
+    write_feed(rows)
+
+    puts "done: #{public_url('index.html')}"
+  end
+
+  private
+
+  def public_url(object)
+    "#{PUBLIC_BASE}/#{@bucket}/#{object}"
+  end
+
+  def gcloud_storage(*args)
+    cmd = ["gcloud", "storage", *args].shelljoin
+    system(cmd) || abort("gcloud storage failed: #{cmd}")
+  end
+
+  # --- mp3 ---------------------------------------------------------------
+
+  def upload_mp3(local_path, filename)
+    abort("mp3 not found: #{local_path}") unless File.exist?(local_path)
+    gcloud_storage(
+      "cp",
+      "--content-type=audio/mpeg",
+      "--content-disposition=inline",
+      local_path, "gs://#{@bucket}/#{filename}"
+    )
+  end
+
+  # --- used news ---------------------------------------------------------
+  # その回で使用したニュース一覧(AI 生成テキスト)。音声と対にした名前で置く。
+  # 中身は解釈せず、再生ページ側でそのまま表示する(URL のみリンク化)。
+
+  def upload_used_news(local_path, object)
+    abort("used news not found: #{local_path}") unless File.exist?(local_path)
+    gcloud_storage(
+      "cp",
+      "--content-type=text/plain; charset=utf-8",
+      local_path, "gs://#{@bucket}/#{object}"
+    )
+  end
+
+  # --- archives.csv ------------------------------------------------------
+  # 列: date(YYYY-MM-DD), filename, title, used_news, updated_at(RFC3339 UTC)
+  # used_news はその回で紹介したニュース一覧の全文(Atom フィードの content 用)。
+  # updated_at は生成時刻。当日分を作り直すたびに更新され、Atom の <updated> に
+  # 使う。これにより同じ日に再生成しても更新が進み、RSS リーダーが検知できる。
+  # 4列目を持たない過去の行は used_news 空、5列目を持たない過去の行は
+  # updated_at 空(date の 00:00:00Z にフォールバック)として扱う。
+  # 同一 filename は上書き。1日に複数回(朝昼夜)ある場合は date が同じでも
+  # filename が異なる行として共存する。降順(新しい順)で保持。
+
+  def update_archives(filename, used_news = "")
+    local_csv = File.join(Dir.tmpdir, "miyamai_archives_#{Process.pid}.csv")
+
+    rows = fetch_existing_archives(local_csv)
+    # 同じファイル名(=同じ日の同じ時間帯)の回があれば差し替える。
+    # 1日に朝昼夜と複数回ある場合、date は同じでも filename が異なるので共存する。
+    rows.reject! { |r| r[1] == filename }
+    rows << [date_for(filename), filename, @title, used_news, now_rfc3339]
+    # 日付(YYYY-MM-DD)を第1キー、生成時刻を第2キーに新しい順で並べる。
+    # 同一日に複数回ある場合、生成時刻で slot の前後を安定させる。
+    rows.sort_by! { |r| [r[0], r[4].to_s] }
+    rows.reverse!
+
+    CSV.open(local_csv, "w") { |csv| rows.each { |r| csv << r } }
+    gcloud_storage("cp", "--content-type=text/csv", local_csv, "gs://#{@bucket}/archives.csv")
+
+    rows
+  ensure
+    File.delete(local_csv) if local_csv && File.exist?(local_csv)
+  end
+
+  # 既存 archives.csv を取得する。
+  # 「初回でオブジェクトが存在しない」場合のみ空配列で開始し、
+  # ネットワーク障害等の取得失敗では abort する。
+  # (取得失敗を空扱いすると、既存台帳を空で上書きして全消失させてしまうため)
+  def fetch_existing_archives(local_csv)
+    return [] unless archives_exist?
+
+    ok = system("gcloud", "storage", "cp", "gs://#{@bucket}/archives.csv", local_csv,
+                out: File::NULL, err: File::NULL)
+    abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)") unless ok && File.exist?(local_csv)
+
+    CSV.read(local_csv)
+  end
+
+  def archives_exist?
+    system("gcloud", "storage", "ls", "gs://#{@bucket}/archives.csv",
+           out: File::NULL, err: File::NULL)
+  end
+
+  # --- index.html --------------------------------------------------------
+
+  def write_index(rows)
+    local_html = File.join(Dir.tmpdir, "miyamai_index_#{Process.pid}.html")
+    File.write(local_html, render_html(rows))
+    gcloud_storage("cp", "--content-type=text/html; charset=utf-8", local_html, "gs://#{@bucket}/index.html")
+  ensure
+    File.delete(local_html) if local_html && File.exist?(local_html)
+  end
+
+  def render_html(rows)
+    abort("no archives to render") if rows.empty?
+
+    current = rows.first # 降順なので先頭が最新
+    current_url = public_url(current[1])
+    page_url = public_url("index.html")
+    feed_url = public_url("feed.xml")
+    cover_url = public_url(COVER_IMAGE)
+    description = "#{date_with_slot(current[0], current[1])} — #{current[2]}"
+
+    options = rows.map { |date, fname, title|
+      label = "#{date_with_slot(date, fname)} — #{title}"
+      selected = (fname == current[1]) ? " selected" : ""
+      %(<option value="#{h(public_url(fname))}"#{selected}>#{h(label)}</option>)
+    }.join("\n        ")
+
+    TemplateRenderer.render("index.html", binding)
+  end
+
+  # --- feed.xml (Atom) ---------------------------------------------------
+  # archives.csv の全エピソードを新しい順のエントリにした Atom フィード。
+  # 各エントリの content には、その回で紹介したニュース一覧(used_news)を
+  # URL リンク化した HTML で入れる。used_news が無い過去分は content を空にする。
+
+  def write_feed(rows)
+    local_xml = File.join(Dir.tmpdir, "miyamai_feed_#{Process.pid}.xml")
+    File.write(local_xml, render_feed(rows))
+    gcloud_storage("cp", "--content-type=application/atom+xml; charset=utf-8", local_xml, "gs://#{@bucket}/feed.xml")
+  ensure
+    File.delete(local_xml) if local_xml && File.exist?(local_xml)
+  end
+
+  def render_feed(rows)
+    abort("no archives to render") if rows.empty?
+
+    feed_url = public_url("feed.xml")
+    page_url = public_url("index.html")
+    updated  = feed_datetime(rows.first[0], rows.first[4]) # 降順なので先頭が最新
+
+    entries = rows.map { |date, fname, title, used_news, updated_at|
+      render_feed_entry(date, fname, title, used_news.to_s, updated_at)
+    }.join("\n")
+
+    TemplateRenderer.render("feed.xml", binding)
+  end
+
+  def render_feed_entry(date, fname, title, used_news, updated_at)
+    # link は読者のクリック先なので再生ページ(index.html)にする。
+    # id はエントリの一意識別子なので、回ごとに一意な mp3 URL のままにする
+    # (全エントリで同じ index.html を id にすると RSS リーダーが区別できない)。
+    entry_id  = public_url(fname)
+    entry_url = public_url("index.html")
+    updated   = feed_datetime(date, updated_at)
+    content   = used_news.strip.empty? ? "" : h(used_news)
+    # 同一日に複数回ある場合、entry の title が重複しないよう slot を添える。
+    label = slot_label(fname)
+    title = "#{title}（#{label}）" unless label.empty?
+
+    TemplateRenderer.render("feed_entry.xml", binding).chomp
+  end
+
+  # Atom の <updated> 用 RFC3339 日時を返す。
+  # updated_at(生成時刻)があればそれを使う。持たない過去行は date の
+  # 00:00:00 UTC にフォールバックする。
+  # date の組み立てで Date#to_time を使わないのは、ローカルタイム扱いになり
+  # UTC 変換で日付がずれるため。日付文字列をそのまま UTC 午前0時として組む。
+  def feed_datetime(date_str, updated_at = nil)
+    return updated_at if updated_at && !updated_at.to_s.strip.empty?
+
+    "#{Date.parse(date_str).strftime('%Y-%m-%d')}T00:00:00Z"
+  end
+
+  # 現在時刻を UTC の RFC3339 秒精度で返す(例: 2026-07-10T05:11:23Z)。
+  def now_rfc3339
+    Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+  end
+
+  # ファイル名末尾の slot(_morning/_afternoon/_evening)を日本語ラベルにする。
+  # 1日に複数回ある回を UI やフィードで見分けるための表示用。
+  # slot を持たない旧ファイル名は空文字を返す(後方互換)。
+  SLOT_LABELS = { "morning" => "朝", "afternoon" => "昼", "evening" => "夜" }.freeze
+
+  def slot_label(filename)
+    m = filename.match(/_(morning|afternoon|evening)\.mp3\z/)
+    m ? SLOT_LABELS.fetch(m[1]) : ""
+  end
+
+  # "YYYY-MM-DD" に slot ラベルを添えた表示用の日付。slot が無ければ日付のみ。
+  def date_with_slot(date, filename)
+    label = slot_label(filename)
+    label.empty? ? date : "#{date}（#{label}）"
+  end
+
+  # ファイル名(miyamai_news_YYYYMMDD[_slot].mp3)の日付部分を archives.csv 用の
+  # "YYYY-MM-DD" にする。GCS のオブジェクト名と同じくファイル名を正とすることで、
+  # 過去分を日付指定なしで再アップロードしても date 列が今日にずれない。
+  # ファイル名から日付が読めないときだけ @date にフォールバックする。
+  def date_for(filename)
+    m = filename.match(/(\d{4})(\d{2})(\d{2})/)
+    m ? "#{m[1]}-#{m[2]}-#{m[3]}" : @date.to_s
+  end
+
+  def h(str)
+    CGI.escapeHTML(str.to_s)
+  end
+end
+
+# ---------------------------------------------------------------------------
+# メイン: 台本生成 → 音声合成 → BGM 合成 → 公開 を順に実行
+# ---------------------------------------------------------------------------
+#
+# 使い方:
+#   ruby miyamai_news.rb                  台本生成 → 音声合成 → BGM合成 → 公開まで一気通し
+#   ruby miyamai_news.rb --generate-only  生成だけ行い dist/ に mp3(+used.txt)を書き出す
+#   ruby miyamai_news.rb --publish-only   dist/ の該当回 mp3(+used.txt)を GCS へ公開する
+#   ruby miyamai_news.rb --clean          中間生成物(work/)を捨てて終了する
+#
+#   --bgm PATH   既定 BGM(config の assets.bgm_path)を差し替える
+#   --date YYYY-MM-DD / --slot morning|afternoon|evening
+#                対象の回を明示する（--publish-only で過去回を公開し直すときなど）
+
+# dist/ に置く成果物のパス。generate と publish で同じ命名規則を共有する。
+BASE_DIR = __dir__
+WORK_DIR = File.join(BASE_DIR, "work")
+DIST_DIR = File.join(BASE_DIR, "dist")
+
+def episode_mp3_path(date_tag, slot)  = File.join(DIST_DIR, "miyamai_news_#{date_tag}_#{slot}.mp3")
+def episode_used_path(date_tag, slot) = File.join(DIST_DIR, "miyamai_news_#{date_tag}_#{slot}.used.txt")
 
 def main
-  base_dir = __dir__
-  work_dir = File.join(base_dir, "work")
-  dist_dir = File.join(base_dir, "dist")
-  # BGM は config の assets.bgm_path。相対パス指定なら base_dir 起点で解決する。
-  default_bgm = File.expand_path(Config.get("assets.bgm_path"), base_dir)
+  args = parse_args(ARGV)
 
-  # --clean: 中間生成物を捨てて終了する（生成はしない）。
-  # last_fetch.txt（前回収集時刻の記録）は残す。消すと収集 window が上限に
-  # リセットされ、次回に過去分を拾い直して重複してしまうため。
-  if ARGV.include?("--clean")
-    targets = Dir.glob(File.join(work_dir, "*")).reject { |p| File.basename(p) == "last_fetch.txt" }
-    FileUtils.rm_rf(targets)
-    warn "作業ディレクトリを初期化: #{work_dir}"
+  if args[:clean]
+    clean_work_dir
     return
   end
 
-  date = Time.now
+  date = args[:date] || Time.now
   date_tag = date.strftime("%Y%m%d")
-  slot = slot_for(date)
-  bgm_path = ARGV[0] || default_bgm
-  output_path = File.join(dist_dir, "miyamai_news_#{date_tag}_#{slot}.mp3")
-  used_news_output = File.join(dist_dir, "miyamai_news_#{date_tag}_#{slot}.used.txt")
+  slot = args[:slot] || slot_for(date)
 
-  FileUtils.mkdir_p(work_dir)
-  FileUtils.mkdir_p(dist_dir)
+  FileUtils.mkdir_p(WORK_DIR)
+  FileUtils.mkdir_p(DIST_DIR)
 
-  generator = ScriptGenerator.new(work_dir: work_dir, date: date, slot: slot)
+  # --publish-only でなければ生成する。
+  run_generate(date, date_tag, slot, args[:bgm]) unless args[:publish_only]
+  # --generate-only でなければ公開する。
+  run_publish(date, date_tag, slot) unless args[:generate_only]
+end
+
+# 台本生成 → 音声合成 → BGM 合成。成果物を dist/ に書き出す。
+def run_generate(date, date_tag, slot, bgm_override)
+  # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
+  bgm_path = bgm_override || File.expand_path(Config.get("assets.bgm_path"), BASE_DIR)
+  output_path = episode_mp3_path(date_tag, slot)
+  used_news_output = episode_used_path(date_tag, slot)
+
+  generator = ScriptGenerator.new(work_dir: WORK_DIR, date: date, slot: slot)
   script_path = generator.generate
-  voice_path = VoiceSynthesizer.new(work_dir: work_dir, date: date, slot: slot).synthesize(script_path)
+  voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, date: date, slot: slot).synthesize(script_path)
   AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
 
   # 使用ニュース一覧を mp3 と並べて成果物として残す（work/ 側はキャッシュとして温存）。
@@ -984,6 +1103,44 @@ def main
 
   warn "完成: #{output_path}"
   warn "使用ニュース: #{used_news_output}"
+end
+
+# dist/ の該当回 mp3(+used.txt)を GCS へ公開する。
+def run_publish(date, date_tag, slot)
+  mp3_path = episode_mp3_path(date_tag, slot)
+  abort "mp3 が見つかりません: #{mp3_path}（先に生成が必要）" unless File.exist?(mp3_path)
+
+  used_path = episode_used_path(date_tag, slot)
+  used_path = nil unless used_path && File.exist?(used_path)
+
+  Publisher.new(date: date.to_date).run(mp3_path, used_path)
+end
+
+# 中間生成物(work/)を捨てる。last_fetch.txt（前回収集時刻の記録）は残す。
+# 消すと収集 window が上限にリセットされ、次回に過去分を拾い直して重複するため。
+def clean_work_dir
+  targets = Dir.glob(File.join(WORK_DIR, "*")).reject { |p| File.basename(p) == "last_fetch.txt" }
+  FileUtils.rm_rf(targets)
+  warn "作業ディレクトリを初期化: #{WORK_DIR}"
+end
+
+# ARGV を解析する。値を取るオプション(--bgm/--date/--slot)は次の要素を消費する。
+def parse_args(argv)
+  opts = {}
+  i = 0
+  while i < argv.length
+    case argv[i]
+    when "--clean"         then opts[:clean] = true
+    when "--generate-only" then opts[:generate_only] = true
+    when "--publish-only"  then opts[:publish_only] = true
+    when "--bgm"           then opts[:bgm] = argv[i += 1]
+    when "--date"          then opts[:date] = Time.parse(argv[i += 1])
+    when "--slot"          then opts[:slot] = argv[i += 1]
+    else abort "不明な引数: #{argv[i]}"
+    end
+    i += 1
+  end
+  opts
 end
 
 main if __FILE__ == $PROGRAM_NAME
