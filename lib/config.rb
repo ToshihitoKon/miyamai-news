@@ -35,8 +35,8 @@ module Config
     def load_data
       unless File.exist?(DEFAULT_PATH)
         raise MissingConfigError,
-              "#{DEFAULT_PATH} がありません。" \
-              "`cp #{File.basename(SAMPLE_PATH)} #{File.basename(DEFAULT_PATH)}` してから値を埋めてください。"
+          "#{DEFAULT_PATH} がありません。" \
+          "`cp #{File.basename(SAMPLE_PATH)} #{File.basename(DEFAULT_PATH)}` してから値を埋めてください。"
       end
 
       YAML.safe_load_file(DEFAULT_PATH) || {}

@@ -206,7 +206,7 @@ class ScriptGenerator
     # 想定した構造が見つからなければそのまま返して人間が気づけるようにする
     return used unless start
 
-    lines[start..].join.strip + "\n"
+    "#{lines[start..].join.strip}\n"
   end
 
   # --- ニュース収集 ---
@@ -466,7 +466,7 @@ class ScriptGenerator
     # 挨拶が見つからなければ想定外なので、そのまま返して人間が気づけるようにする
     return script unless idx
 
-    script[idx..].strip + "\n"
+    "#{script[idx..].strip}\n"
   end
 
   # --- プロンプト ---
@@ -478,21 +478,20 @@ class ScriptGenerator
 
   # ライター用タスク。ニュース JSON とモカ設定を差し込んで完成させる。
   def writer_prompt(news_json)
-    TemplateRenderer.render("writer.prompt", self, {
+    TemplateRenderer.render("writer.prompt", self,
       moka: moka_prompt,
       news_json:,
-      today_ja: @today_ja,
-    })
+      today_ja: @today_ja)
   end
 
   # 整形用タスク。ライターの出力(ドラフト)を差し込んで完成させる。
   def format_prompt(draft)
-    TemplateRenderer.render("format.prompt", self, { draft: })
+    TemplateRenderer.render("format.prompt", self, draft:)
   end
 
   # 台本と収集済みニュース JSON を渡し、台本で実際に触れられたニュースだけを
   # JSON から登場順に抜き出させるプロンプト。
   def used_news_prompt(script, news_json)
-    TemplateRenderer.render("used_news.prompt", self, { script:, news_json: })
+    TemplateRenderer.render("used_news.prompt", self, script:, news_json:)
   end
 end

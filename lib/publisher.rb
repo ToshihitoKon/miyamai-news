@@ -45,7 +45,7 @@ class Publisher
   # 指定オブジェクトが GCS のバケットに存在するか。
   def object_exists?(object)
     system("gcloud", "storage", "ls", "gs://#{@bucket}/#{object}",
-           out: File::NULL, err: File::NULL)
+      out: File::NULL, err: File::NULL)
   end
 
   private
@@ -123,7 +123,7 @@ class Publisher
     return [] unless archives_exist?
 
     ok = system("gcloud", "storage", "cp", "gs://#{@bucket}/archives.csv", local_csv,
-                out: File::NULL, err: File::NULL)
+      out: File::NULL, err: File::NULL)
     abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)") unless ok && File.exist?(local_csv)
 
     CSV.read(local_csv)
@@ -147,21 +147,20 @@ class Publisher
     abort("no archives to render") if rows.empty?
 
     current = rows.first # 降順なので先頭が最新
-    options = rows.map { |date, fname, title|
+    options = rows.map do |date, fname, title|
       label = "#{date_with_slot(date, fname)} — #{title}"
-      selected = (fname == current[1]) ? " selected" : ""
+      selected = fname == current[1] ? " selected" : ""
       %(<option value="#{h(public_url(fname))}"#{selected}>#{h(label)}</option>)
-    }.join("\n        ")
+    end.join("\n        ")
 
-    TemplateRenderer.render("index.html", self, {
+    TemplateRenderer.render("index.html", self,
       current:,
       current_url: public_url(current[1]),
       page_url: public_url("index.html"),
       feed_url: public_url("feed.xml"),
       cover_url: public_url(COVER_IMAGE),
       description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
-      options:,
-    })
+      options:)
   end
 
   # --- feed.xml (Atom) ---------------------------------------------------
@@ -180,16 +179,15 @@ class Publisher
   def render_feed(rows)
     abort("no archives to render") if rows.empty?
 
-    entries = rows.map { |date, fname, title, used_news, updated_at|
+    entries = rows.map do |date, fname, title, used_news, updated_at|
       render_feed_entry(date, fname, title, used_news.to_s, updated_at)
-    }.join("\n")
+    end.join("\n")
 
-    TemplateRenderer.render("feed.xml", self, {
+    TemplateRenderer.render("feed.xml", self,
       feed_url: public_url("feed.xml"),
       page_url: public_url("index.html"),
       updated: feed_datetime(rows.first[0], rows.first[4]), # 降順なので先頭が最新
-      entries:,
-    })
+      entries:)
   end
 
   def render_feed_entry(date, fname, title, used_news, updated_at)
@@ -197,7 +195,7 @@ class Publisher
     label = slot_label(fname)
     title = "#{title}（#{label}）" unless label.empty?
 
-    TemplateRenderer.render("feed_entry.xml", self, {
+    TemplateRenderer.render("feed_entry.xml", self,
       title:,
       # link は読者のクリック先なので再生ページ(index.html)にする。
       entry_url: public_url("index.html"),
@@ -205,8 +203,7 @@ class Publisher
       # (全エントリで同じ index.html を id にすると RSS リーダーが区別できない)。
       entry_id: public_url(fname),
       updated: feed_datetime(date, updated_at),
-      content: used_news.strip.empty? ? "" : h(used_news),
-    }).chomp
+      content: used_news.strip.empty? ? "" : h(used_news)).chomp
   end
 
   # Atom の <updated> 用 RFC3339 日時を返す。

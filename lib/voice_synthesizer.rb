@@ -131,7 +131,7 @@ class VoiceSynthesizer
   def split_chunks(script)
     script
       .gsub(/\r\n?/, "\n")
-      .split(/(?<=。)/)      # 「。」の直後で分割（句点は各文に残す）
+      .split(/(?<=。)/) # 「。」の直後で分割（句点は各文に残す）
       .map(&:strip)
       .reject(&:empty?)
       .flat_map { |sentence| split_long_sentence(sentence) }

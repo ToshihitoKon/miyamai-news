@@ -1,0 +1,71 @@
+AllCops:
+  TargetRubyVersion: 3.4
+  DisabledByDefault: true
+  Exclude:
+    - "gems/**/*"
+
+Bundler:
+  Enabled: true
+
+Gemspec:
+  Enabled: true
+
+Layout:
+  Enabled: true
+Layout/LineLength:
+  Enabled: false
+# 引数・ハッシュの折り返しは、開き括弧の位置に揃えず行頭から一定量だけ
+# インデントする。括弧位置に揃えると引数が深くまで押し出されて読みにくいため。
+Layout/FirstArgumentIndentation:
+  EnforcedStyle: consistent
+Layout/FirstHashElementIndentation:
+  EnforcedStyle: consistent
+Layout/ArgumentAlignment:
+  EnforcedStyle: with_fixed_indentation
+Layout/HashAlignment:
+  EnforcedHashRocketStyle: key
+  EnforcedColonStyle: key
+
+Lint:
+  Enabled: true
+Lint/UnusedMethodArgument:
+  AllowUnusedKeywordArguments: true
+
+Metrics:
+  Enabled: false
+
+Migration:
+  Enabled: false
+
+Naming:
+  Enabled: true
+
+Security:
+  Enabled: true
+
+Style:
+  Enabled: true
+Style/FrozenStringLiteralComment:
+  Enabled: false
+Style/Documentation:
+  Enabled: false
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+Style/TrailingCommaInArguments:
+  Enabled: false
+Style/TrailingCommaInArrayLiteral:
+  Enabled: false
+Style/TrailingCommaInHashLiteral:
+  Enabled: false
+Style/SymbolArray:
+  EnforcedStyle: brackets
+Style/NumericLiterals:
+  Enabled: false
+Style/WordArray:
+  Enabled: false
+Style/RescueModifier:
+  Enabled: false
+Style/BarePercentLiterals:
+  Enabled: false
+Style/Lambda:
+  EnforcedStyle: literal
