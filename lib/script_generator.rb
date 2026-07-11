@@ -103,7 +103,7 @@ class ScriptGenerator
   # このクラスが work/ に作る回ごとの中間ファイルの glob パターン。
   # clean が消してよいものだけを列挙する（last_fetch.txt / feed_cache.json は含めない）。
   def self.work_globs(work_dir)
-    %w[news_*.json script_draft_*.txt script_*.txt news_used_*.txt]
+    %w[news_*.json script_*.txt tts_script_*.txt news_used_*.txt]
       .map { |pat| File.join(work_dir, pat) }
   end
 
@@ -131,81 +131,87 @@ class ScriptGenerator
     )
   end
 
-  # 台本テキストのパスを返す。
+  # 台本を生成する。format: false なら人間が読む台本(script)と used まで作って止め、
+  # VOICEPEAK 向けの整形(tts_script)は行わない（--script-only 用）。
+  # 戻り値は format 済みなら tts_script、未整形なら script のパス。
   #
-  # 各ステップ（収集・ドラフト・整形・used 記録）はそれぞれ中間ファイルの有無で
-  # 再利用を判断し、途中クラッシュ後の再実行で続きから進める。ここで script の
-  # 有無だけを見て丸ごと return してしまうと、整形後・used 生成前に落ちたときに
-  # used が永久に作られない（再実行しても save_used_news に到達しない）ため、
-  # 早期 return はせず常に全ステップを通す。
-  def generate
+  # 各ステップ（収集・script+used・整形）はそれぞれ中間ファイルの有無で再利用を判断し、
+  # 途中クラッシュ後の再実行で続きから進める。
+  def generate(format: true)
     news_json = load_or_collect_news
 
-    # ステップ2: 整形（テキスト変換のみなので WebFetch は不要）。
-    # 整形済み台本が残っていれば再利用し、Claude 呼び出しをスキップする。
-    script = load_or_format_script(news_json)
+    # ステップ2: ライター。台本(script)と used を 1 回の Claude 呼び出しで生成する。
+    # どちらも記事本文の取得に WebFetch を使い、used の照合は英字のままの台本と JSON で
+    # 行うのが正確なため、同じコンテキストで一緒に出させる。
+    write_script_and_used(news_json)
 
-    # ステップ3: 台本で実際に触れたニュースを JSON から抜き出して記録する
-    save_used_news(script, news_json)
+    return script_path unless format
 
-    script_path
+    # ステップ3: VOICEPEAK 向け整形（script → tts_script）。カナ化に集中させるため
+    # 別呼び出しにする。tts_script は読み上げ用の一時ファイル。
+    format_tts_script
+
+    tts_script_path
   end
+
+  # 人間が読む台本(script)のパス。--script-only の確認・手直し対象。
+  def script_file = script_path
+
+  # 音声合成に渡す、VOICEPEAK 向けに整形した台本(tts_script)のパス。
+  def tts_script_file = tts_script_path
 
   # 番組で実際に触れたニュース一覧（used_news）のパス。成果物として書き出す用。
   def used_news_file = used_news_path
 
   private
 
-  # 整形済み台本を返す。既にあれば再利用し、なければドラフトから整形して書き出す。
-  def load_or_format_script(news_json)
-    if File.exist?(script_path)
-      warn "既存の台本を利用: #{script_path}"
-      return File.read(script_path)
-    end
-
-    draft = load_or_write_draft(news_json)
-    script = strip_preamble(run_claude("formatting for VOICEPEAK", format_prompt(draft)))
-    File.write(script_path, script)
-    warn "台本を生成: #{script_path}"
-    script
-  end
-
-  def news_json_path = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.json")
-  def draft_path     = File.join(@work_dir, "script_draft_#{@date_tag}_#{@slot}.txt")
-  def script_path    = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
-  def used_news_path = File.join(@work_dir, "news_used_#{@date_tag}_#{@slot}.txt")
+  def news_json_path   = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.json")
+  def script_path      = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
+  def tts_script_path  = File.join(@work_dir, "tts_script_#{@date_tag}_#{@slot}.txt")
+  def used_news_path   = File.join(@work_dir, "news_used_#{@date_tag}_#{@slot}.txt")
 
   def last_fetch_path = self.class.last_fetch_path(@work_dir)
 
-  # ステップ1: ライター（記事本文の取得に WebFetch を使う）。
-  # ドラフトが残っていれば再利用し、Claude 呼び出しをスキップする。
-  def load_or_write_draft(news_json)
-    if File.exist?(draft_path)
-      warn "既存のドラフトを利用: #{draft_path}"
-      return File.read(draft_path)
-    end
-
-    draft = run_claude("writing script", writer_prompt(news_json), "--allowedTools", "WebFetch")
-    File.write(draft_path, draft)
-    draft
-  end
-
-  # 台本で実際に触れたニュースを、収集済み JSON から登場順に抜き出して保存する。
-  # 台本は元記事を言い換えているため文字列一致では拾えず、Claude に意味照合させる。
-  # 既存ファイルがあれば再実行時に Claude 呼び出しを省いて続きから進める。
-  def save_used_news(script, news_json)
-    if File.exist?(used_news_path)
-      warn "既存の使用ニュース一覧を利用: #{used_news_path}"
+  # ステップ2: ライター。1 回の Claude 呼び出しで script.txt と used.txt を書かせる。
+  # Claude が Write で直接書くので、書き込み先の 2 パスをプロンプトで明示する。
+  # 出力の前置き・思考メモ混入は Claude 側で防ぎきれないので、書かれたファイルを
+  # Ruby が読み直して strip をかけ、上書き保存する。
+  # 再開判定は「両方揃って初めてスキップ」。片方でも欠ければ作り直す。
+  def write_script_and_used(news_json)
+    if File.exist?(script_path) && File.exist?(used_news_path)
+      warn "既存の台本/使用ニュース一覧を利用: #{script_path}"
       return
     end
 
-    # source を正確な発行元にするため、まとめ系記事のリンク先を Claude が確認できるよう
-    # WebFetch を許可する。
-    used = strip_used_preamble(
-      run_claude("extracting used news", used_news_prompt(script, news_json), "--allowedTools", "WebFetch")
-    )
-    File.write(used_news_path, used)
+    run_claude("writing script and used news",
+      writer_prompt(news_json), "--allowedTools", "WebFetch Write")
+
+    rewrite_file(script_path) { |text| strip_preamble(text) }
+    rewrite_file(used_news_path) { |text| strip_used_preamble(text) }
+    warn "台本を生成: #{script_path}"
     warn "使用ニュースを記録: #{used_news_path}"
+  end
+
+  # ステップ3: 整形。script.txt を読んで VOICEPEAK 向けの tts_script.txt に整形させる。
+  # ここも Claude が Write で直接書くので、Ruby が読み直して前置きを strip する。
+  def format_tts_script
+    if File.exist?(tts_script_path)
+      warn "既存の整形済み台本を利用: #{tts_script_path}"
+      return
+    end
+
+    run_claude("formatting for VOICEPEAK", format_prompt, "--allowedTools", "Read Write")
+
+    rewrite_file(tts_script_path) { |text| strip_preamble(text) }
+    warn "整形済み台本を生成: #{tts_script_path}"
+  end
+
+  # Claude が Write で書いたファイルを読み直し、後処理をかけて上書きする。
+  # Claude が想定パスに書いていなければ止める（不完全なまま後段へ進ませない）。
+  def rewrite_file(path)
+    abort "Claude が期待したファイルを書きませんでした: #{path}" unless File.exist?(path)
+
+    File.write(path, yield(File.read(path)))
   end
 
   # 一覧本体より前に混入した前置きや照合の思考メモを落とす。
@@ -398,25 +404,21 @@ class ScriptGenerator
   # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # モカのキャラクター設定。ライターの前段に埋め込む部品。
-  def moka_prompt = TemplateRenderer.render("moka.prompt", self)
-
-  # ライター用タスク。ニュース JSON とモカ設定を差し込んで完成させる。
+  # ライター用タスク。ニュース JSON を差し込み、台本(script)と used の書き込み先パスを
+  # 渡す（Claude が Write で直接書く）。パスは Claude の cwd に依存しないよう絶対パス。
   def writer_prompt(news_json)
     TemplateRenderer.render("writer.prompt", self,
-      moka: moka_prompt,
       news_json:,
-      today_ja: @today_ja)
+      today_ja: @today_ja,
+      script_path: File.expand_path(script_path),
+      used_news_path: File.expand_path(used_news_path))
   end
 
-  # 整形用タスク。ライターの出力(ドラフト)を差し込んで完成させる。
-  def format_prompt(draft)
-    TemplateRenderer.render("format.prompt", self, draft:)
-  end
-
-  # 台本と収集済みニュース JSON を渡し、台本で実際に触れられたニュースだけを
-  # JSON から登場順に抜き出させるプロンプト。
-  def used_news_prompt(script, news_json)
-    TemplateRenderer.render("used_news.prompt", self, script:, news_json:)
+  # 整形用タスク。読み込む台本(script)と書き込む tts_script のパスを渡す
+  # （Claude が Read/Write）。
+  def format_prompt
+    TemplateRenderer.render("format.prompt", self,
+      script_path: File.expand_path(script_path),
+      tts_script_path: File.expand_path(tts_script_path))
   end
 end

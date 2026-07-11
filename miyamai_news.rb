@@ -59,13 +59,14 @@ def main
   run_publish(episode) unless args[:generate_only]
 end
 
-# 台本だけ生成して停止する。中身を確認・手直ししたうえで、フラグなしで再実行すれば
-# 既存の台本キャッシュが再利用され、音声合成〜publish まで続きから進む。
+# 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。
+# 中身を確認・手直ししたうえで、フラグなしで再実行すれば既存の台本を再利用して
+# 整形〜音声合成〜publish まで続きから進む。
 def run_script(episode)
-  script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).generate
+  script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).generate(format: false)
 
   warn "台本を生成: #{script_path}"
-  warn "内容を確認し、必要なら手直ししてください。フラグなしで再実行すると音声生成〜publish まで進みます。"
+  warn "内容を確認し、必要なら手直ししてください。フラグなしで再実行すると整形〜音声生成〜publish まで進みます。"
 end
 
 def run_generate(episode, bgm_override)
@@ -75,8 +76,8 @@ def run_generate(episode, bgm_override)
   used_news_output = episode_used_path(episode)
 
   generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode)
-  script_path = generator.generate
-  voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, episode: episode).synthesize(script_path)
+  tts_script_path = generator.generate
+  voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, episode: episode).synthesize(tts_script_path)
   AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
 
   # 使用ニュース一覧を mp3 と並べて成果物として残す（work/ 側はキャッシュとして温存）。
