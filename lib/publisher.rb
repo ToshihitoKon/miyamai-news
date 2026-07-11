@@ -147,19 +147,21 @@ class Publisher
     abort("no archives to render") if rows.empty?
 
     current = rows.first # 降順なので先頭が最新
-    current_url = public_url(current[1])
-    page_url = public_url("index.html")
-    feed_url = public_url("feed.xml")
-    cover_url = public_url(COVER_IMAGE)
-    description = "#{date_with_slot(current[0], current[1])} — #{current[2]}"
-
     options = rows.map { |date, fname, title|
       label = "#{date_with_slot(date, fname)} — #{title}"
       selected = (fname == current[1]) ? " selected" : ""
       %(<option value="#{h(public_url(fname))}"#{selected}>#{h(label)}</option>)
     }.join("\n        ")
 
-    TemplateRenderer.render("index.html", binding)
+    TemplateRenderer.render("index.html", self, {
+      current:,
+      current_url: public_url(current[1]),
+      page_url: public_url("index.html"),
+      feed_url: public_url("feed.xml"),
+      cover_url: public_url(COVER_IMAGE),
+      description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
+      options:,
+    })
   end
 
   # --- feed.xml (Atom) ---------------------------------------------------
@@ -178,30 +180,33 @@ class Publisher
   def render_feed(rows)
     abort("no archives to render") if rows.empty?
 
-    feed_url = public_url("feed.xml")
-    page_url = public_url("index.html")
-    updated  = feed_datetime(rows.first[0], rows.first[4]) # 降順なので先頭が最新
-
     entries = rows.map { |date, fname, title, used_news, updated_at|
       render_feed_entry(date, fname, title, used_news.to_s, updated_at)
     }.join("\n")
 
-    TemplateRenderer.render("feed.xml", binding)
+    TemplateRenderer.render("feed.xml", self, {
+      feed_url: public_url("feed.xml"),
+      page_url: public_url("index.html"),
+      updated: feed_datetime(rows.first[0], rows.first[4]), # 降順なので先頭が最新
+      entries:,
+    })
   end
 
   def render_feed_entry(date, fname, title, used_news, updated_at)
-    # link は読者のクリック先なので再生ページ(index.html)にする。
-    # id はエントリの一意識別子なので、回ごとに一意な mp3 URL のままにする
-    # (全エントリで同じ index.html を id にすると RSS リーダーが区別できない)。
-    entry_id  = public_url(fname)
-    entry_url = public_url("index.html")
-    updated   = feed_datetime(date, updated_at)
-    content   = used_news.strip.empty? ? "" : h(used_news)
     # 同一日に複数回ある場合、entry の title が重複しないよう slot を添える。
     label = slot_label(fname)
     title = "#{title}（#{label}）" unless label.empty?
 
-    TemplateRenderer.render("feed_entry.xml", binding).chomp
+    TemplateRenderer.render("feed_entry.xml", self, {
+      title:,
+      # link は読者のクリック先なので再生ページ(index.html)にする。
+      entry_url: public_url("index.html"),
+      # id はエントリの一意識別子なので、回ごとに一意な mp3 URL のままにする
+      # (全エントリで同じ index.html を id にすると RSS リーダーが区別できない)。
+      entry_id: public_url(fname),
+      updated: feed_datetime(date, updated_at),
+      content: used_news.strip.empty? ? "" : h(used_news),
+    }).chomp
   end
 
   # Atom の <updated> 用 RFC3339 日時を返す。

@@ -3,18 +3,21 @@
 require "erb"
 
 # templates/ 以下の ERB テンプレート（プロンプト *.prompt.erb と HTML/XML *.erb）を
-# 読み込み、呼び出し側の binding で描画する。
+# 読み込んで描画する。
 #
-# 描画時に値を引数で渡さず binding を受け取るのは、呼び出し側のローカル変数・
-# インスタンス変数をそのままテンプレートの <%= ... %> から参照させるため。
+# context オブジェクトのスコープで評価するので、テンプレートは context の
+# インスタンス変数（@title など）や private メソッド（h, date_with_slot など）を
+# そのまま呼べる。テンプレート固有の値は locals ハッシュで明示的に渡す。
 module TemplateRenderer
   # templates/ はプロジェクトルート（lib/ の一つ上）に置く。
   DIR = File.join(File.expand_path("..", __dir__), "templates")
 
   class << self
     # name は拡張子 .erb を除いたテンプレート名（例: "writer.prompt", "index.html"）。
-    # bind に渡した binding のスコープでテンプレートを評価する。
-    def render(name, bind)
+    # context のスコープに locals を差し込んだ binding でテンプレートを評価する。
+    def render(name, context, locals = {})
+      bind = context.instance_eval { binding }
+      locals.each { |key, value| bind.local_variable_set(key, value) }
       erb(name).result(bind)
     end
 
