@@ -95,6 +95,12 @@ def run_publish(date, date_tag, slot)
   used_path = nil unless used_path && File.exist?(used_path)
 
   Publisher.new(date: date.to_date).run(mp3_path, used_path)
+
+  # publish が成功した実行時刻で収集 window の起点を確定する。以後の収集はこの時刻より
+  # 後の記事だけを対象にする。Publisher#run は失敗時に内部で abort するので、ここへ
+  # 到達するのは成功時のみ。起点は実行時刻(Time.now)。過去回を publish し直しても未来の
+  # window を巻き戻さないよう、回の日付(date)ではなく実行時刻を使う。
+  ScriptGenerator.record_publish(work_dir: WORK_DIR, at: Time.now)
 end
 
 def run_clean

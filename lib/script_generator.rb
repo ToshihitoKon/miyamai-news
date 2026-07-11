@@ -79,11 +79,11 @@ class ScriptGenerator
     ],
   }.freeze
 
-  # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回収集からの
-  # 経過時間」の短い方を使う（1日複数回まわしたとき、同じ記事を毎回拾わないため）。
+  # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
+  # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
   LOOKBACK_HOURS = Config.get("collect.lookback_hours").to_i
-  # 既存の収集済み JSON があるとき、前回収集からこの時間以上経っていれば
-  # 問い合わせず自動で再収集する。未満なら y/n を尋ねる。
+  # 収集済みキャッシュがあるとき、収集した時刻(collected_at)からこの時間以上
+  # 経っていれば古いとみなして作り直す。未満なら再利用する。
   RECOLLECT_THRESHOLD_HOURS = Config.get("collect.recollect_threshold_hours").to_f
   # 各カテゴリの最大件数（台本が長くなりすぎるのを防ぐ）
   MAX_PER_CATEGORY = Config.get("collect.max_per_category").to_i
@@ -101,6 +101,16 @@ class ScriptGenerator
 
   # 始めの挨拶。前置き除去の目印にも使う。
   OPENING_GREETING = "宮舞モカです。"
+
+  # 収集 window の起点を記録する単一ファイル（date/slot 非依存）。
+  def self.last_fetch_path(work_dir) = File.join(work_dir, "last_fetch.txt")
+
+  # 収集 window の起点を at で確定する。publish 成功時に呼ぶ。
+  # この時刻より後の記事だけが次回の収集対象になる。収集(collect)ではなく publish で
+  # 確定するので、publish しないまま何度作り直しても起点が動かず、取りこぼしが出ない。
+  def self.record_publish(work_dir:, at:)
+    File.write(last_fetch_path(work_dir), at.iso8601)
+  end
 
   # @param work_dir [String] 中間ファイルの置き場
   # @param date [Time] 番組の日付
@@ -157,9 +167,7 @@ class ScriptGenerator
   def script_path    = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
   def used_news_path = File.join(@work_dir, "news_used_#{@date_tag}_#{@slot}.txt")
 
-  # 前回収集の実行時刻を記録する単一ファイル（slot 非依存）。
-  # 収集 window の起点と、既存 JSON の再収集判定の両方に使う。
-  def last_fetch_path = File.join(@work_dir, "last_fetch.txt")
+  def last_fetch_path = self.class.last_fetch_path(@work_dir)
 
   # ステップ1: ライター（記事本文の取得に WebFetch を使う）。
   # ドラフトが残っていれば再利用し、Claude 呼び出しをスキップする。
@@ -211,48 +219,69 @@ class ScriptGenerator
 
   # --- ニュース収集 ---
 
+  # ニュース JSON（Claude に渡す本体部分）を返す。
+  #
+  # 収集 window の起点は last_fetch.txt（＝前回 publish 時点）で、これは publish 成功
+  # 時にしか進まない。よって「まだ publish していない回を作り直す」間は起点が固定され、
+  # 破棄→再収集しても前回の window 分を取りこぼさない。
   def load_or_collect_news
-    if File.exist?(news_json_path) && !recollect?
-      warn "既存のニュースを利用: #{news_json_path}"
-      return File.read(news_json_path)
-    end
+    cached = load_cached_news
+    return cached if cached
 
-    # 収集の起点（前回収集時刻）は、collect_news が使うので先に読んでおく。
-    # 収集が成功したら現在時刻で更新する。
     since = last_fetch_time
-    news_json = collect_news(since)
-    File.write(news_json_path, news_json)
-    File.write(last_fetch_path, @date.iso8601)
+    news_body = collect_news(since)
+    write_news_cache(news_body, since)
     warn "ニュースを保存: #{news_json_path}"
-    news_json
+    news_body
   end
 
-  # 既存 JSON があるときに再収集するか決める。
-  # - 前回収集から RECOLLECT_THRESHOLD_HOURS 以上 → 自動で再収集
-  # - それ未満、または前回時刻が不明 → y/n を尋ねる（非対話環境では再利用に倒す）
-  def recollect?
-    since = last_fetch_time
-    if since && (@date - since) >= RECOLLECT_THRESHOLD_HOURS * 3600
-      warn "前回収集から#{RECOLLECT_THRESHOLD_HOURS.to_i}時間以上経過。ニュースを再収集します。"
-      return true
-    end
+  # キャッシュを再利用してよければその本体(Claude に渡す news 部分)を返す。
+  # 作り直すべき、または壊れている場合は nil。
+  #
+  # 再利用の条件は次の両方:
+  # - 収集時の起点(since_datetime)が今の起点(last_fetch)と一致する。publish が挟まって
+  #   起点が動いていれば、古い window で集めたキャッシュなので作り直す。
+  # - 収集時刻(collected_at)から RECOLLECT_THRESHOLD_HOURS 未満。起点が同じでも古すぎる
+  #   キャッシュは新着を取りこぼすので作り直す。
+  def load_cached_news
+    return nil unless File.exist?(news_json_path)
 
-    prompt_recollect
+    cache = JSON.parse(File.read(news_json_path))
+    return nil unless cache_window_matches?(cache)
+    return nil if cache_stale?(cache)
+
+    warn "既存のニュースを利用: #{news_json_path}"
+    JSON.pretty_generate(cache.fetch("news"))
+  rescue JSON::ParserError, KeyError
+    nil
   end
 
-  # 既存 JSON を使い回すか、収集し直すかを対話で尋ねる。
-  # 標準入力が端末でない（cron 等）場合は尋ねられないので、既存の再利用に倒す。
-  def prompt_recollect
-    unless $stdin.tty?
-      warn "既存のニュースを利用します（非対話環境のため再収集の確認を省略）: #{news_json_path}"
-      return false
-    end
-
-    $stderr.print "既存のニュース(#{File.basename(news_json_path)})があります。再収集しますか? [y/N]: "
-    $stdin.gets.to_s.strip.downcase.start_with?("y")
+  def cache_window_matches?(cache)
+    cache["since_datetime"] == last_fetch_time&.iso8601
   end
 
-  # last_fetch.txt に記録された前回収集時刻。無い/壊れていれば nil。
+  def cache_stale?(cache)
+    collected_at = Time.iso8601(cache["collected_at"])
+    stale = (@date - collected_at) >= RECOLLECT_THRESHOLD_HOURS * 3600
+    warn "収集から#{RECOLLECT_THRESHOLD_HOURS.to_i}時間以上経過。ニュースを再収集します。" if stale
+    stale
+  rescue ArgumentError, TypeError
+    true
+  end
+
+  # 本体を since_datetime / collected_at でくるんでキャッシュに書き出す。
+  # Claude に渡すのは news 部分だけなので、メタ情報はここでだけ持つ。
+  def write_news_cache(news_body, since)
+    cache = {
+      "since_datetime" => since&.iso8601,
+      "collected_at" => @date.iso8601,
+      "news" => JSON.parse(news_body),
+    }
+    File.write(news_json_path, JSON.pretty_generate(cache))
+  end
+
+  # last_fetch.txt に記録された前回 publish 時刻。無い/壊れていれば nil。
+  # publish 成功時にのみ更新される（収集 window の起点）。
   def last_fetch_time
     return nil unless File.exist?(last_fetch_path)
 
@@ -261,7 +290,7 @@ class ScriptGenerator
     nil
   end
 
-  # 今回の収集で「何時間前までさかのぼるか」。LOOKBACK_HOURS を上限に、前回収集からの
+  # 今回の収集で「何時間前までさかのぼるか」。LOOKBACK_HOURS を上限に、前回 publish からの
   # 経過時間があればその短い方を採る。前回時刻が無ければ LOOKBACK_HOURS をそのまま使う。
   def effective_lookback_hours(since)
     return LOOKBACK_HOURS unless since

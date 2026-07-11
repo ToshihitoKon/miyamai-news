@@ -40,8 +40,8 @@ claude:
 collect:
   # 何時間前までの記事を拾うかの上限。
   lookback_hours: 24
-  # 前回収集からこの時間以上経っていれば、問い合わせず自動で再収集する。
-  recollect_threshold_hours: 10
+  # 収集済みキャッシュがこの時間以上古ければ、新着を取りこぼさないよう自動で作り直す。
+  recollect_threshold_hours: 1
   # 各カテゴリの最大件数。
   max_per_category: 100
   # フィード取得の並列数。
