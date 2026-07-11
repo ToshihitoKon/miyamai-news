@@ -14,7 +14,7 @@
 #   ruby miyamai_news.rb                  台本生成 → 音声合成 → BGM合成 → 公開まで一気通し
 #   ruby miyamai_news.rb --generate-only  生成だけ行い dist/ に mp3(+used.txt)を書き出す
 #   ruby miyamai_news.rb --publish-only   dist/ の該当回 mp3(+used.txt)を GCS へ公開する
-#   ruby miyamai_news.rb --clean          中間生成物(work/)を捨てて終了する
+#   ruby miyamai_news.rb --clean          work/ を掃除し、公開済みの dist/ 成果物を消す
 #
 #   --bgm PATH   既定 BGM(config の assets.bgm_path)を差し替える
 #   --date YYYY-MM-DD / --slot morning|afternoon|evening
@@ -62,7 +62,7 @@ def main
   args = parse_args(ARGV)
 
   if args[:clean]
-    clean_work_dir
+    run_clean
     return
   end
 
@@ -109,12 +109,35 @@ def run_publish(date, date_tag, slot)
   Publisher.new(date: date.to_date).run(mp3_path, used_path)
 end
 
-# 中間生成物(work/)を捨てる。last_fetch.txt（前回収集時刻の記録）は残す。
-# 消すと収集 window が上限にリセットされ、次回に過去分を拾い直して重複するため。
+# 中間生成物を掃除する。work/ のキャッシュと、GCS へ公開済みの dist/ 成果物を消す。
+def run_clean
+  clean_work_dir
+  clean_published_dist
+end
+
+# work/ の中間キャッシュを削除する。ただし last_fetch.txt（前回収集時刻の記録）は
+# 残す。消すと収集 window が上限にリセットされ、次回に過去分を拾い直して重複するため。
 def clean_work_dir
   targets = Dir.glob(File.join(WORK_DIR, "*")).reject { |p| File.basename(p) == "last_fetch.txt" }
   FileUtils.rm_rf(targets)
   warn "作業ディレクトリを初期化: #{WORK_DIR}"
+end
+
+# dist/ の各 mp3 のうち、GCS 上に同名が存在する（＝公開済みの）ものだけを削除する。
+# 未公開の回を誤って消さないための存在確認。used.txt は対の mp3 とセットで扱う。
+def clean_published_dist
+  mp3s = Dir.glob(File.join(DIST_DIR, "miyamai_news_*.mp3"))
+  return if mp3s.empty?
+
+  publisher = Publisher.new
+  mp3s.each do |mp3|
+    if publisher.object_exists?(File.basename(mp3))
+      FileUtils.rm_f([mp3, mp3.sub(/\.mp3\z/, ".used.txt")])
+      warn "公開済み → 削除: #{mp3}"
+    else
+      warn "未公開 → 保持: #{mp3}"
+    end
+  end
 end
 
 # ARGV を解析する。値を取るオプション(--bgm/--date/--slot)は次の要素を消費する。

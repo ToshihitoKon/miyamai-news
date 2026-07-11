@@ -43,6 +43,12 @@ class Publisher
     puts "done: #{public_url('index.html')}"
   end
 
+  # 指定オブジェクトが GCS のバケットに存在するか。
+  def object_exists?(object)
+    system("gcloud", "storage", "ls", "gs://#{@bucket}/#{object}",
+           out: File::NULL, err: File::NULL)
+  end
+
   private
 
   def public_url(object)
@@ -125,8 +131,7 @@ class Publisher
   end
 
   def archives_exist?
-    system("gcloud", "storage", "ls", "gs://#{@bucket}/archives.csv",
-           out: File::NULL, err: File::NULL)
+    object_exists?("archives.csv")
   end
 
   # --- index.html --------------------------------------------------------
