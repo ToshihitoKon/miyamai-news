@@ -96,6 +96,17 @@ class ScriptGenerator
   # 収集 window の起点を記録する単一ファイル（date/slot 非依存）。
   def self.last_fetch_path(work_dir) = File.join(work_dir, "last_fetch.txt")
 
+  # フィードの seen_at 履歴を溜める単一ファイル（date/slot 非依存）。
+  # 回をまたいで保持する状態なので、last_fetch.txt と同じく clean 対象に含めない。
+  def self.feed_cache_path(work_dir) = File.join(work_dir, "feed_cache.json")
+
+  # このクラスが work/ に作る回ごとの中間ファイルの glob パターン。
+  # clean が消してよいものだけを列挙する（last_fetch.txt / feed_cache.json は含めない）。
+  def self.work_globs(work_dir)
+    %w[news_*.json script_draft_*.txt script_*.txt news_used_*.txt]
+      .map { |pat| File.join(work_dir, pat) }
+  end
+
   # 収集 window の起点を at で確定する。publish 成功時に呼ぶ。
   # この時刻より後の記事だけが次回の収集対象になる。収集(collect)ではなく publish で
   # 確定するので、publish しないまま何度作り直しても起点が動かず、取りこぼしが出ない。
@@ -113,7 +124,7 @@ class ScriptGenerator
     @date_tag = episode.date_tag
     @today_ja = episode.today_ja
     @feed_cache = FeedCache.new(
-      path: File.join(work_dir, "feed_cache.json"),
+      path: self.class.feed_cache_path(work_dir),
       retention_days: RETENTION_DAYS,
       max_retries: FETCH_MAX_RETRIES,
       retry_base_sec: FETCH_RETRY_BASE_SEC

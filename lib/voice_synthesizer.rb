@@ -13,6 +13,12 @@ class VoiceSynthesizer
   # VOICEPEAK の 1 回あたり合成できる文字数の上限。
   MAX_CHARS = 140
 
+  # このクラスが work/ に作る回ごとの中間ファイル/ディレクトリの glob パターン。
+  # clean が消してよいものを列挙する（wav_* はチャンク wav を入れるディレクトリ）。
+  def self.work_globs(work_dir)
+    %w[wav_* voice_*.mp3].map { |pat| File.join(work_dir, pat) }
+  end
+
   # @param episode [Episode] 番組コンテキスト（中間ファイル名の date_tag/slot に使う）
   def initialize(work_dir:, episode:)
     @work_dir = work_dir

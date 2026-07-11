@@ -107,11 +107,13 @@ def run_clean
   clean_published_dist
 end
 
-# work/ の中間キャッシュを削除する。ただし last_fetch.txt（前回収集時刻の記録）は
-# 残す。消すと収集 window が上限にリセットされ、次回に過去分を拾い直して重複するため。
+# work/ の回ごとの中間ファイルを削除する。各コンポーネントが「自分が作る中間ファイルの
+# glob パターン」を申告するので、それに一致するものだけを消す（ホワイトリスト方式）。
+# 回をまたいで保持する状態（last_fetch.txt / feed_cache.json）はパターンに含まれないので
+# 残る。消すと過去に見た記事を新着として拾い直し、重複紹介が起きるため。
 def clean_work_dir
-  targets = Dir.glob(File.join(WORK_DIR, "*")).reject { |p| File.basename(p) == "last_fetch.txt" }
-  FileUtils.rm_rf(targets)
+  patterns = ScriptGenerator.work_globs(WORK_DIR) + VoiceSynthesizer.work_globs(WORK_DIR)
+  FileUtils.rm_rf(patterns.flat_map { |pat| Dir.glob(pat) })
   warn "作業ディレクトリを初期化: #{WORK_DIR}"
 end
 
