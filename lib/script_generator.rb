@@ -72,8 +72,8 @@ class ScriptGenerator
   # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
   # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
   LOOKBACK_HOURS = Config.get("collect.lookback_hours").to_i
-  # FeedCache が entry を保持する日数。seen_at がこれより古い entry はパージされる。
-  # もともと LOOKBACK_HOURS より前の記事は対象にしないので、それを日数に直した程度でよい。
+  # FeedCache が entry を保持する日数。フィードに最後に見えた時刻(last_fetched_at)が
+  # これより古い（＝フィードから既に消えている）entry だけがパージされる。
   RETENTION_DAYS = Config.get("collect.retention_days").to_i
   # 各カテゴリの最大件数（台本が長くなりすぎるのを防ぐ）
   MAX_PER_CATEGORY = Config.get("collect.max_per_category").to_i
