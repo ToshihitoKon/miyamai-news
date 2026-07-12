@@ -80,6 +80,11 @@ class VoiceSynthesizer
   # この時間を超えたら kill してリトライへ回す。
   TIMEOUT_SEC = Config.get("voicepeak.timeout_sec").to_f
 
+  # チャンク（文）を結合する際に間に挟む無音の秒数。
+  # 句点区切りのチャンクをそのままつなげると間延びがなく聞き取りにくいため、
+  # 一呼吸おける無音を挟む。
+  CHUNK_GAP_SEC = Config.get("voicepeak.chunk_gap_sec").to_f
+
   # 1チャンク（140文字以内のテキスト）を WAV に合成する。
   # 失敗時は指数バックオフ（RETRY_BASE_SEC * 2**n）で MAX_RETRIES 回まで再試行する。
   def synthesize_chunk(text, out_path)
@@ -170,9 +175,17 @@ class VoiceSynthesizer
   end
 
   # 複数の WAV を ffmpeg の concat demuxer で1本に連結し、mp3 にエンコードする。
+  # チャンク間には CHUNK_GAP_SEC 秒の無音を挟み、文の切れ目に一呼吸おく。
   def concat_to_mp3(wav_paths, output)
+    silence = Tempfile.new(["silence", ".wav"])
+    silence.close
+    generate_silence(silence.path, CHUNK_GAP_SEC) if CHUNK_GAP_SEC.positive?
+
     list = Tempfile.new(["concat", ".txt"])
-    wav_paths.each { |p| list.puts("file '#{p}'") }
+    wav_paths.each_with_index do |p, i|
+      list.puts("file '#{p}'")
+      list.puts("file '#{silence.path}'") if CHUNK_GAP_SEC.positive? && i < wav_paths.size - 1
+    end
     list.close
 
     _out, err, status = Open3.capture3(
@@ -182,5 +195,15 @@ class VoiceSynthesizer
     raise "ffmpeg での連結に失敗しました: #{err[-300..]}" unless status.success?
   ensure
     list&.unlink
+    silence&.unlink
+  end
+
+  # 無音の WAV ファイルを生成する。
+  def generate_silence(out_path, duration_sec)
+    _out, err, status = Open3.capture3(
+      "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+      "-t", duration_sec.to_s, out_path
+    )
+    raise "無音ファイルの生成に失敗しました: #{err[-300..]}" unless status.success?
   end
 end

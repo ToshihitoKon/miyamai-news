@@ -33,6 +33,10 @@ voicepeak:
   retry_base_sec: 2
   # 1チャンク合成に許す最大秒数。超えたら kill してリトライへ回す。
   timeout_sec: 10
+  # チャンク（文）を結合する際に間に挟む無音の秒数。
+  # 句点で区切った文がそのままつながると間延びなく聞こえてしまうため、
+  # 一呼吸おけるよう無音を挟む。
+  chunk_gap_sec: 0.4
 
 # 台本生成・整形に使う AI CLI ツールの選択（"claude" または "antigravity" / "agy"）。
 ai:
