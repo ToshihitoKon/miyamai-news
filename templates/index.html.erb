@@ -6,6 +6,14 @@
   <title><%= h(@title) %></title>
   <link rel="alternate" type="application/atom+xml" title="宮舞モカ 技術ニュース" href="<%= h(feed_url) %>">
 
+  <!-- PWA (ホーム画面に追加) -->
+  <link rel="manifest" href="<%= h(manifest_url) %>">
+  <meta name="theme-color" content="#8DA7C2">
+  <!-- iOS はホーム画面追加時に manifest の icons を見ないため、個別に指定する -->
+  <link rel="apple-touch-icon" href="<%= h(icon_url) %>">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="宮舞ニュース">
+
   <!-- Open Graph (Slack のリンクプレビュー用) -->
   <meta property="og:type" content="website">
   <meta property="og:title" content="<%= h(@title) %>">

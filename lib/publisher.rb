@@ -2,6 +2,7 @@
 
 require "date"
 require "csv"
+require "json"
 require "cgi"
 require "shellwords"
 require "tmpdir"
@@ -14,6 +15,9 @@ class Publisher
   # 横長バナー画像。Slack のリンクプレビューと再生ページの両方で使う。
   # GCS への事前アップロードが前提（README 参照）。
   COVER_IMAGE = Config.get("assets.cover_image")
+  # PWA(ホーム画面追加)用の正方形アイコン。manifest.json から参照する。
+  # cover_image と同じく GCS への事前アップロードが前提（README 参照）。
+  ICON_IMAGE = Config.get("assets.icon_image")
 
   # ページ/フィードのマークアップは templates/*.erb。埋め込み変数は
   # render_html / render_feed / render_feed_entry のローカル変数を binding 経由で
@@ -38,6 +42,7 @@ class Publisher
     rows = update_archives(filename, used_news)
     write_index(rows)
     write_feed(rows)
+    write_manifest
 
     puts "done: #{public_url('index.html')}"
   end
@@ -158,6 +163,8 @@ class Publisher
       current_url: public_url(current[1]),
       page_url: public_url("index.html"),
       feed_url: public_url("feed.xml"),
+      manifest_url: public_url("manifest.json"),
+      icon_url: public_url(ICON_IMAGE),
       cover_url: public_url(COVER_IMAGE),
       description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
       options:)
@@ -204,6 +211,23 @@ class Publisher
       entry_id: public_url(fname),
       updated: feed_datetime(date, updated_at),
       content: used_news.strip.empty? ? "" : h(used_news)).chomp
+  end
+
+  # --- manifest.json (PWA) -----------------------------------------------
+  # ホーム画面追加(PWA)用の Web App Manifest。エピソードごとには変わらないが、
+  # index/feed と同じく毎回書き出して @title の変更を確実に反映する。
+  # アイコンは正方形が必要なので、横長の cover_image ではなく icon_image を使う。
+
+  def write_manifest
+    local_json = File.join(Dir.tmpdir, "miyamai_manifest_#{Process.pid}.json")
+    File.write(local_json, render_manifest)
+    gcloud_storage("cp", "--content-type=application/manifest+json; charset=utf-8", local_json, "gs://#{@bucket}/manifest.json")
+  ensure
+    File.delete(local_json) if local_json && File.exist?(local_json)
+  end
+
+  def render_manifest
+    TemplateRenderer.render("manifest.json", self, icon_url: public_url(ICON_IMAGE))
   end
 
   # Atom の <updated> 用 RFC3339 日時を返す。

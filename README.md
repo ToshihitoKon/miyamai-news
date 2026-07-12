@@ -40,12 +40,22 @@ cp config.sample.yaml config.yaml
 
 ### 2. 素材の用意
 
-BGM・カバー画像はリポジトリに含めていない。各自で用意し、`config.yaml` の
-`assets.bgm_path` / `assets.cover_image` にパスを設定する。
+BGM・カバー画像・アイコンはリポジトリに含めていない。各自で用意し、`config.yaml` の
+`assets.bgm_path` / `assets.cover_image` / `assets.icon_image` にパスを設定する。
 
 - **BGM**: 任意の音源。既定では猫きまぐれBGM工房様の「古びた魔法書」を利用（<https://kim4gure.com/>）
 - **カバー画像**: 横長バナー。Slack のリンクプレビューと再生ページで使う。
   事前に `gs://<bucket>/<cover_image>` へ手動アップロードしておく
+- **アイコン**: PWA（ホーム画面に追加）用の正方形画像。512x512 以上を推奨。
+  事前に `gs://<bucket>/<icon_image>` へ手動アップロードしておく
+
+  ```sh
+  gcloud storage cp miyamai_news.png       gs://<bucket>/miyamai_news.png
+  gcloud storage cp miyamai_news_icon.png  gs://<bucket>/miyamai_news_icon.png
+  ```
+
+  `manifest.json` は公開時に自動生成・アップロードされるが、参照先の
+  アイコン画像は上記のとおり手動で置く必要がある（未アップロードだと 404 になる）。
 
 ## Usage
 

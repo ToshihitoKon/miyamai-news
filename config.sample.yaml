@@ -19,6 +19,9 @@ assets:
   # 再生ページ / Slack プレビュー用の横長バナー画像のオブジェクト名。
   # 事前に gs://<bucket>/<cover_image> へ手動アップロードしておく。
   cover_image: miyamai_news.png
+  # PWA(ホーム画面追加)用の正方形アイコンのオブジェクト名。512x512 以上推奨。
+  # cover_image と同じく、事前に gs://<bucket>/<icon_image> へ手動アップロードしておく。
+  icon_image: miyamai_news_icon.png
 
 # VOICEPEAK(音声合成)まわり。
 voicepeak:
