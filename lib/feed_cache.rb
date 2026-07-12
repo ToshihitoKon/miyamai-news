@@ -18,8 +18,14 @@ require "fileutils"
 #
 # used（実際に台本で紹介したか）のような業務状態は持たない。それは呼び出し側の関心事。
 #
+# パージは seen_at ではなく last_fetched_at（直近でそのフィードに実際に見えていたか）を
+# 基準にする。OpenAI Blog のように過去記事をフィードに載せ続けるソースがあり、seen_at
+# だけで区切ると「フィードにまだ載っているのに古いから」という理由でキャッシュから消えて
+# しまい、次の fetch で未知の entry として再登場＝二重紹介につながる。フィードから実際に
+# 消えて久しい（last_fetched_at が retention_days より古い）entry だけを間引く。
+#
 # キャッシュファイルの形（JSON）:
-#   { "<link>": { "seen_at":, "title":, "date":, "bookmarks": }, ... }
+#   { "<link>": { "seen_at":, "last_fetched_at":, "title":, "date":, "bookmarks": }, ... }
 # link を entry の同一性キーにする。はてブの hotentry/entrylist のように同じ記事が複数
 # フィードに載っても link が同じなら 1 entry として扱える。
 # bookmarks ははてブのブックマーク数（はてブ以外のフィードでは nil）。
@@ -28,7 +34,7 @@ class FeedCache
   class FetchError < StandardError; end
 
   # @param path [String] キャッシュファイルのパス
-  # @param retention_days [Integer] seen_at がこれより古い entry はパージする保持日数
+  # @param retention_days [Integer] last_fetched_at がこれより古い entry はパージする保持日数
   # @param max_retries [Integer] フィード取得のリトライ回数
   # @param retry_base_sec [Float] 指数バックオフの初期待機秒数
   def initialize(path:, retention_days:, max_retries: 3, retry_base_sec: 2.0)
@@ -78,17 +84,22 @@ class FeedCache
   private
 
   # 今回フィードに登場した entry を seen_at 付きでキャッシュに反映する。
-  # 既にある link は seen_at を据え置き（初登場時刻を保つ）、title/date だけ最新に更新する。
+  # 既にある link は seen_at を据え置き（初登場時刻を保つ）、title/date/last_fetched_at
+  # だけ最新に更新する。
   #
   # 新規 link の seen_at は原則「今(now)」。ただし初回起動(bootstrap)時だけは、掲載が
   # 古い記事まで新着として大量に流入するのを防ぐため、掲載日時(date)を初期値に使う
   # （date が無ければ now）。2 回目以降の新規登場は now なので、昔書かれて今登場した
   # 記事も拾える。
+  #
+  # last_fetched_at は「直近でこのフィードに実際に見えていた時刻」。パージ判定に使う
+  # （purge_expired 参照）。今回登場した entry は全て今(now)を持つ。
   def record_seen(cache, entries, now)
     entries.each do |entry|
       existing = cache[entry[:link]]
       cache[entry[:link]] = {
         "seen_at" => existing ? existing["seen_at"] : initial_seen_at(entry, now),
+        "last_fetched_at" => now.iso8601,
         "title" => entry[:title],
         "date" => entry[:date],
         "bookmarks" => entry[:bookmarks],
@@ -102,14 +113,22 @@ class FeedCache
     entry[:date]
   end
 
-  # seen_at が保持期間より古い entry をキャッシュから削除する。
+  # last_fetched_at（直近でこのフィードに実際に見えていた時刻）が保持期間より古い、
+  # つまりフィードから既に消えて久しい entry をキャッシュから削除する。
+  # seen_at で区切らないのは、フィードに載り続けている限り再登場＝二重紹介させないため
+  # （クラス冒頭のコメント参照）。
   def purge_expired(cache, now)
     cutoff = now - (@retention_days * 86_400)
     cache.reject! do |_link, meta|
-      seen_at = Time.iso8601(meta["seen_at"])
-      seen_at < cutoff
+      # last_fetched_at を持たない旧形式の entry は、フィードに再登場すれば record_seen
+      # で付与されるが、既にフィードから消えている場合は付与されないままここに来る。
+      # 実在確認ができないので seen_at を代用する（bootstrap 時の initial_seen_at と
+      # 同じ考え方）。seen_at は更新されない固定値なので、cutoff が進むにつれて
+      # いずれ有限時間内に超過し、この entry も通常どおりパージされる。
+      last_fetched_at = Time.iso8601(meta["last_fetched_at"] || meta["seen_at"])
+      last_fetched_at < cutoff
     rescue ArgumentError
-      # seen_at が壊れている entry は保持し続ける意味がないので落とす
+      # 時刻が壊れている entry は保持し続ける意味がないので落とす
       true
     end
   end

@@ -66,8 +66,10 @@ collect:
   # 前回 publish 記録が無い初回に、何時間前までさかのぼって収集するかの上限。
   lookback_hours: 24
   # フィードキャッシュ(feed_cache.json)が entry を保持する日数。
-  # 初登場(seen_at)からこの日数を過ぎた entry はキャッシュから破棄する。
-  retention_days: 3
+  # フィードに最後に見えた時刻(last_fetched_at)からこの日数を過ぎても再登場しなかった
+  # entry だけをキャッシュから破棄する（フィードにまだ載っている entry は何日前に
+  # 初登場したかに関わらず保持し続け、再登場による二重紹介を防ぐ）。
+  retention_days: 30
   # 各カテゴリの最大件数。
   max_per_category: 100
   # 1ソースあたりの既定の最大件数（max_items 未指定のソースに適用）。
