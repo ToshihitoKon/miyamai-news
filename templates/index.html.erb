@@ -73,6 +73,7 @@
       margin: 0 auto 16px;
       border-radius: 12px;
       border: 3px solid var(--moca);
+      cursor: pointer;
     }
     h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; letter-spacing: .02em; text-align: center; color: var(--moca-deep); }
     .sub { font-size: 12px; color: #7a8896; margin: 0 0 20px; text-align: center; }
@@ -136,7 +137,7 @@
 <body>
   <main class="content">
     <div class="card">
-      <img class="art" src="<%= h(cover_url) %>" alt="宮舞モカ">
+      <img class="art" id="artwork" src="<%= h(cover_url) %>" alt="宮舞モカ">
       <h1>宮舞モカの技術ニュース</h1>
       <p class="sub" id="nowplaying"><%= h(date_with_slot(current[0], current[1])) %></p>
       <select id="archive" aria-label="アーカイブ選択">
@@ -164,6 +165,7 @@
     const player = document.getElementById('player');
     const now = document.getElementById('nowplaying');
     const newslist = document.getElementById('newslist');
+    const artwork = document.getElementById('artwork');
 
     const escapeHtml = (s) => s
       .replaceAll('&', '&amp;')
@@ -196,6 +198,14 @@
       player.src = sel.value;
       now.textContent = sel.options[sel.selectedIndex].text;
       loadNews(sel.value);
+    });
+
+    artwork.addEventListener('click', () => {
+      if (player.paused) {
+        player.play();
+      } else {
+        player.pause();
+      }
     });
 
     loadNews(player.src);
