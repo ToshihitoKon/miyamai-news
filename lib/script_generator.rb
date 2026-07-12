@@ -103,7 +103,7 @@ class ScriptGenerator
   # このクラスが work/ に作る回ごとの中間ファイルの glob パターン。
   # clean が消してよいものだけを列挙する（last_fetch.txt / feed_cache.json は含めない）。
   def self.work_globs(work_dir)
-    %w[news_*.json script_*.txt tts_script_*.txt news_used_*.txt]
+    %w[news_*.json news_facts_*.txt script_*.txt tts_script_*.txt news_used_*.txt]
       .map { |pat| File.join(work_dir, pat) }
   end
 
@@ -139,12 +139,16 @@ class ScriptGenerator
   #
   # 各ステップ（収集・script+used・整形）はそれぞれ中間ファイルの有無で再利用を判断し、
   # 途中クラッシュ後の再実行で続きから進める。
+  # 各ステップ（収集・facts・script+used・整形）はそれぞれ中間ファイルの有無で再利用を判断し、
+  # 途中クラッシュ後の再実行で続きから進める。
   def generate(format: true)
     news_json = load_or_collect_news
 
-    # ステップ2: ライター。台本(script)と used を 1 回の Claude 呼び出しで生成する。
-    # どちらも記事本文の取得に WebFetch を使い、used の照合は英字のままの台本と JSON で
-    # 行うのが正確なため、同じコンテキストで一緒に出させる。
+    # ステップ2.1: ニュース抽出・整理（ファクトシート作成）。
+    # 1回の AI 呼び出しでニュースURLから WebFetch して要点をまとめる。
+    extract_news_facts(news_json)
+
+    # ステップ2.2: ライター。ファクトシートをもとに台本と used を生成する。
     write_script_and_used(news_json)
 
     return script_path unless format
@@ -168,6 +172,7 @@ class ScriptGenerator
   private
 
   def news_json_path   = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.json")
+  def news_facts_path  = File.join(@work_dir, "news_facts_#{@date_tag}_#{@slot}.txt")
   def script_path      = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
   def tts_script_path  = File.join(@work_dir, "tts_script_#{@date_tag}_#{@slot}.txt")
   def used_news_path   = File.join(@work_dir, "news_used_#{@date_tag}_#{@slot}.txt")
@@ -179,14 +184,33 @@ class ScriptGenerator
   # 出力の前置き・思考メモ混入は Claude 側で防ぎきれないので、書かれたファイルを
   # Ruby が読み直して strip をかけ、上書き保存する。
   # 再開判定は「両方揃って初めてスキップ」。片方でも欠ければ作り直す。
+  # ステップ2.1: ニュース抽出・整理。1 回の AI 呼び出しでニュース内容を抽出して facts.txt に書く。
+  def extract_news_facts(news_json)
+    if File.exist?(news_facts_path)
+      warn "既存のニュースファクトシートを利用: #{news_facts_path}"
+      return
+    end
+
+    extractor_model = get_model_for_role(:extractor)
+    run_ai_cli("extracting news facts",
+      extractor_prompt(news_json), "--allowedTools", "WebFetch Write", model_override: extractor_model)
+
+    rewrite_file(news_facts_path) { |text| strip_facts_preamble(text) }
+    warn "ニュースファクトシートを生成: #{news_facts_path}"
+  end
+
+  # ステップ2.2: ライター。1 回の AI 呼び出しで script.txt と used.txt を書かせる。
+  # すでに抽出されたファクトをもとに執筆するため、WebFetch は許可しない（手戻り防止）。
   def write_script_and_used(news_json)
     if File.exist?(script_path) && File.exist?(used_news_path)
       warn "既存の台本/使用ニュース一覧を利用: #{script_path}"
       return
     end
 
+    writer_model = get_model_for_role(:writer)
+    news_facts = File.read(news_facts_path)
     run_ai_cli("writing script and used news",
-      writer_prompt(news_json), "--allowedTools", "WebFetch Write")
+      writer_prompt(news_json, news_facts), "--allowedTools", "Read Write", model_override: writer_model)
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
     rewrite_file(used_news_path) { |text| strip_used_preamble(text) }
@@ -195,17 +219,27 @@ class ScriptGenerator
   end
 
   # ステップ3: 整形。script.txt を読んで VOICEPEAK 向けの tts_script.txt に整形させる。
-  # ここも Claude が Write で直接書くので、Ruby が読み直して前置きを strip する。
   def format_tts_script
     if File.exist?(tts_script_path)
       warn "既存の整形済み台本を利用: #{tts_script_path}"
       return
     end
 
-    run_ai_cli("formatting for VOICEPEAK", format_prompt, "--allowedTools", "Read Write")
+    formatter_model = get_model_for_role(:formatter)
+    run_ai_cli("formatting for VOICEPEAK", format_prompt, "--allowedTools", "Read Write", model_override: formatter_model)
 
     rewrite_file(tts_script_path) { |text| strip_preamble(text) }
     warn "整形済み台本を生成: #{tts_script_path}"
+  end
+
+  def strip_facts_preamble(text)
+    lines = text.lines
+    start = lines.each_index.find do |i|
+      lines[i].strip.start_with?("##", "---", "#")
+    end
+    return text.strip unless start
+
+    "#{lines[start..].join.strip}\n"
   end
 
   # Claude が Write で書いたファイルを読み直し、後処理をかけて上書きする。
@@ -374,21 +408,21 @@ class ScriptGenerator
   end
 
   # 指定された AI CLI (claude または antigravity) を実行する。
-  def run_ai_cli(spinner_message, prompt, *claude_extra_args)
+  def run_ai_cli(spinner_message, prompt, *claude_extra_args, model_override: nil)
     case @cli_type
     when :claude
-      run_claude_cli(spinner_message, prompt, *claude_extra_args)
+      run_claude_cli(spinner_message, prompt, *claude_extra_args, model_override: model_override)
     when :antigravity
-      run_antigravity_cli(spinner_message, prompt)
+      run_antigravity_cli(spinner_message, prompt, model_override: model_override)
     end
   end
 
   # 既存呼び出しとの互換のためのエイリアス
   alias run_claude run_ai_cli
 
-  def run_claude_cli(spinner_message, prompt, *extra_args)
+  def run_claude_cli(spinner_message, prompt, *extra_args, model_override: nil)
     bin = Config.get("claude.bin", "claude")
-    model = Config.get("claude.model", "claude-opus-4-8")
+    model = model_override || Config.get("claude.model", "claude-opus-4-8")
     effort = Config.get("claude.effort", "xhigh")
 
     run_command_with_spinner(
@@ -400,15 +434,38 @@ class ScriptGenerator
     )
   end
 
-  def run_antigravity_cli(spinner_message, prompt)
+  def run_antigravity_cli(spinner_message, prompt, model_override: nil)
     bin = Config.get("antigravity.bin", "agy")
-    model = Config.get("antigravity.model", "gemini-3.1-pro-high")
+    model = model_override || Config.get("antigravity.model", "gemini-3.1-pro-high")
 
     run_command_with_spinner(
       "#{spinner_message} [antigravity]",
       "Antigravity CLI の実行に失敗しました",
       bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt
     )
+  end
+
+  def get_model_for_role(role)
+    case @cli_type
+    when :antigravity
+      case role
+      when :extractor
+        Config.get("antigravity.extractor_model", Config.get("antigravity.model", "gemini-3.1-pro-high"))
+      when :writer
+        Config.get("antigravity.writer_model", Config.get("antigravity.model", "gemini-3.5-flash-high"))
+      when :formatter
+        Config.get("antigravity.formatter_model", Config.get("antigravity.model", "gemini-3.5-flash-high"))
+      end
+    when :claude
+      case role
+      when :extractor
+        Config.get("claude.extractor_model", Config.get("claude.model", "claude-opus-4-8"))
+      when :writer
+        Config.get("claude.writer_model", Config.get("claude.model", "claude-3-5-sonnet"))
+      when :formatter
+        Config.get("claude.formatter_model", Config.get("claude.model", "claude-3-5-sonnet"))
+      end
+    end
   end
 
   def run_command_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil)
@@ -447,11 +504,20 @@ class ScriptGenerator
   # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # ライター用タスク。ニュース JSON を差し込み、台本(script)と used の書き込み先パスを
+  # ニュース抽出用タスク。ニュース JSON を差し込み、ファクトシートの書き込み先パスを渡す。
+  def extractor_prompt(news_json)
+    TemplateRenderer.render("extractor.prompt", self,
+      news_json:,
+      today_ja: @today_ja,
+      news_facts_path: File.expand_path(news_facts_path))
+  end
+
+  # ライター用タスク。ファクトシートとニュース JSON を差し込み、台本(script)と used の書き込み先パスを
   # 渡す（Claude が Write で直接書く）。パスは Claude の cwd に依存しないよう絶対パス。
-  def writer_prompt(news_json)
+  def writer_prompt(news_json, news_facts)
     TemplateRenderer.render("writer.prompt", self,
       news_json:,
+      news_facts:,
       today_ja: @today_ja,
       script_path: File.expand_path(script_path),
       used_news_path: File.expand_path(used_news_path))

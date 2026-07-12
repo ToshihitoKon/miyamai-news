@@ -43,11 +43,19 @@ claude:
   bin: claude
   model: claude-opus-4-8
   effort: xhigh
+  # ロールごとの使用モデル（未指定時は上記 model が使われます）
+  extractor_model: claude-opus-4-8
+  writer_model: claude-sonnet-5
+  formatter_model: claude-sonnet-5
 
 # Antigravity CLI (agy -p) を使う場合の設定。
 antigravity:
   bin: agy
   model: gemini-3.1-pro-high
+  # ロールごとの使用モデル（未指定時は上記 model が使われます）
+  extractor_model: gemini-3.1-pro-high
+  writer_model: gemini-3.5-flash-high
+  formatter_model: gemini-3.5-flash-high
 
 # RSS 収集まわり。
 collect:
