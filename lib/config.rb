@@ -14,12 +14,14 @@ module Config
   class MissingKeyError < StandardError; end
 
   class << self
-    # ドット区切りのキーで値を引く。キーが存在しなければ MissingKeyError。
-    def get(dotted_key)
+    # ドット区切りのキーで値を引く。キーが存在せず default が渡されていればそれを返す。
+    # 存在せず default も未指定なら MissingKeyError。
+    def get(dotted_key, default = :__no_default__)
       value = dig(dotted_key)
-      raise MissingKeyError, "config.yaml に設定がありません: #{dotted_key}" if value.nil?
+      return value unless value.nil?
+      return default unless default == :__no_default__
 
-      value
+      raise MissingKeyError, "config.yaml に設定がありません: #{dotted_key}"
     end
 
     private

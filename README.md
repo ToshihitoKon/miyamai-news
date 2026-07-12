@@ -72,14 +72,20 @@ ruby miyamai_news.rb --clean          # work/ を掃除し、公開済みの dis
 なしで再実行すると既存の台本を再利用して、VOICEPEAK 向けの整形〜音声合成〜公開まで
 続きから進む。
 
-対象の回や BGM を明示する場合:
+対象の回や BGM、生成に使う AI CLI ツールを明示する場合:
 
 ```sh
 # --publish-only で過去回を公開し直す
 ruby miyamai_news.rb --publish-only --date 2026-07-10 --slot morning
 # BGM を一時的に差し替える
 ruby miyamai_news.rb --bgm path/to/bgm.mp3
+# 生成に Antigravity CLI (agy) を使用する（--cli antigravity や --agy も可）
+ruby miyamai_news.rb --antigravity
+# 生成に Claude Code CLI を使用する
+ruby miyamai_news.rb --claude
 ```
+
+`config.yaml` の `ai.cli` に `claude` または `antigravity` を設定することで既定の AI CLI を選択できます。コマンドライン引数（`--antigravity` や `--claude`）を渡すと、設定ファイルの既定値をその実行のみ上書きできます。
 
 `--date` / `--slot` を省略すると実行時刻から自動で決まる。1日を 3:00 起点で 8 時間
 ずつ 3 分割し、時間帯 `slot` は morning=3〜11時 / afternoon=11〜19時 / evening=19〜

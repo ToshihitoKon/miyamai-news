@@ -116,13 +116,15 @@ class ScriptGenerator
 
   # @param work_dir [String] 中間ファイルの置き場
   # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
-  def initialize(work_dir:, episode:)
+  # @param cli [String, Symbol, nil] 使用する AI CLI ツールの指定 ("claude" / "antigravity")
+  def initialize(work_dir:, episode:, cli: nil)
     @work_dir = work_dir
     # 収集の時刻演算(since・seen_at・iso8601)には時刻精度のある now を使う。
     @now = episode.now
     @slot = episode.slot
     @date_tag = episode.date_tag
     @today_ja = episode.today_ja
+    @cli_type = resolve_cli_type(cli)
     @feed_cache = FeedCache.new(
       path: self.class.feed_cache_path(work_dir),
       retention_days: RETENTION_DAYS,
@@ -183,7 +185,7 @@ class ScriptGenerator
       return
     end
 
-    run_claude("writing script and used news",
+    run_ai_cli("writing script and used news",
       writer_prompt(news_json), "--allowedTools", "WebFetch Write")
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
@@ -200,7 +202,7 @@ class ScriptGenerator
       return
     end
 
-    run_claude("formatting for VOICEPEAK", format_prompt, "--allowedTools", "Read Write")
+    run_ai_cli("formatting for VOICEPEAK", format_prompt, "--allowedTools", "Read Write")
 
     rewrite_file(tts_script_path) { |text| strip_preamble(text) }
     warn "整形済み台本を生成: #{tts_script_path}"
@@ -357,25 +359,66 @@ class ScriptGenerator
     end
   end
 
-  # --- claude 実行 ---
+  # --- AI CLI 実行 ---
 
-  # 全ての claude 呼び出しで使うモデルと reasoning effort。品質を揃えるため共通化する。
-  CLAUDE_MODEL = Config.get("claude.model")
-  CLAUDE_EFFORT = Config.get("claude.effort")
+  def resolve_cli_type(cli_override)
+    name = cli_override || Config.get("ai.cli", "claude")
+    case name.to_s.downcase.strip
+    when "antigravity", "agy"
+      :antigravity
+    when "claude"
+      :claude
+    else
+      abort "不明な AI CLI が指定されました: #{name} ('claude' または 'antigravity' を指定してください)"
+    end
+  end
 
-  # claude を OS コマンドとして実行し、標準出力を返す。
-  # claude は数十秒かかるため、実行中はスピナーを回して進行中だと分かるようにする。
-  def run_claude(spinner_message, prompt, *extra_args)
+  # 指定された AI CLI (claude または antigravity) を実行する。
+  def run_ai_cli(spinner_message, prompt, *claude_extra_args)
+    case @cli_type
+    when :claude
+      run_claude_cli(spinner_message, prompt, *claude_extra_args)
+    when :antigravity
+      run_antigravity_cli(spinner_message, prompt)
+    end
+  end
+
+  # 既存呼び出しとの互換のためのエイリアス
+  alias run_claude run_ai_cli
+
+  def run_claude_cli(spinner_message, prompt, *extra_args)
+    bin = Config.get("claude.bin", "claude")
+    model = Config.get("claude.model", "claude-opus-4-8")
+    effort = Config.get("claude.effort", "xhigh")
+
+    run_command_with_spinner(
+      "#{spinner_message} [claude]",
+      "Claude CLI の実行に失敗しました",
+      bin, "-p", "--model", model, "--effort", effort,
+      *extra_args,
+      stdin_data: prompt
+    )
+  end
+
+  def run_antigravity_cli(spinner_message, prompt)
+    bin = Config.get("antigravity.bin", "agy")
+    model = Config.get("antigravity.model", "gemini-3.1-pro-high")
+
+    run_command_with_spinner(
+      "#{spinner_message} [antigravity]",
+      "Antigravity CLI の実行に失敗しました",
+      bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt
+    )
+  end
+
+  def run_command_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil)
     spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
     spinner.auto_spin
 
-    # claude は同期実行で数十秒かかるので、別スレッドで走らせてメインでスピナーを回す
     result = nil
     worker = Thread.new do
-      result = Open3.capture3(
-        "claude", "-p", "--model", CLAUDE_MODEL, "--effort", CLAUDE_EFFORT,
-        *extra_args, stdin_data: prompt
-      )
+      opts = stdin_data ? { stdin_data: stdin_data } : {}
+      result = Open3.capture3(*cmd, **opts)
     end
     worker.join
 
@@ -383,7 +426,7 @@ class ScriptGenerator
     unless status.success?
       spinner.error("(failed)")
       warn stderr
-      abort "claude の実行に失敗しました (exit #{status.exitstatus})"
+      abort "#{error_message} (exit #{status.exitstatus})"
     end
 
     spinner.success("(done)")

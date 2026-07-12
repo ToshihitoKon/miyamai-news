@@ -34,10 +34,20 @@ voicepeak:
   # 1チャンク合成に許す最大秒数。超えたら kill してリトライへ回す。
   timeout_sec: 10
 
-# 台本整形に使う Claude の設定。
+# 台本生成・整形に使う AI CLI ツールの選択（"claude" または "antigravity" / "agy"）。
+ai:
+  cli: claude
+
+# Claude CLI (claude -p) を使う場合の設定。
 claude:
+  bin: claude
   model: claude-opus-4-8
   effort: xhigh
+
+# Antigravity CLI (agy -p) を使う場合の設定。
+antigravity:
+  bin: agy
+  model: gemini-3.1-pro-high
 
 # RSS 収集まわり。
 collect:
