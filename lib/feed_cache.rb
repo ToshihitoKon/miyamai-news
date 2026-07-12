@@ -187,7 +187,7 @@ class FeedCache
       title = title.respond_to?(:content) ? title.content : title.to_s
       link  = item.link.respond_to?(:href) ? item.link.href : item.link.to_s
       date  = item_date(item)
-      link  = link.strip
+      link  = normalize_link(link)
 
       { title: title.strip, link: link, date: date&.iso8601, bookmarks: bookmarks[link] }
     end
@@ -202,12 +202,22 @@ class FeedCache
   def hatena_bookmark_counts(body)
     doc = REXML::Document.new(body)
     pairs = doc.get_elements("//item").to_h do |item|
-      [item.elements["link"]&.text.to_s.strip,
+      [normalize_link(item.elements["link"]&.text.to_s),
        item.elements["hatena:bookmarkcount"]&.text&.to_i]
     end
     pairs.reject { |link, count| link.empty? || count.nil? }
   rescue REXML::ParseException
     {}
+  end
+
+  # 同じ記事が末尾スラッシュの有無だけ違う URL でフィードに載ることがあり、素通しすると
+  # FeedCache が別 entry と誤認して二重に新着扱いしてしまう。同一性キーとして使う前に
+  # ここで正規化して吸収する。"https://example.com" と "https://example.com/" も同一視
+  # する（パスが空＝ルートを指す同じ URL のため）。"https://" 自体は消さないよう、
+  # スキーム直後の "//" だけは対象から除く。
+  def normalize_link(link)
+    link = link.strip
+    link.sub(%r{(?<!:)/+\z}, "")
   end
 
   # RSS 2.0 / RDF / Atom で日付の入り方が違うので吸収する。
