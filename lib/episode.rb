@@ -8,7 +8,7 @@ require_relative "slot"
 # 「実行時刻から番組の日付・slot を導く」計算をここ 1 箇所に集約し、
 # ScriptGenerator と Publisher が同じ値を共有できるようにする。
 #
-# now と date は 0:00-2:59 の実行でズレる（前日 evening 扱いのため date が 1 日戻る）。
+# now と date は 0:00-4:59 の実行でズレる（前日 midnight 扱いのため date が 1 日戻る）。
 #   - now:  収集の基準時刻。何時までの記事を拾うか・いつ収集したかの時刻演算に使う。
 #   - date: 番組の日付。ファイル名・表示・アーカイブの日付に使う。
 class Episode
@@ -16,7 +16,7 @@ class Episode
   attr_reader :now
   # 番組日付（Date）。深夜シフト済み。
   attr_reader :date
-  # 時間帯 slot（morning/afternoon/evening）。
+  # 時間帯 slot（morning/afternoon/evening/midnight）。
   attr_reader :slot
 
   # 実行時刻から番組コンテキストを組み立てる。

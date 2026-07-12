@@ -31,7 +31,7 @@ class Publisher
 
   # GCS 上のオブジェクト名は、渡された mp3 のファイル名をそのまま使う
   # （例: miyamai_news_20260710_afternoon.mp3）。日付から組み立て直すと
-  # slot が落ちて朝昼夜が同名で上書きし合うため、呼び出し側のファイル名を正とする。
+  # slot が落ちて朝昼夜深夜が同名で上書きし合うため、呼び出し側のファイル名を正とする。
   def run(mp3_path, used_txt_path = nil)
     filename = File.basename(mp3_path)
     used_object = filename.sub(/\.mp3\z/, ".used.txt")
@@ -246,13 +246,13 @@ class Publisher
     Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
   end
 
-  # ファイル名末尾の slot(_morning/_afternoon/_evening)を日本語ラベルにする。
+  # ファイル名末尾の slot(_morning/_afternoon/_evening/_midnight)を日本語ラベルにする。
   # 1日に複数回ある回を UI やフィードで見分けるための表示用。
   # slot を持たない旧ファイル名は空文字を返す(後方互換)。
-  SLOT_LABELS = { "morning" => "朝", "afternoon" => "昼", "evening" => "夜" }.freeze
+  SLOT_LABELS = { "morning" => "朝", "afternoon" => "昼", "evening" => "夜", "midnight" => "深夜" }.freeze
 
   def slot_label(filename)
-    m = filename.match(/_(morning|afternoon|evening)\.mp3\z/)
+    m = filename.match(/_(morning|afternoon|evening|midnight)\.mp3\z/)
     m ? SLOT_LABELS.fetch(m[1]) : ""
   end
 
