@@ -26,7 +26,7 @@ class Publisher
   def initialize(bucket: DEFAULT_BUCKET, date: Date.today, title: nil)
     @bucket = bucket
     @date   = date
-    @title  = title || "宮舞モカ 技術ニュース #{date.strftime('%Y-%m-%d')}"
+    @title  = title || "宮舞モカの技術ニュース #{date.strftime('%Y-%m-%d')}"
   end
 
   # GCS 上のオブジェクト名は、渡された mp3 のファイル名をそのまま使う
