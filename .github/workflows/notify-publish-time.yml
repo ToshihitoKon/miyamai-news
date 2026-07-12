@@ -21,4 +21,6 @@ jobs:
         run: |
           slack-quickpost \
             --channel "${{ secrets.SLACK_CHANNEL_ID }}" \
+            --username "ニュースの時間をお知らせする宮舞モカ" \
+            --icon ":miyamai:" \
             --text "宮舞ニュース発行の時間です"
