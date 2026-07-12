@@ -152,8 +152,8 @@ class Publisher
     abort("no archives to render") if rows.empty?
 
     current = rows.first # 降順なので先頭が最新
-    options = rows.map do |date, fname, title|
-      label = "#{date_with_slot(date, fname)} — #{title}"
+    options = rows.map do |date, fname|
+      label = date_with_slot(date, fname)
       selected = fname == current[1] ? " selected" : ""
       %(<option value="#{h(public_url(fname))}"#{selected}>#{h(label)}</option>)
     end.join("\n        ")
