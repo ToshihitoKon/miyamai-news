@@ -1,0 +1,24 @@
+name: notify-publish-time
+
+# 宮舞ニュース発行の時間を Slack にリマインドする。
+# cron は UTC 指定なので JST 7:00 / 19:00 はそれぞれ 22:00 / 10:00 (UTC)。
+on:
+  schedule:
+    - cron: "0 22 * * *" # JST 07:00
+    - cron: "0 10 * * *" # JST 19:00
+  workflow_dispatch: # 手動実行も許可
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ToshihitoKon/slack-quickpost@v1
+        with:
+          version: 0.9.2
+      - name: post reminder
+        env:
+          SLACK_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          slack-quickpost \
+            --channel "${{ secrets.SLACK_CHANNEL_ID }}" \
+            --text "宮舞ニュース発行の時間です"
