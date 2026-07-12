@@ -47,6 +47,27 @@ class Publisher
     puts "done: #{public_url('index.html')}"
   end
 
+  # 既存 archives.csv を読み込んで index.html / manifest.json だけを再生成する。
+  # mp3・used.txt・archives.csv・feed.xml には一切触れない。UI 文言だけを直したときに、
+  # 新しい回を公開したとの誤解（Atom の <updated> 更新による通知）を避けつつ、
+  # 表示だけ即時反映したい場合に使う。
+  def republish_ui
+    local_csv = File.join(Dir.tmpdir, "miyamai_archives_#{Process.pid}.csv")
+    rows = fetch_existing_archives(local_csv)
+    abort("archives.csv がまだ存在しません（公開実績がありません）") if rows.empty?
+
+    # og:title/manifest.json の name は @title を参照するため、実行時刻由来の
+    # デフォルト値ではなく最新回(archives.csv の先頭行)のタイトルに差し替える。
+    @title = rows.first[2]
+
+    write_index(rows)
+    write_manifest
+
+    puts "done (UI only): #{public_url('index.html')}"
+  ensure
+    File.delete(local_csv) if local_csv && File.exist?(local_csv)
+  end
+
   # 指定オブジェクトが GCS のバケットに存在するか。
   def object_exists?(object)
     system("gcloud", "storage", "ls", "gs://#{@bucket}/#{object}",

@@ -43,6 +43,11 @@ def main
     return
   end
 
+  if args[:ui_only]
+    run_republish_ui
+    return
+  end
+
   # 番組コンテキスト（日付・slot）は実行時刻から Episode が導く。--date/--slot の明示
   # 指定があればそれを尊重する（Episode 側で自動判定を上書き）。
   episode = Episode.new(now: args[:date] || Time.now, date: args[:date]&.to_date, slot: args[:slot])
@@ -103,6 +108,14 @@ def run_publish(episode)
   ScriptGenerator.record_publish(work_dir: WORK_DIR, at: Time.now)
 end
 
+# 新しい回を公開せず、既存 archives.csv から index.html / manifest.json だけを
+# 再生成する。mp3・used.txt・archives.csv・feed.xml には触れないため、Atom の
+# <updated> も動かず購読者への「新着」通知は発生しない。UI 文言修正のみを
+# 即時反映したいときに使う。
+def run_republish_ui
+  Publisher.new.republish_ui
+end
+
 def run_clean
   clean_work_dir
   clean_published_dist
@@ -142,6 +155,7 @@ def parse_args(argv)
   while i < argv.length
     case argv[i]
     when "--clean"                then opts[:clean] = true
+    when "--ui-only"              then opts[:ui_only] = true
     when "--script-only"          then opts[:script_only] = true
     when "--generate-only"        then opts[:generate_only] = true
     when "--publish-only"         then opts[:publish_only] = true
