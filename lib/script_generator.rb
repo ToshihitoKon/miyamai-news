@@ -10,64 +10,12 @@ require_relative "template_renderer"
 require_relative "feed_cache"
 
 class ScriptGenerator
-  # 収集元定義。category は台本の番組構成（4本立て）に対応
-  SOURCES = {
-    ai: [
-      { name: "Hacker News (AI)",
-        url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50" },
-      { name: "arXiv cs.AI",
-        url: "http://export.arxiv.org/rss/cs.AI" },
-      { name: "OpenAI Blog",
-        url: "https://openai.com/news/rss.xml" },
-    ],
-    # Claude Code / Devin / Cursor / Antigravity などの AI エージェント・AI コーディングツール。
-    # Devin(Cognition) は公式 RSS がないため HN のキーワード検索で拾う。
-    ai_agents: [
-      { name: "Hacker News (agents)",
-        url: "https://hnrss.org/newest?q=%22Claude%20Code%22%20OR%20%22coding%20agent%22%20OR%20Devin%20OR%20Cursor%20OR%20Antigravity&points=30" },
-      { name: "Claude Code Releases",
-        url: "https://github.com/anthropics/claude-code/releases.atom" },
-      { name: "Cursor Changelog",
-        url: "https://cursor.com/changelog/rss.xml" },
-      { name: "Google AI Blog",
-        url: "https://blog.google/innovation-and-ai/technology/ai/rss/" },
-      { name: "Simon Willison's Weblog",
-        url: "https://simonwillison.net/atom/everything/" },
-    ],
-    security: [
-      { name: "JPCERT/CC",
-        url: "https://www.jpcert.or.jp/rss/jpcert.rdf" },
-      { name: "JVN",
-        url: "https://jvn.jp/rss/jvn.rdf" },
-    ],
-    engineering: [
-      { name: "Publickey",
-        url: "https://www.publickey1.jp/atom.xml" },
-      { name: "Hacker News (frontpage)",
-        url: "https://hnrss.org/frontpage?points=100" },
-      { name: "Lobsters",
-        url: "https://lobste.rs/rss" },
-      { name: "gihyo.jp",
-        url: "https://gihyo.jp/feed/rss2" },
-      { name: "InfoQ Japan",
-        url: "https://www.infoq.com/jp/feed/" },
-      { name: "DevelopersIO",
-        url: "https://dev.classmethod.jp/feed/" },
-      # まとめ系・コミュニティ系は玉石混交かつ流量が多いので優先度を下げる。
-      # priority: :low はカテゴリ内の件数枠を一次情報源より後回しにするのと、
-      # ライターに「補欠扱い」と伝えるプロンプトの両方に使う。
-      # はてブはホットエントリと新着の両フィードを読み、ブクマ数上位だけを採用する
-      # （RSS は各30件が上限で、オフセット等のパラメータは効かない）。
-      { name: "はてブ テクノロジー",
-        urls: ["https://b.hatena.ne.jp/hotentry/it.rss",
-               "https://b.hatena.ne.jp/entrylist/it.rss"],
-        top_by_bookmarks: 20, priority: :low },
-      { name: "Qiita 人気記事",
-        url: "https://qiita.com/popular-items/feed.atom", priority: :low, max_items: 10 },
-      { name: "Zenn 新着",
-        url: "https://zenn.dev/feed", priority: :low, max_items: 10 },
-    ],
-  }.freeze
+  # 収集元定義（config.yaml の collect.sources）。category は台本の番組構成（4本立て）に対応。
+  # YAML 由来の文字列キー/値をコード内で使うシンボルに変換する
+  # （category 名、各ソースハッシュのキー、priority の値）。
+  SOURCES = Config.get("collect.sources").to_h do |category, sources|
+    [category.to_sym, sources.map { |src| src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] } }]
+  end.freeze
 
   # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
   # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
