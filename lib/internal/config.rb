@@ -21,7 +21,7 @@ module Config
       return value unless value.nil?
       return default unless default == :__no_default__
 
-      raise MissingKeyError, "config.yaml に設定がありません: #{dotted_key}"
+      raise MissingKeyError, "missing config key: #{dotted_key}"
     end
 
     private
@@ -37,8 +37,8 @@ module Config
     def load_data
       unless File.exist?(DEFAULT_PATH)
         raise MissingConfigError,
-          "#{DEFAULT_PATH} がありません。" \
-          "`cp #{File.basename(SAMPLE_PATH)} #{File.basename(DEFAULT_PATH)}` してから値を埋めてください。"
+          "#{DEFAULT_PATH} not found. " \
+          "Run `cp #{File.basename(SAMPLE_PATH)} #{File.basename(DEFAULT_PATH)}` and fill in the values."
       end
 
       YAML.safe_load_file(DEFAULT_PATH) || {}

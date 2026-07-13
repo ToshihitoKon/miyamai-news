@@ -15,17 +15,17 @@ class AudioMixer
 
   # ナレーション mp3 に BGM を当てて output_path に書き出す。
   def mix(voice_path, output_path)
-    abort "BGM が見つかりません: #{@bgm_path}" unless File.exist?(@bgm_path)
+    abort "BGM not found: #{@bgm_path}" unless File.exist?(@bgm_path)
 
     voice_dur = probe_duration(voice_path)
     fade_start = INTRO_SEC + voice_dur + TAIL_SEC
     total_dur = fade_start + FADE_SEC
     delay_ms = (INTRO_SEC * 1000).to_i
 
-    warn "ナレーション長: #{voice_dur.round(1)}s / BGM音量: #{BGM_VOLUME} / 全体長: #{total_dur.round(1)}s"
+    warn "voice: #{voice_dur.round(1)}s / bgm volume: #{BGM_VOLUME} / total: #{total_dur.round(1)}s"
 
     run_mix(voice_path, output_path, fade_start: fade_start, total_dur: total_dur, delay_ms: delay_ms)
-    warn "完成版を出力: #{output_path}"
+    warn "mixed: #{output_path}"
     output_path
   end
 
@@ -36,7 +36,7 @@ class AudioMixer
       "ffprobe", "-v", "error", "-show_entries", "format=duration",
       "-of", "default=noprint_wrappers=1:nokey=1", path
     )
-    raise "ffprobe に失敗しました: #{err[-300..]}" unless status.success?
+    raise "ffprobe failed: #{err[-300..]}" unless status.success?
 
     out.strip.to_f
   end
@@ -56,6 +56,6 @@ class AudioMixer
       "-map", "[out]", "-t", total_dur.to_s,
       "-c:a", "libmp3lame", "-q:a", "4", output_path
     )
-    raise "ffmpeg での BGM 合成に失敗しました: #{err[-300..]}" unless status.success?
+    raise "ffmpeg mix failed: #{err[-300..]}" unless status.success?
   end
 end

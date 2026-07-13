@@ -136,7 +136,7 @@ class ScriptGenerator
   # ステップ2.1: ニュース抽出・整理。1 回の AI 呼び出しでニュース内容を抽出して facts.txt に書く。
   def extract_news_facts(news_json)
     if File.exist?(news_facts_path)
-      warn "既存のニュースファクトシートを利用: #{news_facts_path}"
+      warn "reuse: #{news_facts_path}"
       return
     end
 
@@ -145,14 +145,14 @@ class ScriptGenerator
       extractor_prompt(news_json), "--allowedTools", "WebFetch Write", model_override: extractor_model)
 
     rewrite_file(news_facts_path) { |text| strip_facts_preamble(text) }
-    warn "ニュースファクトシートを生成: #{news_facts_path}"
+    warn "news facts: #{news_facts_path}"
   end
 
   # ステップ2.2: ライター。1 回の AI 呼び出しで script.txt と used.txt を書かせる。
   # すでに抽出されたファクトをもとに執筆するため、WebFetch は許可しない（手戻り防止）。
   def write_script_and_used(news_json)
     if File.exist?(script_path) && File.exist?(used_news_path)
-      warn "既存の台本/使用ニュース一覧を利用: #{script_path}"
+      warn "reuse: #{script_path}"
       return
     end
 
@@ -163,14 +163,14 @@ class ScriptGenerator
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
     rewrite_file(used_news_path) { |text| strip_used_preamble(text) }
-    warn "台本を生成: #{script_path}"
-    warn "使用ニュースを記録: #{used_news_path}"
+    warn "script: #{script_path}"
+    warn "used news: #{used_news_path}"
   end
 
   # ステップ3: 整形。script.txt を読んで VOICEPEAK 向けの tts_script.txt に整形させる。
   def format_tts_script
     if File.exist?(tts_script_path)
-      warn "既存の整形済み台本を利用: #{tts_script_path}"
+      warn "reuse: #{tts_script_path}"
       return
     end
 
@@ -178,7 +178,7 @@ class ScriptGenerator
     run_ai_cli("formatting for VOICEPEAK", format_prompt, "--allowedTools", "Read Write", model_override: formatter_model)
 
     rewrite_file(tts_script_path) { |text| strip_preamble(text) }
-    warn "整形済み台本を生成: #{tts_script_path}"
+    warn "tts script: #{tts_script_path}"
   end
 
   def strip_facts_preamble(text)
@@ -194,7 +194,7 @@ class ScriptGenerator
   # Claude が Write で書いたファイルを読み直し、後処理をかけて上書きする。
   # Claude が想定パスに書いていなければ止める（不完全なまま後段へ進ませない）。
   def rewrite_file(path)
-    abort "Claude が期待したファイルを書きませんでした: #{path}" unless File.exist?(path)
+    abort "expected file not written: #{path}" unless File.exist?(path)
 
     File.write(path, yield(File.read(path)))
   end
@@ -224,13 +224,13 @@ class ScriptGenerator
   # する（台本を作り直すとき収集入力を固定するため）。無ければ FeedCache から集めて作る。
   def load_or_collect_news
     if File.exist?(news_json_path)
-      warn "既存のニュースを利用: #{news_json_path}"
+      warn "reuse: #{news_json_path}"
       return File.read(news_json_path)
     end
 
     news_body = collect_news
     File.write(news_json_path, news_body)
-    warn "ニュースを保存: #{news_json_path}"
+    warn "news: #{news_json_path}"
     news_body
   end
 
@@ -277,7 +277,7 @@ class ScriptGenerator
     JSON.pretty_generate(result)
   rescue FeedCache::FetchError => e
     # 不完全なニュースのまま Claude 呼び出し（トークン消費）へ進まないよう、ここで止める
-    abort "ニュースが揃わないため中断します: #{e.message}"
+    abort "aborting, news collection incomplete: #{e.message}"
   end
 
   # 全ソースを FETCH_THREADS 並列で収集する。戻り値は jobs と同じ順の items 配列。
@@ -353,7 +353,7 @@ class ScriptGenerator
     when "claude"
       :claude
     else
-      abort "不明な AI CLI が指定されました: #{name} ('claude' または 'antigravity' を指定してください)"
+      abort "unknown AI CLI: #{name} (use 'claude' or 'antigravity')"
     end
   end
 
@@ -377,7 +377,7 @@ class ScriptGenerator
 
     run_command_with_spinner(
       "#{spinner_message} [claude]",
-      "Claude CLI の実行に失敗しました",
+      "Claude CLI failed",
       bin, "-p", "--model", model, "--effort", effort,
       *extra_args,
       stdin_data: prompt
@@ -390,7 +390,7 @@ class ScriptGenerator
 
     run_command_with_spinner(
       "#{spinner_message} [antigravity]",
-      "Antigravity CLI の実行に失敗しました",
+      "Antigravity CLI failed",
       bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt
     )
   end

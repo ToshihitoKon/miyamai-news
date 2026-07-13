@@ -28,12 +28,12 @@ class VoiceSynthesizer
 
   # 台本テキストを合成し、生成した mp3 のパスを返す。
   def synthesize(script_path)
-    abort "VOICEPEAK が見つかりません: #{VOICEPEAK_BIN}" unless File.executable?(VOICEPEAK_BIN)
+    abort "VOICEPEAK not found: #{VOICEPEAK_BIN}" unless File.executable?(VOICEPEAK_BIN)
 
     chunks = split_chunks(File.read(script_path))
-    abort "台本が空です: #{script_path}" if chunks.empty?
+    abort "empty script: #{script_path}" if chunks.empty?
 
-    warn "ナレーター: #{NARRATOR} / チャンク数: #{chunks.size}"
+    warn "narrator: #{NARRATOR} / chunks: #{chunks.size}"
 
     wav_dir = File.join(@work_dir, "wav_#{@date_tag}_#{@slot}")
     FileUtils.mkdir_p(wav_dir)
@@ -43,7 +43,7 @@ class VoiceSynthesizer
       # 前回クラッシュした場合に備え、合成済みの WAV が残っていれば再利用して
       # 続きから再開する（合成完了時に wav_dir ごと消えるので、残存＝未完了分）。
       if File.exist?(path)
-        warn "  [#{i + 1}/#{chunks.size}] スキップ（合成済み）"
+        warn "  [#{i + 1}/#{chunks.size}] skip (already synthesized)"
         next path
       end
 
@@ -58,7 +58,7 @@ class VoiceSynthesizer
     concat_to_mp3(wav_paths, voice_path)
     FileUtils.rm_rf(wav_dir)
 
-    warn "音声を生成: #{voice_path}"
+    warn "voice: #{voice_path}"
     voice_path
   end
 
@@ -96,7 +96,7 @@ class VoiceSynthesizer
       raise if attempt > MAX_RETRIES
 
       wait = RETRY_BASE_SEC * (2**(attempt - 1))
-      warn "    合成に失敗（#{attempt}/#{MAX_RETRIES} 回目）: #{e.message} / #{wait}秒後に再試行"
+      warn "    synthesis failed (attempt #{attempt}/#{MAX_RETRIES}): #{e.message} / retry in #{wait}s"
       sleep wait
       retry
     end
@@ -116,13 +116,13 @@ class VoiceSynthesizer
 
     unless wait_thr.join(TIMEOUT_SEC)
       kill_process_group(pgid)
-      raise "VOICEPEAK が #{TIMEOUT_SEC}秒以内に応答しませんでした（ハングとみなし kill）"
+      raise "VOICEPEAK did not respond within #{TIMEOUT_SEC}s (treated as hang, killed)"
     end
 
     status = wait_thr.value
     err = stderr.read
-    raise "VOICEPEAK での合成に失敗しました: #{err[-300..]}" unless status.success?
-    raise "VOICEPEAK が音声ファイルを生成しませんでした: #{out_path}" unless File.exist?(out_path)
+    raise "VOICEPEAK synthesis failed: #{err[-300..]}" unless status.success?
+    raise "VOICEPEAK did not produce an audio file: #{out_path}" unless File.exist?(out_path)
   ensure
     stderr&.close
   end
@@ -192,7 +192,7 @@ class VoiceSynthesizer
       "ffmpeg", "-y", "-f", "concat", "-safe", "0",
       "-i", list.path, "-c:a", "libmp3lame", "-q:a", "4", output
     )
-    raise "ffmpeg での連結に失敗しました: #{err[-300..]}" unless status.success?
+    raise "ffmpeg concat failed: #{err[-300..]}" unless status.success?
   ensure
     list&.unlink
     silence&.unlink
@@ -204,6 +204,6 @@ class VoiceSynthesizer
       "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
       "-t", duration_sec.to_s, out_path
     )
-    raise "無音ファイルの生成に失敗しました: #{err[-300..]}" unless status.success?
+    raise "silence generation failed: #{err[-300..]}" unless status.success?
   end
 end
