@@ -9,8 +9,8 @@ require "erb"
 # インスタンス変数（@title など）や private メソッド（h, date_with_slot など）を
 # そのまま呼べる。テンプレート固有の値は locals ハッシュで明示的に渡す。
 module TemplateRenderer
-  # templates/ はプロジェクトルート（lib/ の一つ上）に置く。
-  DIR = File.join(File.expand_path("..", __dir__), "templates")
+  # templates/ はプロジェクトルート（lib/internal/ の二つ上）に置く。
+  DIR = File.join(File.expand_path("../..", __dir__), "templates")
 
   class << self
     # name は拡張子 .erb を除いたテンプレート名（例: "writer.prompt", "index.html"）。
