@@ -164,7 +164,10 @@ class Publisher
   def write_index(rows)
     local_html = File.join(Dir.tmpdir, "miyamai_index_#{Process.pid}.html")
     File.write(local_html, render_html(rows))
-    gcloud_storage("cp", "--content-type=text/html; charset=utf-8", local_html, "gs://#{@bucket}/index.html")
+    gcloud_storage("cp",
+      "--content-type=text/html; charset=utf-8",
+      "--cache-control=public, max-age=300",
+      local_html, "gs://#{@bucket}/index.html")
   ensure
     File.delete(local_html) if local_html && File.exist?(local_html)
   end
