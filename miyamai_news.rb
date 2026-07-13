@@ -32,8 +32,10 @@ WORK_DIR = File.join(BASE_DIR, "work")
 DIST_DIR = File.join(BASE_DIR, "dist")
 
 # dist/ に置く成果物のパス。generate と publish で同じ命名規則を共有する。
-def episode_mp3_path(episode)  = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.mp3")
-def episode_used_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.used.txt")
+def episode_mp3_path(episode)        = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.mp3")
+def episode_used_path(episode)       = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.used.txt")
+# 読み仮名化前の人間可読な原稿。公開ページでは「文字起こし」として提示する。
+def episode_transcript_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.transcript.txt")
 
 def main
   args = parse_args(ARGV)
@@ -79,17 +81,21 @@ def run_generate(episode, bgm_override, cli: nil)
   bgm_path = bgm_override || File.expand_path(Config.get("assets.bgm_path"), BASE_DIR)
   output_path = episode_mp3_path(episode)
   used_news_output = episode_used_path(episode)
+  transcript_output = episode_transcript_path(episode)
 
   generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode, cli: cli)
   tts_script_path = generator.generate
   voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, episode: episode).synthesize(tts_script_path)
   AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
 
-  # 使用ニュース一覧を mp3 と並べて成果物として残す（work/ 側はキャッシュとして温存）。
+  # 使用ニュース一覧・文字起こし(読み仮名化前の台本)を mp3 と並べて成果物として残す
+  # （work/ 側はキャッシュとして温存）。
   FileUtils.cp(generator.used_news_file, used_news_output)
+  FileUtils.cp(generator.script_file, transcript_output)
 
   warn "完成: #{output_path}"
   warn "使用ニュース: #{used_news_output}"
+  warn "文字起こし: #{transcript_output}"
 end
 
 def run_publish(episode)
@@ -99,7 +105,10 @@ def run_publish(episode)
   used_path = episode_used_path(episode)
   used_path = nil unless used_path && File.exist?(used_path)
 
-  Publisher.new(date: episode.date).run(mp3_path, used_path)
+  transcript_path = episode_transcript_path(episode)
+  transcript_path = nil unless transcript_path && File.exist?(transcript_path)
+
+  Publisher.new(date: episode.date).run(mp3_path, used_path, transcript_path)
 
   # publish が成功した実行時刻で収集 window の起点を確定する。以後の収集はこの時刻より
   # 後の記事だけを対象にする。Publisher#run は失敗時に内部で abort するので、ここへ
@@ -132,7 +141,7 @@ def clean_work_dir
 end
 
 # dist/ の各 mp3 のうち、GCS 上に同名が存在する（＝公開済みの）ものだけを削除する。
-# 未公開の回を誤って消さないための存在確認。used.txt は対の mp3 とセットで扱う。
+# 未公開の回を誤って消さないための存在確認。used.txt/transcript.txt は対の mp3 とセットで扱う。
 def clean_published_dist
   mp3s = Dir.glob(File.join(DIST_DIR, "miyamai_news_*.mp3"))
   return if mp3s.empty?
@@ -140,7 +149,7 @@ def clean_published_dist
   publisher = Publisher.new
   mp3s.each do |mp3|
     if publisher.object_exists?(File.basename(mp3))
-      FileUtils.rm_f([mp3, mp3.sub(/\.mp3\z/, ".used.txt")])
+      FileUtils.rm_f([mp3, mp3.sub(/\.mp3\z/, ".used.txt"), mp3.sub(/\.mp3\z/, ".transcript.txt")])
       warn "公開済み → 削除: #{mp3}"
     else
       warn "未公開 → 保持: #{mp3}"

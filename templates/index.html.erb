@@ -104,6 +104,26 @@
       color: #3a4652;
     }
     .news a { color: var(--moca-deep); }
+    .transcript {
+      margin-top: 20px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 16px;
+    }
+    .transcript summary {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--moca-deep);
+      cursor: pointer;
+    }
+    .transcript pre {
+      margin: 10px 0 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #3a4652;
+    }
     /* ビューポート最下部に敷く半透明の帯。モカ背景の上に置くため
        白の半透明地に濃色文字で、どの背景でも読めるようにする。 */
     .site-footer {
@@ -148,6 +168,10 @@
         <h2>この回で紹介したニュース</h2>
         <pre id="newslist">読み込み中…</pre>
       </div>
+      <details class="transcript" id="transcript">
+        <summary>文字起こしを読む</summary>
+        <pre id="transcripttext">読み込み中…</pre>
+      </details>
     </div>
   </main>
 
@@ -166,6 +190,8 @@
     const now = document.getElementById('nowplaying');
     const newslist = document.getElementById('newslist');
     const artwork = document.getElementById('artwork');
+    const transcript = document.getElementById('transcript');
+    const transcripttext = document.getElementById('transcripttext');
 
     const escapeHtml = (s) => s
       .replaceAll('&', '&amp;')
@@ -192,12 +218,44 @@
       }
     };
 
+    // mp3 の URL から文字起こしの URL を導出(miyamai_news_YYYYMMDD.mp3 → .transcript.txt)
+    const transcriptUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.transcript.txt');
+
+    // 文字起こしは details を開いたときだけ取得する(閉じたままなら通信しない)。
+    // URL をリンク化する必要は無い(台本にリンクはほぼ含まれない)ので textContent のまま表示する。
+    const loadTranscript = async (mp3Url) => {
+      transcripttext.textContent = '読み込み中…';
+      try {
+        const res = await fetch(transcriptUrlFor(mp3Url), { cache: 'no-cache' });
+        if (!res.ok) throw new Error(res.status);
+        transcripttext.textContent = await res.text();
+      } catch (e) {
+        transcripttext.textContent = '文字起こしはありません';
+      }
+    };
+
+    // details を開いた瞬間にその回の文字起こしを取得する。同じ回のまま開閉するたびに
+    // 再取得しないよう、読み込み済みかどうかを dataset で覚えておく。
+    transcript.addEventListener('toggle', () => {
+      if (transcript.open && transcript.dataset.loadedFor !== player.src) {
+        transcript.dataset.loadedFor = player.src;
+        loadTranscript(player.src);
+      }
+    });
+
     // アーカイブ選択では src とニュース一覧だけ差し替え、再生はしない。
     // 再生はユーザーが再生ボタンを押したときだけ始まるようにする。
+    // 文字起こしは開いていた場合のみ、選択が変わった回のぶんを読み込み直す。
     sel.addEventListener('change', () => {
       player.src = sel.value;
       now.textContent = sel.options[sel.selectedIndex].text;
       loadNews(sel.value);
+      if (transcript.open) {
+        transcript.dataset.loadedFor = player.src;
+        loadTranscript(player.src);
+      } else {
+        delete transcript.dataset.loadedFor;
+      }
     });
 
     artwork.addEventListener('click', () => {
