@@ -20,7 +20,7 @@ require "time"
 require "date"
 require "fileutils"
 
-require_relative "lib/config"
+require_relative "lib/internal/config"
 require_relative "lib/episode"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"

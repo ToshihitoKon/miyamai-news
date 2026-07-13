@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "open3"
-require_relative "config"
+require_relative "internal/config"
 
 class AudioMixer
   BGM_VOLUME = Config.get("mixer.bgm_volume").to_f

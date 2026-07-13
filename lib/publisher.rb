@@ -6,8 +6,8 @@ require "json"
 require "cgi"
 require "shellwords"
 require "tmpdir"
-require_relative "config"
-require_relative "template_renderer"
+require_relative "internal/config"
+require_relative "internal/template_renderer"
 
 class Publisher
   PUBLIC_BASE    = Config.get("gcs.public_base")

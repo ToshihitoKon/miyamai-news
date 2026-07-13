@@ -3,7 +3,7 @@
 require "open3"
 require "tempfile"
 require "fileutils"
-require_relative "config"
+require_relative "internal/config"
 
 class VoiceSynthesizer
   VOICEPEAK_BIN = Config.get("voicepeak.bin")

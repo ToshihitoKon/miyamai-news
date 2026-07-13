@@ -5,8 +5,9 @@ require "time"
 require "open3"
 require "fileutils"
 require "tty-spinner"
-require_relative "config"
-require_relative "template_renderer"
+require_relative "internal/config"
+require_relative "internal/template_renderer"
+require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
 
 class ScriptGenerator
@@ -318,11 +319,12 @@ class ScriptGenerator
 
   # 1ソース分の新着記事を FeedCache から取得し、ソース名などのメタ情報を付けて返す。
   def collect_source(src, since)
-    items = @feed_cache.fetch(src[:urls] || src[:url], now: @now, since: since)
+    extra_extractor = src[:top_by_bookmarks] ? Internal::HatenaBookmarks : nil
+    items = @feed_cache.fetch(src[:urls] || src[:url], now: @now, since: since, extra_extractor: extra_extractor)
 
     if src[:top_by_bookmarks]
       # はてブ用: ブクマ数の多い順に採用する
-      items = items.sort_by { |i| -i[:bookmarks].to_i }.first(src[:top_by_bookmarks])
+      items = items.sort_by { |i| -bookmarks_of(i) }.first(src[:top_by_bookmarks])
     else
       # それ以外は、新しく登場した順(seen_at 降順)の上位だけに絞る。
       # max_items 指定があればそれを、なければ既定の上限を使う。
@@ -334,12 +336,17 @@ class ScriptGenerator
       # seen_at はカテゴリ集約時のソートに使う内部情報。最終出力前に collect_news で落とす。
       picked = { title: item[:title], link: item[:link], date: item[:date],
                  source: src[:name], seen_at: item[:seen_at] }
-      picked[:bookmarks] = item[:bookmarks] if item[:bookmarks]
+      picked[:bookmarks] = bookmarks_of(item) if item[:extra]
       # 優先度付きソースの記事に印を付け、ライターの取捨選択に使わせる
       picked[:priority] = src[:priority] if src[:priority]
       picked
     end
   end
+
+  # FeedCache の extra（任意メタデータ）からはてブのブックマーク数を取り出す。
+  # extra は FeedCache 内で JSON を経由するため文字列キーの Hash になる。
+  # extra が無い/はてブ以外のソースでは 0 になる。
+  def bookmarks_of(item) = item.dig(:extra, "bookmarks").to_i
 
   # --- AI CLI 実行 ---
 
