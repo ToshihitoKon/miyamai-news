@@ -11,12 +11,16 @@ require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
 
 class ScriptGenerator
-  # 収集元定義（config.yaml の collect.sources）。category は台本の番組構成（4本立て）に対応。
+  # カテゴリ定義（config.yaml の collect.sources）。台本の番組構成（何本立てか）もこれに従う。
   # YAML 由来の文字列キー/値をコード内で使うシンボルに変換する
   # （category 名、各ソースハッシュのキー、priority の値）。
-  SOURCES = Config.get("collect.sources").to_h do |category, sources|
-    [category.to_sym, sources.map { |src| src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] } }]
+  CATEGORIES = Config.get("collect.sources").to_h do |category, cfg|
+    sources = cfg.fetch("sources").map { |src| src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] } }
+    [category.to_sym, { label: cfg.fetch("label", category), sources: sources }]
   end.freeze
+
+  # カテゴリごとのソース一覧だけを取り出したもの。ニュース収集で使う。
+  SOURCES = CATEGORIES.transform_values { |cfg| cfg[:sources] }.freeze
 
   # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
   # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
@@ -459,6 +463,7 @@ class ScriptGenerator
     TemplateRenderer.render("extractor.prompt", self,
       news_json:,
       today_ja: @today_ja,
+      category_labels: CATEGORIES.values.map { |cfg| cfg[:label] },
       news_facts_path: File.expand_path(news_facts_path))
   end
 
