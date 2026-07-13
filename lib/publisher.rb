@@ -12,6 +12,9 @@ require_relative "template_renderer"
 class Publisher
   PUBLIC_BASE    = Config.get("gcs.public_base")
   DEFAULT_BUCKET = Config.get("gcs.bucket")
+  # サイト全体を指す固定の番組名。archives.csv の title 列（回ごとに日付が付く）とは別物。
+  # og:title/twitter:title/manifest.json の name はこちらを使う。
+  PROGRAM_NAME = "宮舞モカの技術ニュース"
   # 横長バナー画像。Slack のリンクプレビューと再生ページの両方で使う。
   # GCS への事前アップロードが前提（README 参照）。
   COVER_IMAGE = Config.get("assets.cover_image")
@@ -26,7 +29,8 @@ class Publisher
   def initialize(bucket: DEFAULT_BUCKET, date: Date.today, title: nil)
     @bucket = bucket
     @date   = date
-    @title  = title || "宮舞モカの技術ニュース #{date.strftime('%Y-%m-%d')}"
+    # archives.csv/feed エントリ用の回ごとのタイトル。PROGRAM_NAME とは別物。
+    @title  = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
   end
 
   # GCS 上のオブジェクト名は、渡された mp3 のファイル名をそのまま使う
@@ -55,10 +59,6 @@ class Publisher
     local_csv = File.join(Dir.tmpdir, "miyamai_archives_#{Process.pid}.csv")
     rows = fetch_existing_archives(local_csv)
     abort("archives.csv がまだ存在しません（公開実績がありません）") if rows.empty?
-
-    # og:title/manifest.json の name は @title を参照するため、実行時刻由来の
-    # デフォルト値ではなく最新回(archives.csv の先頭行)のタイトルに差し替える。
-    @title = rows.first[2]
 
     write_index(rows)
     write_manifest
@@ -188,6 +188,7 @@ class Publisher
       icon_url: public_url(ICON_IMAGE),
       cover_url: public_url(COVER_IMAGE),
       description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
+      og_title: PROGRAM_NAME,
       options:)
   end
 
@@ -235,8 +236,8 @@ class Publisher
   end
 
   # --- manifest.json (PWA) -----------------------------------------------
-  # ホーム画面追加(PWA)用の Web App Manifest。エピソードごとには変わらないが、
-  # index/feed と同じく毎回書き出して @title の変更を確実に反映する。
+  # ホーム画面追加(PWA)用の Web App Manifest。name は PROGRAM_NAME 固定で
+  # エピソードごとには変わらないが、index/feed と同じく毎回書き出す。
   # アイコンは正方形が必要なので、横長の cover_image ではなく icon_image を使う。
 
   def write_manifest
