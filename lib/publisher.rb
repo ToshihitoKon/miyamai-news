@@ -60,7 +60,7 @@ class Publisher
   def republish_ui
     local_csv = File.join(Dir.tmpdir, "miyamai_archives_#{Process.pid}.csv")
     rows = fetch_existing_archives(local_csv)
-    abort("archives.csv がまだ存在しません（公開実績がありません）") if rows.empty?
+    abort("archives.csv does not exist yet (nothing published)") if rows.empty?
 
     write_index(rows)
     write_manifest

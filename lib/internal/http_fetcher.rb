@@ -22,10 +22,10 @@ module Internal
         get_once(url)
       rescue StandardError => e
         attempt += 1
-        raise "#{url} の取得に失敗: #{e.message}" if attempt > @max_retries
+        raise "failed to fetch #{url}: #{e.message}" if attempt > @max_retries
 
         wait = @retry_base_sec * (2**(attempt - 1))
-        warn "  ! #{url} の取得に失敗（#{attempt}/#{@max_retries} 回目）: #{e.message} / #{wait}秒後に再試行"
+        warn "  ! fetch failed for #{url} (attempt #{attempt}/#{@max_retries}): #{e.message} / retry in #{wait}s"
         sleep wait
         retry
       end

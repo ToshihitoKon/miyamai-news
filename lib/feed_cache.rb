@@ -101,7 +101,7 @@ class FeedCache
     Internal::FeedParser.parse(body).map { |entry| entry.merge(extra: extra_by_link[entry[:link]]) }
   rescue StandardError => e
     # HTTP は成功しているのに中身が壊れているケース。リトライしても直らないので即中断へ回す
-    raise FetchError, "フィードのパースに失敗: #{e.message}"
+    raise FetchError, "feed parse failed: #{e.message}"
   end
 
   # 今回フィードに登場した entry を seen_at 付きでキャッシュに反映する。

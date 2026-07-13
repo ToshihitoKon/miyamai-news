@@ -72,8 +72,7 @@ end
 def run_script(episode, cli: nil)
   script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode, cli: cli).generate(format: false)
 
-  warn "台本を生成: #{script_path}"
-  warn "内容を確認し、必要なら手直ししてください。フラグなしで再実行すると整形〜音声生成〜publish まで進みます。"
+  warn "script: #{script_path}"
 end
 
 def run_generate(episode, bgm_override, cli: nil)
@@ -93,14 +92,14 @@ def run_generate(episode, bgm_override, cli: nil)
   FileUtils.cp(generator.used_news_file, used_news_output)
   FileUtils.cp(generator.script_file, transcript_output)
 
-  warn "完成: #{output_path}"
-  warn "使用ニュース: #{used_news_output}"
-  warn "文字起こし: #{transcript_output}"
+  warn "audio: #{output_path}"
+  warn "used news: #{used_news_output}"
+  warn "transcript: #{transcript_output}"
 end
 
 def run_publish(episode)
   mp3_path = episode_mp3_path(episode)
-  abort "mp3 が見つかりません: #{mp3_path}（先に生成が必要）" unless File.exist?(mp3_path)
+  abort "mp3 not found: #{mp3_path} (run generate first)" unless File.exist?(mp3_path)
 
   used_path = episode_used_path(episode)
   used_path = nil unless used_path && File.exist?(used_path)
@@ -137,7 +136,7 @@ end
 def clean_work_dir
   patterns = ScriptGenerator.work_globs(WORK_DIR) + VoiceSynthesizer.work_globs(WORK_DIR)
   FileUtils.rm_rf(patterns.flat_map { |pat| Dir.glob(pat) })
-  warn "作業ディレクトリを初期化: #{WORK_DIR}"
+  warn "reset work dir: #{WORK_DIR}"
 end
 
 # dist/ の各 mp3 のうち、GCS 上に同名が存在する（＝公開済みの）ものだけを削除する。
@@ -150,9 +149,9 @@ def clean_published_dist
   mp3s.each do |mp3|
     if publisher.object_exists?(File.basename(mp3))
       FileUtils.rm_f([mp3, mp3.sub(/\.mp3\z/, ".used.txt"), mp3.sub(/\.mp3\z/, ".transcript.txt")])
-      warn "公開済み → 削除: #{mp3}"
+      warn "published, deleted: #{mp3}"
     else
-      warn "未公開 → 保持: #{mp3}"
+      warn "unpublished, kept: #{mp3}"
     end
   end
 end
@@ -174,7 +173,7 @@ def parse_args(argv)
     when "--bgm"                  then opts[:bgm] = argv[i += 1]
     when "--date"                 then opts[:date] = Time.parse(argv[i += 1])
     when "--slot"                 then opts[:slot] = argv[i += 1]
-    else abort "不明な引数: #{argv[i]}"
+    else abort "unknown argument: #{argv[i]}"
     end
     i += 1
   end

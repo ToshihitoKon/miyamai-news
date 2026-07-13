@@ -31,7 +31,7 @@ module TemplateRenderer
 
     def build_erb(name)
       path = File.join(DIR, "#{name}.erb")
-      raise ArgumentError, "テンプレートがありません: #{path}" unless File.exist?(path)
+      raise ArgumentError, "template not found: #{path}" unless File.exist?(path)
 
       # trim_mode "-" は <%- -%> を書いたときだけ前後の空白を削る。通常の
       # <%= %> には影響しないので、プロンプトも HTML/XML も同じ設定で扱える。
