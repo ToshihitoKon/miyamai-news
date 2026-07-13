@@ -36,12 +36,14 @@ class Publisher
   # GCS 上のオブジェクト名は、渡された mp3 のファイル名をそのまま使う
   # （例: miyamai_news_20260710_afternoon.mp3）。日付から組み立て直すと
   # slot が落ちて朝昼夜深夜が同名で上書きし合うため、呼び出し側のファイル名を正とする。
-  def run(mp3_path, used_txt_path = nil)
+  def run(mp3_path, used_txt_path = nil, transcript_txt_path = nil)
     filename = File.basename(mp3_path)
     used_object = filename.sub(/\.mp3\z/, ".used.txt")
+    transcript_object = filename.sub(/\.mp3\z/, ".transcript.txt")
 
     upload_mp3(mp3_path, filename)
     upload_used_news(used_txt_path, used_object) if used_txt_path
+    upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
     used_news = used_txt_path && File.exist?(used_txt_path) ? File.read(used_txt_path) : ""
     rows = update_archives(filename, used_news)
     write_index(rows)
@@ -103,6 +105,20 @@ class Publisher
 
   def upload_used_news(local_path, object)
     abort("used news not found: #{local_path}") unless File.exist?(local_path)
+    gcloud_storage(
+      "cp",
+      "--content-type=text/plain; charset=utf-8",
+      local_path, "gs://#{@bucket}/#{object}"
+    )
+  end
+
+  # --- transcript ----------------------------------------------------------
+  # 読み仮名化前の人間可読な原稿(台本)。公開ページでは「文字起こし」として提示する。
+  # archives.csv/feed.xml には含めず、再生ページ側が mp3 URL から直接 fetch する
+  # UI 専用の付随ファイル。
+
+  def upload_transcript(local_path, object)
+    abort("transcript not found: #{local_path}") unless File.exist?(local_path)
     gcloud_storage(
       "cp",
       "--content-type=text/plain; charset=utf-8",

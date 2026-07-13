@@ -68,9 +68,9 @@ ruby miyamai_news.rb --clean          # work/ を掃除し、公開済みの dis
 ruby miyamai_news.rb --ui-only        # 新しい回を公開せず index.html / manifest.json だけ再生成
 ```
 
-`--ui-only` は既存 `archives.csv` を読み込んで再生成するだけで、mp3・used.txt・archives.csv・
-feed.xml には触れない。Atom の `<updated>` も動かないため購読者への「新着」通知は発生しない。
-UI 文言修正だけを即時反映したいときに使う。
+`--ui-only` は既存 `archives.csv` を読み込んで再生成するだけで、mp3・used.txt・transcript.txt・
+archives.csv・feed.xml には触れない。Atom の `<updated>` も動かないため購読者への「新着」通知は
+発生しない。UI 文言修正だけを即時反映したいときに使う。
 
 `--script-only` は台本を確認・手直ししてから音声を作りたいときに使う。生成された
 台本（`work/script_<date>_<slot>.txt`）を確認し、必要なら手直ししたうえで、フラグ
