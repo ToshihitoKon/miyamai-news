@@ -123,9 +123,16 @@ class FeedCache
         "last_fetched_at" => now.iso8601,
         "title" => entry[:title],
         "date" => entry[:date],
-        "extra" => entry[:extra],
+        "extra" => entry[:extra] || existing_extra(existing),
       }
     end
+  end
+
+  # 今回の extra_extractor が値を出せなかった場合に、既存キャッシュから引き継ぐ。
+  # meta_extra を経由することで、旧形式（トップレベル "bookmarks"）のまま更新されていない
+  # entry も、新しい entry で上書きされる際に取りこぼされない。
+  def existing_extra(existing)
+    existing && meta_extra(existing)
   end
 
   def initial_seen_at(entry, now)
