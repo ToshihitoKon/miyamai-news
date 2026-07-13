@@ -79,70 +79,80 @@ collect:
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
   fetch_max_retries: 3
   fetch_retry_base_sec: 2
-  # 収集元定義。category は台本の番組構成（4本立て）に対応する。
-  # 各ソースのキー:
-  #   name: 表示名（ニュース JSON の source に入る）
-  #   url / urls: フィードURL。複数フィードを1ソース扱いしたい場合は urls（配列）を使う
-  #   max_items: このソースから採用する最大件数（省略時は default_max_per_source）
-  #   top_by_bookmarks: はてブ用。ブクマ数上位N件だけを採用する（max_items の代わりに使う）
-  #   priority: "low" を指定すると、カテゴリの件数枠(max_per_category)で一次情報源より
-  #     後回しにする。まとめ系・コミュニティ系など玉石混交で流量が多いソース向け
+  # 収集元定義。台本の番組構成（何本立てか）もここに定義したカテゴリ数に従う。
+  # 各カテゴリのキー:
+  #   label: extractor プロンプトで使う日本語の表示名
+  #   sources: そのカテゴリのソース一覧。各ソースのキー:
+  #     name: 表示名（ニュース JSON の source に入る）
+  #     url / urls: フィードURL。複数フィードを1ソース扱いしたい場合は urls（配列）を使う
+  #     max_items: このソースから採用する最大件数（省略時は default_max_per_source）
+  #     top_by_bookmarks: はてブ用。ブクマ数上位N件だけを採用する（max_items の代わりに使う）
+  #     priority: "low" を指定すると、カテゴリの件数枠(max_per_category)で一次情報源より
+  #       後回しにする。まとめ系・コミュニティ系など玉石混交で流量が多いソース向け
   sources:
     ai:
-      - name: "Hacker News (AI)"
-        url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
-      - name: "arXiv cs.AI"
-        url: "http://export.arxiv.org/rss/cs.AI"
-      - name: "OpenAI Blog"
-        url: "https://openai.com/news/rss.xml"
+      label: "生成AI"
+      sources:
+        - name: "Hacker News (AI)"
+          url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
+        - name: "arXiv cs.AI"
+          url: "http://export.arxiv.org/rss/cs.AI"
+        - name: "OpenAI Blog"
+          url: "https://openai.com/news/rss.xml"
     # Claude Code / Devin / Cursor / Antigravity などの AI エージェント・AI コーディングツール。
     # Devin(Cognition) は公式 RSS がないため HN のキーワード検索で拾う。
     ai_agents:
-      - name: "Hacker News (agents)"
-        url: "https://hnrss.org/newest?q=%22Claude%20Code%22%20OR%20%22coding%20agent%22%20OR%20Devin%20OR%20Cursor%20OR%20Antigravity&points=30"
-      - name: "Claude Code Releases"
-        url: "https://github.com/anthropics/claude-code/releases.atom"
-      - name: "Cursor Changelog"
-        url: "https://cursor.com/changelog/rss.xml"
-      - name: "Google AI Blog"
-        url: "https://blog.google/innovation-and-ai/technology/ai/rss/"
-      - name: "Simon Willison's Weblog"
-        url: "https://simonwillison.net/atom/everything/"
+      label: "AIエージェント・AIコーディングツール（Claude Code、Devin、Cursor など）"
+      sources:
+        - name: "Hacker News (agents)"
+          url: "https://hnrss.org/newest?q=%22Claude%20Code%22%20OR%20%22coding%20agent%22%20OR%20Devin%20OR%20Cursor%20OR%20Antigravity&points=30"
+        - name: "Claude Code Releases"
+          url: "https://github.com/anthropics/claude-code/releases.atom"
+        - name: "Cursor Changelog"
+          url: "https://cursor.com/changelog/rss.xml"
+        - name: "Google AI Blog"
+          url: "https://blog.google/innovation-and-ai/technology/ai/rss/"
+        - name: "Simon Willison's Weblog"
+          url: "https://simonwillison.net/atom/everything/"
     security:
-      - name: "JPCERT/CC"
-        url: "https://www.jpcert.or.jp/rss/jpcert.rdf"
-      - name: "JVN"
-        url: "https://jvn.jp/rss/jvn.rdf"
+      label: "セキュリティ"
+      sources:
+        - name: "JPCERT/CC"
+          url: "https://www.jpcert.or.jp/rss/jpcert.rdf"
+        - name: "JVN"
+          url: "https://jvn.jp/rss/jvn.rdf"
     engineering:
-      - name: "Publickey"
-        url: "https://www.publickey1.jp/atom.xml"
-      - name: "Hacker News (frontpage)"
-        url: "https://hnrss.org/frontpage?points=100"
-      - name: "Lobsters"
-        url: "https://lobste.rs/rss"
-      - name: "gihyo.jp"
-        url: "https://gihyo.jp/feed/rss2"
-      - name: "InfoQ Japan"
-        url: "https://www.infoq.com/jp/feed/"
-      - name: "DevelopersIO"
-        url: "https://dev.classmethod.jp/feed/"
-      # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
-      # はてブはホットエントリと新着の両フィードを読み、ブクマ数上位だけを採用する
-      # （RSS は各30件が上限で、オフセット等のパラメータは効かない）。
-      - name: "はてブ テクノロジー"
-        urls:
-          - "https://b.hatena.ne.jp/hotentry/it.rss"
-          - "https://b.hatena.ne.jp/entrylist/it.rss"
-        top_by_bookmarks: 20
-        priority: low
-      - name: "Qiita 人気記事"
-        url: "https://qiita.com/popular-items/feed.atom"
-        priority: low
-        max_items: 10
-      - name: "Zenn 新着"
-        url: "https://zenn.dev/feed"
-        priority: low
-        max_items: 10
+      label: "その他エンジニア向けトピック"
+      sources:
+        - name: "Publickey"
+          url: "https://www.publickey1.jp/atom.xml"
+        - name: "Hacker News (frontpage)"
+          url: "https://hnrss.org/frontpage?points=100"
+        - name: "Lobsters"
+          url: "https://lobste.rs/rss"
+        - name: "gihyo.jp"
+          url: "https://gihyo.jp/feed/rss2"
+        - name: "InfoQ Japan"
+          url: "https://www.infoq.com/jp/feed/"
+        - name: "DevelopersIO"
+          url: "https://dev.classmethod.jp/feed/"
+        # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
+        # はてブはホットエントリと新着の両フィードを読み、ブクマ数上位だけを採用する
+        # （RSS は各30件が上限で、オフセット等のパラメータは効かない）。
+        - name: "はてブ テクノロジー"
+          urls:
+            - "https://b.hatena.ne.jp/hotentry/it.rss"
+            - "https://b.hatena.ne.jp/entrylist/it.rss"
+          top_by_bookmarks: 20
+          priority: low
+        - name: "Qiita 人気記事"
+          url: "https://qiita.com/popular-items/feed.atom"
+          priority: low
+          max_items: 10
+        - name: "Zenn 新着"
+          url: "https://zenn.dev/feed"
+          priority: low
+          max_items: 10
 
 # BGM 合成(ミキシング)まわり。
 mixer:
