@@ -85,13 +85,13 @@ class FeedCache
   private
 
   def fetch_and_parse(url, extra_extractor)
-    body = begin
-      @fetcher.get(url)
-    rescue StandardError => e
-      raise FetchError, e.message
-    end
+    parse(fetch_body(url), extra_extractor)
+  end
 
-    parse(body, extra_extractor)
+  def fetch_body(url)
+    @fetcher.get(url)
+  rescue StandardError => e
+    raise FetchError, e.message
   end
 
   # フィード本文をパースし、{ link:, title:, date:, extra: } の配列にする。

@@ -25,6 +25,10 @@ module Internal
       rescue REXML::ParseException
         {}
       end
+
+      # FeedCache の extra からブックマーク数を取り出す。extra が nil、または
+      # このモジュールで付与したものでなければ 0 になる。
+      def count_of(extra) = extra&.fetch("bookmarks", 0).to_i
     end
   end
 end
