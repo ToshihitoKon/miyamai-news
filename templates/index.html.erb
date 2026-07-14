@@ -258,12 +258,27 @@
       }
     });
 
-    artwork.addEventListener('click', () => {
+    const togglePlay = () => {
       if (player.paused) {
         player.play();
       } else {
         player.pause();
       }
+    };
+
+    artwork.addEventListener('click', togglePlay);
+
+    // スペースキーでも再生/一時停止を切り替える。select や audio(ネイティブ
+    // コントロール)にフォーカスがある場合はブラウザ標準の挙動(ドロップダウン
+    // 展開・ネイティブトグル)を優先し、何もしない。
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== 'Space') return;
+      const active = document.activeElement;
+      if (active === sel || active === player) return;
+      const tag = active && active.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+      e.preventDefault();
+      togglePlay();
     });
 
     loadNews(player.src);
