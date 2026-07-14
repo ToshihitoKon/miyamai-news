@@ -34,7 +34,7 @@ RSpec.describe ScriptGenerator do
 
           body = generator.send(:collect_news)
 
-          expect(fake_feed_cache).to have_received(:fetch).exactly(described_class::SOURCES.size).times
+          expect(fake_feed_cache).to have_received(:fetch).exactly(described_class.sources.size).times
           expect(body).to include("Title A")
         end
       end

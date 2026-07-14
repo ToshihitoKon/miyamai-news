@@ -10,23 +10,31 @@ require_relative "internal/config"
 require_relative "internal/template_renderer"
 
 class Publisher
-  PUBLIC_BASE    = Config.get("gcs.public_base")
-  DEFAULT_BUCKET = Config.get("gcs.bucket")
   # サイト全体を指す固定の番組名。archives.csv の title 列（回ごとに日付が付く）とは別物。
   # og:title/twitter:title/manifest.json の name はこちらを使う。
   PROGRAM_NAME = "宮舞モカの技術ニュース"
-  # 横長バナー画像。Slack のリンクプレビューと再生ページの両方で使う。
-  # GCS への事前アップロードが前提（README 参照）。
-  COVER_IMAGE = Config.get("assets.cover_image")
-  # PWA(ホーム画面追加)用の正方形アイコン。manifest.json から参照する。
-  # cover_image と同じく GCS への事前アップロードが前提（README 参照）。
-  ICON_IMAGE = Config.get("assets.icon_image")
+
+  # Config 参照は require 時ではなく初回アクセス時に遅延させる（クラス単位でメモ化）。
+  # こうすることで、このファイルを require する側は Config.path の設定順を
+  # 気にしなくてよくなる。
+  class << self
+    def public_base = @public_base ||= Config.get("gcs.public_base")
+    def default_bucket = @default_bucket ||= Config.get("gcs.bucket")
+
+    # 横長バナー画像。Slack のリンクプレビューと再生ページの両方で使う。
+    # GCS への事前アップロードが前提（README 参照）。
+    def cover_image = @cover_image ||= Config.get("assets.cover_image")
+
+    # PWA(ホーム画面追加)用の正方形アイコン。manifest.json から参照する。
+    # cover_image と同じく GCS への事前アップロードが前提（README 参照）。
+    def icon_image = @icon_image ||= Config.get("assets.icon_image")
+  end
 
   # ページ/フィードのマークアップは templates/*.erb。埋め込み変数は
   # render_html / render_feed / render_feed_entry のローカル変数を binding 経由で
   # 参照する。値の HTML エスケープは呼び出し側の h() で行い、テンプレートでは素通しする。
 
-  def initialize(bucket: DEFAULT_BUCKET, date: Date.today, title: nil)
+  def initialize(bucket: self.class.default_bucket, date: Date.today, title: nil)
     @bucket = bucket
     @date   = date
     # archives.csv/feed エントリ用の回ごとのタイトル。PROGRAM_NAME とは別物。
@@ -79,7 +87,7 @@ class Publisher
   private
 
   def public_url(object)
-    "#{PUBLIC_BASE}/#{@bucket}/#{object}"
+    "#{self.class.public_base}/#{@bucket}/#{object}"
   end
 
   def gcloud_storage(*args)
@@ -204,8 +212,8 @@ class Publisher
       page_url: public_url("index.html"),
       feed_url: public_url("feed.xml"),
       manifest_url: public_url("manifest.json"),
-      icon_url: public_url(ICON_IMAGE),
-      cover_url: public_url(COVER_IMAGE),
+      icon_url: public_url(self.class.icon_image),
+      cover_url: public_url(self.class.cover_image),
       description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
       og_title: PROGRAM_NAME,
       options:)
@@ -268,7 +276,7 @@ class Publisher
   end
 
   def render_manifest
-    TemplateRenderer.render("manifest.json", self, icon_url: public_url(ICON_IMAGE))
+    TemplateRenderer.render("manifest.json", self, icon_url: public_url(self.class.icon_image))
   end
 
   # Atom の <updated> 用 RFC3339 日時を返す。

@@ -35,8 +35,8 @@ RSpec.describe AudioMixer do
           "-of", "default=noprint_wrappers=1:nokey=1", voice_path
         )
 
-        fade_start = described_class::INTRO_SEC + 12.5 + described_class::TAIL_SEC
-        total_dur = fade_start + described_class::FADE_SEC
+        fade_start = described_class.intro_sec + 12.5 + described_class.tail_sec
+        total_dur = fade_start + described_class.fade_sec
         expect(Open3).to have_received(:capture3).with(
           "ffmpeg", "-y",
           "-stream_loop", "-1", "-i", bgm_path,
