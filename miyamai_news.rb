@@ -23,8 +23,6 @@ require "optparse"
 
 require_relative "lib/internal/config"
 
-# ARGV を解析する。--config の値は lib/* を require する前に Config.path= へ反映する
-# 必要があるため、ARGV 解析自体も他の require より前に行う。
 def parse_args(argv)
   opts = {}
   parser = OptionParser.new do |o|
@@ -49,8 +47,6 @@ def parse_args(argv)
   opts
 end
 
-# lib/script_generator 等は require 時（定数定義）に Config.get を呼ぶため、
-# --config の反映はそれらを require するより前に済ませる必要がある。
 ARGS = parse_args(ARGV)
 Config.path = File.expand_path(ARGS[:config], __dir__) if ARGS[:config]
 

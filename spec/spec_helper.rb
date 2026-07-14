@@ -11,8 +11,8 @@ $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
 require_relative "../lib/internal/config"
 
-# lib/*.rb は require 時（定数定義）に Config.get を呼ぶため、他の require より前に
-# fixture の config.yaml を指すよう差し替える。
+# lib/* の Config 参照は初回アクセス時まで遅延される（require 時には読まない）ので、
+# 各 spec が対象クラスを require する前に fixture の config.yaml を指すよう差し替えておけば足りる。
 Config.path = File.expand_path("fixtures/config.yaml", __dir__)
 
 RSpec.configure do |config|
