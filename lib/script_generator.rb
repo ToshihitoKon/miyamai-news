@@ -10,10 +10,10 @@ require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
 
 class ScriptGenerator
-  # カテゴリ定義（config.yaml の collect.sources）。台本の番組構成（何本立てか）もこれに従う。
+  # カテゴリ定義（config.yaml の rss_feed_sources）。台本の番組構成（何本立てか）もこれに従う。
   # YAML 由来の文字列キー/値をコード内で使うシンボルに変換する
   # （category 名、各ソースハッシュのキー、priority の値）。
-  CATEGORIES = Config.get("collect.sources").to_h do |category, cfg|
+  CATEGORIES = Config.get("rss_feed_sources").to_h do |category, cfg|
     sources = cfg.fetch("sources").map { |src| src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] } }
     [category.to_sym, { label: cfg.fetch("label", category), sources: sources }]
   end.freeze
@@ -30,10 +30,6 @@ class ScriptGenerator
   # 各カテゴリの目安件数（台本が長くなりすぎるのを防ぐ）。Ruby が機械的に足切りするの
   # ではなく、選定ステップの AI への指示に使う。
   MAX_PER_CATEGORY = Config.get("collect.max_per_category").to_i
-  # 1ソースあたりの既定の選定目安件数。max_items も top_by_bookmarks も指定していない
-  # ソースに適用する。選定ステップの AI への指示に使う（Ruby 側での機械的な足切りには
-  # 使わない）。
-  DEFAULT_MAX_PER_SOURCE = Config.get("collect.default_max_per_source").to_i
   # フィード取得の並列数
   FETCH_THREADS = Config.get("collect.fetch_threads").to_i
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
@@ -69,15 +65,13 @@ class ScriptGenerator
 
   # @param work_dir [String] 中間ファイルの置き場
   # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
-  # @param cli [String, Symbol, nil] 使用する AI CLI ツールの指定 ("claude" / "antigravity")
-  def initialize(work_dir:, episode:, cli: nil)
+  def initialize(work_dir:, episode:)
     @work_dir = work_dir
     # 収集の時刻演算(since・seen_at・iso8601)には時刻精度のある now を使う。
     @now = episode.now
     @slot = episode.slot
     @date_tag = episode.date_tag
     @today_ja = episode.today_ja
-    @cli_type = resolve_cli_type(cli)
     @feed_cache = FeedCache.new(
       path: self.class.feed_cache_path(work_dir),
       retention_days: RETENTION_DAYS,
@@ -365,81 +359,33 @@ class ScriptGenerator
 
   # --- AI CLI 実行 ---
 
-  def resolve_cli_type(cli_override)
-    name = cli_override || Config.get("ai.cli", "claude")
-    case name.to_s.downcase.strip
-    when "antigravity", "agy"
-      :antigravity
-    when "claude"
-      :claude
-    else
-      abort "unknown AI CLI: #{name} (use 'claude' or 'antigravity')"
-    end
-  end
-
-  # 指定された AI CLI (claude または antigravity) を実行する。
+  # 設定された AI CLI（既定は claude）を実行する。claude_extra_args（--allowedTools 等）は
+  # claude 固有の引数なので、bin が claude のときだけ渡す。
   def run_ai_cli(spinner_message, prompt, *claude_extra_args, model_override: nil)
-    case @cli_type
-    when :claude
-      run_claude_cli(spinner_message, prompt, *claude_extra_args, model_override: model_override)
-    when :antigravity
-      run_antigravity_cli(spinner_message, prompt, model_override: model_override)
+    bin = Config.get("ai_agent.bin", "claude")
+    model = model_override || Config.get("ai_agent.model", "claude-opus-4-8")
+
+    if bin == "claude"
+      effort = Config.get("ai_agent.effort", "xhigh")
+      run_command_with_spinner(
+        "#{spinner_message} [#{bin}]",
+        "AI CLI failed",
+        bin, "-p", "--model", model, "--effort", effort,
+        *claude_extra_args,
+        stdin_data: prompt
+      )
+    else
+      run_command_with_spinner(
+        "#{spinner_message} [#{bin}]",
+        "AI CLI failed",
+        bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt
+      )
     end
-  end
-
-  # 既存呼び出しとの互換のためのエイリアス
-  alias run_claude run_ai_cli
-
-  def run_claude_cli(spinner_message, prompt, *extra_args, model_override: nil)
-    bin = Config.get("claude.bin", "claude")
-    model = model_override || Config.get("claude.model", "claude-opus-4-8")
-    effort = Config.get("claude.effort", "xhigh")
-
-    run_command_with_spinner(
-      "#{spinner_message} [claude]",
-      "Claude CLI failed",
-      bin, "-p", "--model", model, "--effort", effort,
-      *extra_args,
-      stdin_data: prompt
-    )
-  end
-
-  def run_antigravity_cli(spinner_message, prompt, model_override: nil)
-    bin = Config.get("antigravity.bin", "agy")
-    model = model_override || Config.get("antigravity.model", "gemini-3.1-pro-high")
-
-    run_command_with_spinner(
-      "#{spinner_message} [antigravity]",
-      "Antigravity CLI failed",
-      bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt
-    )
   end
 
   def get_model_for_role(role)
-    case @cli_type
-    when :antigravity
-      case role
-      when :selector
-        Config.get("antigravity.selector_model", Config.get("antigravity.model", "gemini-3.5-flash-high"))
-      when :extractor
-        Config.get("antigravity.extractor_model", Config.get("antigravity.model", "gemini-3.1-pro-high"))
-      when :writer
-        Config.get("antigravity.writer_model", Config.get("antigravity.model", "gemini-3.5-flash-high"))
-      when :formatter
-        Config.get("antigravity.formatter_model", Config.get("antigravity.model", "gemini-3.5-flash-high"))
-      end
-    when :claude
-      case role
-      when :selector
-        Config.get("claude.selector_model", Config.get("claude.model", "claude-sonnet-5"))
-      when :extractor
-        Config.get("claude.extractor_model", Config.get("claude.model", "claude-opus-4-8"))
-      when :writer
-        Config.get("claude.writer_model", Config.get("claude.model", "claude-3-5-sonnet"))
-      when :formatter
-        Config.get("claude.formatter_model", Config.get("claude.model", "claude-3-5-sonnet"))
-      end
-    end
+    key = "ai_agent.#{role}_model"
+    Config.get(key, Config.get("ai_agent.model", "claude-opus-4-8"))
   end
 
   def run_command_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil)
@@ -478,23 +424,15 @@ class ScriptGenerator
   # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # ニュース選定用タスク。全候補のニュース一覧を差し込み、ソース/カテゴリごとの
-  # 目安件数と、選定結果の書き込み先パスを渡す。
+  # ニュース選定用タスク。全候補のニュース一覧を差し込み、カテゴリごとの目安件数と、
+  # 選定結果の書き込み先パスを渡す。ソース単位の絞り込みはせず、priority を判断材料
+  # として選定 AI に渡す（面白い記事はソースを問わず採用する方針のため）。
   def selector_prompt(collected_news)
     TemplateRenderer.render("selector.prompt", self,
       collected_news:,
       today_ja: @today_ja,
-      source_targets: source_target_lines,
       max_per_category: MAX_PER_CATEGORY,
       news_selected_path: File.expand_path(news_selected_path))
-  end
-
-  # ソースごとの選定目安件数（表示名: 件数）の一覧。selector プロンプトに渡す。
-  def source_target_lines
-    SOURCES.values.flatten.map do |src|
-      count = src[:top_by_bookmarks] || src[:max_items] || DEFAULT_MAX_PER_SOURCE
-      "#{src[:name]}: #{count}件"
-    end
   end
 
   # ニュース抽出用タスク。選定済みニュースを差し込み、ファクトシートの書き込み先パスを渡す。
