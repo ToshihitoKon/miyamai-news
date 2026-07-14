@@ -46,7 +46,7 @@ RSpec.describe ScriptGenerator do
 
   describe "#generate (AI CLI mocked via Open3.capture3)" do
     it "runs the full pipeline without invoking a real claude binary" do
-      generator = described_class.new(work_dir: work_dir, episode: episode, cli: "claude")
+      generator = described_class.new(work_dir: work_dir, episode: episode)
       success_status = instance_double(Process::Status, success?: true, exitstatus: 0)
       call_count = 0
 
@@ -78,7 +78,7 @@ RSpec.describe ScriptGenerator do
     end
 
     it "aborts when the AI CLI exits with a failure status" do
-      generator = described_class.new(work_dir: work_dir, episode: episode, cli: "claude")
+      generator = described_class.new(work_dir: work_dir, episode: episode)
       failure_status = instance_double(Process::Status, success?: false, exitstatus: 1)
       allow(Open3).to receive(:capture3).and_return(["", "boom", failure_status])
 

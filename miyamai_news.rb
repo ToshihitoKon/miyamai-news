@@ -22,24 +22,20 @@ require "fileutils"
 
 require_relative "lib/internal/config"
 
-# ARGV を解析する。値を取るオプション(--bgm/--date/--slot/--config)は次の要素を消費する。
+# ARGV を解析する。値を取るオプション(--config/--date/--slot)は次の要素を消費する。
 def parse_args(argv)
   opts = {}
   i = 0
   while i < argv.length
     case argv[i]
-    when "--config"                then opts[:config] = argv[i += 1]
-    when "--clean"                 then opts[:clean] = true
-    when "--ui-only"               then opts[:ui_only] = true
-    when "--script-only"           then opts[:script_only] = true
-    when "--generate-only"         then opts[:generate_only] = true
-    when "--publish-only"          then opts[:publish_only] = true
-    when "--cli"                   then opts[:cli] = argv[i += 1]
-    when "--antigravity", "--agy"  then opts[:cli] = "antigravity"
-    when "--claude"                then opts[:cli] = "claude"
-    when "--bgm"                   then opts[:bgm] = argv[i += 1]
-    when "--date"                  then opts[:date] = Time.parse(argv[i += 1])
-    when "--slot"                  then opts[:slot] = argv[i += 1]
+    when "--config"         then opts[:config] = argv[i += 1]
+    when "--clean"          then opts[:clean] = true
+    when "--ui-only"        then opts[:ui_only] = true
+    when "--script-only"    then opts[:script_only] = true
+    when "--generate-only"  then opts[:generate_only] = true
+    when "--publish-only"   then opts[:publish_only] = true
+    when "--date"           then opts[:date] = Time.parse(argv[i += 1])
+    when "--slot"           then opts[:slot] = argv[i += 1]
     else abort "unknown argument: #{argv[i]}"
     end
     i += 1
@@ -89,31 +85,33 @@ def main
   FileUtils.mkdir_p(DIST_DIR)
 
   if args[:script_only]
-    run_script(episode, cli: args[:cli])
+    run_script(episode)
     return
   end
 
-  run_generate(episode, args[:bgm], cli: args[:cli]) unless args[:publish_only]
+  run_generate(episode) unless args[:publish_only]
   run_publish(episode) unless args[:generate_only]
 end
 
 # 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。
 # 中身を確認・手直ししたうえで、フラグなしで再実行すれば既存の台本を再利用して
 # 整形〜音声合成〜publish まで続きから進む。
-def run_script(episode, cli: nil)
-  script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode, cli: cli).generate(format: false)
+def run_script(episode)
+  script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).generate(format: false)
 
   warn "script: #{script_path}"
 end
 
-def run_generate(episode, bgm_override, cli: nil)
+def run_generate(episode)
   # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
-  bgm_path = bgm_override || File.expand_path(Config.get("assets.bgm_path"), BASE_DIR)
+  # index.html にクレジット表記を固定しているため（templates/index.html.erb 参照）、
+  # 差し替え可能にはしていない。
+  bgm_path = File.expand_path(Config.get("assets.bgm_path"), BASE_DIR)
   output_path = episode_mp3_path(episode)
   used_news_output = episode_used_path(episode)
   transcript_output = episode_transcript_path(episode)
 
-  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode, cli: cli)
+  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode)
   tts_script_path = generator.generate
   voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, episode: episode).synthesize(tts_script_path)
   AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)

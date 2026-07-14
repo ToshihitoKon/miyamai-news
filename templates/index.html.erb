@@ -189,6 +189,25 @@
       escapeHtml(text).replace(/https?:\/\/[^\s<]+/g,
         (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
 
+    const relativeLabel = (iso) => {
+      if (!iso) return '';
+      const diffHour = Math.floor((Date.now() - new Date(iso).getTime()) / 3600000);
+      if (diffHour < 1) return 'ついさっき';
+      if (diffHour < 24) return `${diffHour}時間前`;
+      return `${Math.floor(diffHour / 24)}日前`;
+    };
+
+    // select の各 option の見た目テキストに「・N時間前」を付け直す。
+    // data-label(元のラベル)を基準に毎回組み立て直すので、繰り返し呼んでも
+    // 「・3時間前・3時間前」のように積み上がらない(冪等)。
+    const applyRelativeLabels = () => {
+      Array.from(sel.options).forEach((opt) => {
+        const ago = relativeLabel(opt.dataset.updatedAt);
+        opt.textContent = ago ? `${opt.dataset.label}・${ago}` : opt.dataset.label;
+      });
+      now.textContent = sel.options[sel.selectedIndex].textContent;
+    };
+
     const usedUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.used.txt');
 
     const loadNews = async (mp3Url) => {
@@ -224,7 +243,7 @@
 
     sel.addEventListener('change', () => {
       player.src = sel.value;
-      now.textContent = sel.options[sel.selectedIndex].text;
+      now.textContent = sel.options[sel.selectedIndex].textContent;
       loadNews(sel.value);
       if (transcript.open) {
         transcript.dataset.loadedFor = player.src;
@@ -255,6 +274,8 @@
     });
 
     loadNews(player.src);
+    applyRelativeLabels();
+    setInterval(applyRelativeLabels, 60000);
   </script>
 </body>
 </html>

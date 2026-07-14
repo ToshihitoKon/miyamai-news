@@ -1,26 +1,13 @@
-# 宮舞モカ ニュース番組 生成パイプラインの設定。
-#
-# このファイルはサンプル。実際に使うときは:
-#   cp config.sample.yaml config.yaml
-# としてから、環境に合わせて値を書き換える。config.yaml は git 管理外。
-
-# GCS への公開まわり。
 gcs:
-  # 成果物を置く GCS バケット名。
   bucket: your-bucket-name
-  # 公開 URL のベース。通常はこのままでよい。
   public_base: https://storage.googleapis.com
 
-# 音声・ページに使うアセットのパス。
 assets:
-  # 既定の BGM。miyamai_news.rb に BGM を渡さなかったときに使う。
-  # 絶対パス、または miyamai_news.rb からの相対パスで指定する。
   bgm_path: 古びた魔法書_気まぐれBGM工房.mp3
   # 再生ページ / Slack プレビュー用の横長バナー画像のオブジェクト名。
   # 事前に gs://<bucket>/<cover_image> へ手動アップロードしておく。
-  cover_image: miyamai_news.png
+  cover_image: miyamai_news.webp
   # PWA(ホーム画面追加)用の正方形アイコンのオブジェクト名。512x512 以上推奨。
-  # cover_image と同じく、事前に gs://<bucket>/<icon_image> へ手動アップロードしておく。
   icon_image: miyamai_news_icon.png
 
 # VOICEPEAK(音声合成)まわり。
@@ -38,14 +25,11 @@ voicepeak:
   # 一呼吸おけるよう無音を挟む。
   chunk_gap_sec: 0.4
 
-# 台本生成・整形に使う AI CLI ツールの選択（"claude" または "antigravity" / "agy"）。
-ai:
-  cli: claude
-
-# Claude CLI (claude -p) を使う場合の設定。
-claude:
+# 台本生成・整形に使う AI CLI の設定。
+ai_agent:
   bin: claude
   model: claude-opus-4-8
+  # claude 固有の引数。bin が claude 以外なら無視される。
   effort: xhigh
   # ロールごとの使用モデル（未指定時は上記 model が使われます）
   selector_model: claude-sonnet-5
@@ -53,15 +37,14 @@ claude:
   writer_model: claude-sonnet-5
   formatter_model: claude-sonnet-5
 
-# Antigravity CLI (agy -p) を使う場合の設定。
-antigravity:
-  bin: agy
-  model: gemini-3.1-pro-high
-  # ロールごとの使用モデル（未指定時は上記 model が使われます）
-  selector_model: gemini-3.5-flash-high
-  extractor_model: gemini-3.1-pro-high
-  writer_model: gemini-3.5-flash-high
-  formatter_model: gemini-3.5-flash-high
+# Antigravity CLI (agy) を使う場合の設定例。
+# ai_agent:
+#   bin: agy
+#   model: 'Gemini 3.5 Flash (High)'
+#   selector_model: 'Gemini 3.5 Flash (High)'
+#   extractor_model: 'Gemini 3.5 Flash (High)'
+#   writer_model: 'Gemini 3.5 Flash (High)'
+#   formatter_model: 'Gemini 3.5 Flash (High)'
 
 # RSS 収集まわり。
 collect:
@@ -73,93 +56,84 @@ collect:
   # 初登場したかに関わらず保持し続け、再登場による二重紹介を防ぐ）。
   retention_days: 30
   # 各カテゴリの合計目安件数。Ruby が機械的に足切りするのではなく、ニュース選定ステップ
-  # の AI への指示（この件数程度に収めてほしい、という目安）に使う。
+  # の AI への指示（この件数程度に収めてほしい、という目安）に使う。ソース単位の目安は
+  # 設けない（面白い記事はソースを問わず採用し、priority で優先度だけ調整する）。
   max_per_category: 100
-  # 1ソースあたりの既定の選定目安件数（max_items 未指定のソースに適用）。
-  # こちらも Ruby 側で機械的に足切りするのではなく、選定ステップの AI への目安件数の
-  # 指示に使う。
-  default_max_per_source: 20
   # フィード取得の並列数。
   fetch_threads: 5
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
   fetch_max_retries: 3
   fetch_retry_base_sec: 2
-  # 収集元定義。台本の番組構成（何本立てか）もここに定義したカテゴリ数に従う。
-  # 各カテゴリのキー:
-  #   label: extractor プロンプトで使う日本語の表示名
-  #   sources: そのカテゴリのソース一覧。各ソースのキー:
-  #     name: 表示名（収集したニュース一覧の source に入る）
-  #     url / urls: フィードURL。複数フィードを1ソース扱いしたい場合は urls（配列）を使う
-  #     max_items: このソースから AI がタイトルを見て選ぶ際の目安件数（省略時は
-  #       default_max_per_source）。Ruby 側で機械的に足切りはしない
-  #     top_by_bookmarks: はてブ用。max_items の代わりに使う目安件数。ブクマ数は選定 AI
-  #       への判断材料として渡すが、機械的に上位N件へ絞り込むわけではない
-  #     priority: "low" を指定すると、選定・台本作成の際に一次情報源より優先度を下げる。
-  #       まとめ系・コミュニティ系など玉石混交で流量が多いソース向け
-  sources:
-    ai:
-      label: "生成AI"
-      sources:
-        - name: "Hacker News (AI)"
-          url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
-        - name: "arXiv cs.AI"
-          url: "http://export.arxiv.org/rss/cs.AI"
-        - name: "OpenAI Blog"
-          url: "https://openai.com/news/rss.xml"
-    # Claude Code / Devin / Cursor / Antigravity などの AI エージェント・AI コーディングツール。
-    # Devin(Cognition) は公式 RSS がないため HN のキーワード検索で拾う。
-    ai_agents:
-      label: "AIエージェント・AIコーディングツール（Claude Code、Devin、Cursor など）"
-      sources:
-        - name: "Hacker News (agents)"
-          url: "https://hnrss.org/newest?q=%22Claude%20Code%22%20OR%20%22coding%20agent%22%20OR%20Devin%20OR%20Cursor%20OR%20Antigravity&points=30"
-        - name: "Claude Code Releases"
-          url: "https://github.com/anthropics/claude-code/releases.atom"
-        - name: "Cursor Changelog"
-          url: "https://cursor.com/changelog/rss.xml"
-        - name: "Google AI Blog"
-          url: "https://blog.google/innovation-and-ai/technology/ai/rss/"
-        - name: "Simon Willison's Weblog"
-          url: "https://simonwillison.net/atom/everything/"
-    security:
-      label: "セキュリティ"
-      sources:
-        - name: "JPCERT/CC"
-          url: "https://www.jpcert.or.jp/rss/jpcert.rdf"
-        - name: "JVN"
-          url: "https://jvn.jp/rss/jvn.rdf"
-    engineering:
-      label: "その他エンジニア向けトピック"
-      sources:
-        - name: "Publickey"
-          url: "https://www.publickey1.jp/atom.xml"
-        - name: "Hacker News (frontpage)"
-          url: "https://hnrss.org/frontpage?points=100"
-        - name: "Lobsters"
-          url: "https://lobste.rs/rss"
-        - name: "gihyo.jp"
-          url: "https://gihyo.jp/feed/rss2"
-        - name: "InfoQ Japan"
-          url: "https://www.infoq.com/jp/feed/"
-        - name: "DevelopersIO"
-          url: "https://dev.classmethod.jp/feed/"
-        # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
-        # はてブはホットエントリと新着の両フィードを読み、ブクマ数上位だけを採用する
-        # （RSS は各30件が上限で、オフセット等のパラメータは効かない）。
-        - name: "はてブ テクノロジー"
-          urls:
-            - "https://b.hatena.ne.jp/hotentry/it.rss"
-            - "https://b.hatena.ne.jp/entrylist/it.rss"
-          top_by_bookmarks: 20
-          priority: low
-        - name: "Qiita 人気記事"
-          url: "https://qiita.com/popular-items/feed.atom"
-          priority: low
-          max_items: 10
-        - name: "Zenn 新着"
-          url: "https://zenn.dev/feed"
-          priority: low
-          max_items: 10
+
+# 収集元定義。台本の番組構成（何本立てか）もここに定義したカテゴリ数に従う。
+# 各カテゴリのキー:
+#   label: extractor プロンプトで使う日本語の表示名
+#   sources: そのカテゴリのソース一覧。各ソースのキー:
+#     name: 表示名（収集したニュース一覧の source に入る）
+#     url / urls: フィードURL。複数フィードを1ソース扱いしたい場合は urls（配列）を使う
+#     priority: "low" を指定すると、選定・台本作成の際に一次情報源より優先度を下げる。
+#       まとめ系・コミュニティ系など玉石混交で流量が多いソース向け
+rss_feed_sources:
+  ai:
+    label: "生成AI"
+    sources:
+      - name: "Hacker News (AI)"
+        url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
+      - name: "arXiv cs.AI"
+        url: "http://export.arxiv.org/rss/cs.AI"
+      - name: "OpenAI Blog"
+        url: "https://openai.com/news/rss.xml"
+  # Claude Code / Devin / Cursor / Antigravity などの AI エージェント・AI コーディングツール。
+  # Devin(Cognition) は公式 RSS がないため HN のキーワード検索で拾う。
+  ai_agents:
+    label: "AIエージェント・AIコーディングツール（Claude Code、Devin、Cursor など）"
+    sources:
+      - name: "Hacker News (agents)"
+        url: "https://hnrss.org/newest?q=%22Claude%20Code%22%20OR%20%22coding%20agent%22%20OR%20Devin%20OR%20Cursor%20OR%20Antigravity&points=30"
+      - name: "Claude Code Releases"
+        url: "https://github.com/anthropics/claude-code/releases.atom"
+      - name: "Cursor Changelog"
+        url: "https://cursor.com/changelog/rss.xml"
+      - name: "Google AI Blog"
+        url: "https://blog.google/innovation-and-ai/technology/ai/rss/"
+      - name: "Simon Willison's Weblog"
+        url: "https://simonwillison.net/atom/everything/"
+  security:
+    label: "セキュリティ"
+    sources:
+      - name: "JPCERT/CC"
+        url: "https://www.jpcert.or.jp/rss/jpcert.rdf"
+      - name: "JVN"
+        url: "https://jvn.jp/rss/jvn.rdf"
+  engineering:
+    label: "その他エンジニア向けトピック"
+    sources:
+      - name: "Publickey"
+        url: "https://www.publickey1.jp/atom.xml"
+      - name: "Hacker News (frontpage)"
+        url: "https://hnrss.org/frontpage?points=100"
+      - name: "Lobsters"
+        url: "https://lobste.rs/rss"
+      - name: "gihyo.jp"
+        url: "https://gihyo.jp/feed/rss2"
+      - name: "InfoQ Japan"
+        url: "https://www.infoq.com/jp/feed/"
+      - name: "DevelopersIO"
+        url: "https://dev.classmethod.jp/feed/"
+      # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
+      # はてブはホットエントリと新着の両フィードを読む（RSS は各30件が上限で、オフセット
+      # 等のパラメータは効かない）。
+      - name: "はてブ テクノロジー"
+        urls:
+          - "https://b.hatena.ne.jp/hotentry/it.rss"
+          - "https://b.hatena.ne.jp/entrylist/it.rss"
+        priority: low
+      - name: "Qiita 人気記事"
+        url: "https://qiita.com/popular-items/feed.atom"
+        priority: low
+      - name: "Zenn 新着"
+        url: "https://zenn.dev/feed"
+        priority: low
 
 # BGM 合成(ミキシング)まわり。
 mixer:

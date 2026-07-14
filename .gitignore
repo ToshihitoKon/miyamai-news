@@ -5,6 +5,7 @@
 *.mp3
 *.wav
 *.png
+*.webp
 *.webm
 
 # 生成物
