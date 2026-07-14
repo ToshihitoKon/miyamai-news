@@ -28,42 +28,44 @@ RSpec.describe VoiceSynthesizer do
     double("wait_thr", pid: 4242, join: true, value: status)
   end
 
-  it "synthesizes each chunk via VOICEPEAK and concatenates with ffmpeg, without a real binary" do
-    written_wavs = []
+  describe "#synthesize" do
+    it "synthesizes each chunk via VOICEPEAK and concatenates with ffmpeg, without a real binary" do
+      written_wavs = []
 
-    allow(Open3).to receive(:popen3) do |*cmd|
-      out_path = cmd[cmd.index("--out") + 1]
-      File.write(out_path, "fake wav")
-      written_wavs << out_path
-      [StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)]
-    end
-    allow(Open3).to receive(:capture3).and_return(["", "", success_status])
+      allow(Open3).to receive(:popen3) do |*cmd|
+        out_path = cmd[cmd.index("--out") + 1]
+        File.write(out_path, "fake wav")
+        written_wavs << out_path
+        [StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)]
+      end
+      allow(Open3).to receive(:capture3).and_return(["", "", success_status])
 
-    synth = described_class.new(work_dir: work_dir, episode: episode)
-    voice_path = synth.synthesize(script_path)
+      synth = described_class.new(work_dir: work_dir, episode: episode)
+      voice_path = synth.synthesize(script_path)
 
-    expect(voice_path).to eq(File.join(work_dir, "voice_20260714_afternoon.mp3"))
-    expect(written_wavs).not_to be_empty
-    expect(Open3).to have_received(:popen3).at_least(:once)
-    expect(Open3).to have_received(:capture3).at_least(:once) # ffmpeg concat (+ silence)
-  end
-
-  it "retries a failed chunk with backoff and eventually raises after MAX_RETRIES" do
-    failure_status = instance_double(Process::Status, success?: false)
-    allow(Open3).to receive(:popen3) do |*_cmd|
-      [StringIO.new, StringIO.new, StringIO.new("synthesis error"), fake_wait_thr(failure_status)]
+      expect(voice_path).to eq(File.join(work_dir, "voice_20260714_afternoon.mp3"))
+      expect(written_wavs).not_to be_empty
+      expect(Open3).to have_received(:popen3).at_least(:once)
+      expect(Open3).to have_received(:capture3).at_least(:once) # ffmpeg concat (+ silence)
     end
 
-    synth = described_class.new(work_dir: work_dir, episode: episode)
+    it "retries a failed chunk with backoff and eventually raises after MAX_RETRIES" do
+      failure_status = instance_double(Process::Status, success?: false)
+      allow(Open3).to receive(:popen3) do |*_cmd|
+        [StringIO.new, StringIO.new, StringIO.new("synthesis error"), fake_wait_thr(failure_status)]
+      end
 
-    expect { synth.synthesize(script_path) }.to raise_error(/VOICEPEAK synthesis failed/)
-    expect(Open3).to have_received(:popen3).exactly(described_class::MAX_RETRIES + 1).times
-  end
+      synth = described_class.new(work_dir: work_dir, episode: episode)
 
-  it "aborts when VOICEPEAK is not executable" do
-    allow(File).to receive(:executable?).and_return(false)
+      expect { synth.synthesize(script_path) }.to raise_error(/VOICEPEAK synthesis failed/)
+      expect(Open3).to have_received(:popen3).exactly(described_class::MAX_RETRIES + 1).times
+    end
 
-    synth = described_class.new(work_dir: work_dir, episode: episode)
-    expect { synth.synthesize(script_path) }.to raise_error(SystemExit)
+    it "aborts when VOICEPEAK is not executable" do
+      allow(File).to receive(:executable?).and_return(false)
+
+      synth = described_class.new(work_dir: work_dir, episode: episode)
+      expect { synth.synthesize(script_path) }.to raise_error(SystemExit)
+    end
   end
 end
