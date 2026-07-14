@@ -23,9 +23,6 @@ require "optparse"
 
 require_relative "lib/internal/config"
 
-# ARGV を解析する。--config の値は main() 実行前に Config.path= へ反映しておく必要が
-# あるため（lib/* の Config 参照は初回アクセス時まで遅延されるので require 順は問わない）、
-# ARGV 解析自体はここで先に行う。
 def parse_args(argv)
   opts = {}
   parser = OptionParser.new do |o|

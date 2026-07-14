@@ -63,6 +63,8 @@ class VoiceSynthesizer
 
   private
 
+  def voice_path = File.join(@work_dir, "voice_#{@date_tag}_#{@slot}.mp3")
+
   def voicepeak_bin = @voicepeak_bin ||= Config.get("voicepeak.bin")
 
   # 各チャンク合成後に空ける秒数。VOICEPEAK の連続起動によるクラッシュ避け。
@@ -83,8 +85,6 @@ class VoiceSynthesizer
   # 句点区切りのチャンクをそのままつなげると間延びがなく聞き取りにくいため、
   # 一呼吸おける無音を挟む。
   def chunk_gap_sec = @chunk_gap_sec ||= Config.get("voicepeak.chunk_gap_sec").to_f
-
-  def voice_path = File.join(@work_dir, "voice_#{@date_tag}_#{@slot}.mp3")
 
   # 1チャンク（140文字以内のテキスト）を WAV に合成する。
   # 失敗時は指数バックオフ（retry_base_sec * 2**n）で max_retries 回まで再試行する。
