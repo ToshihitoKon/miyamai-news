@@ -20,7 +20,7 @@ RSpec.describe AudioMixer do
   after { FileUtils.remove_entry(work_dir) }
 
   describe "#mix" do
-    context "正常系" do
+    context "success" do
       it "mixes voice and bgm by shelling out to ffprobe/ffmpeg" do
         allow(Open3).to receive(:capture3) do |*cmd|
           cmd.first == "ffprobe" ? ["12.5\n", "", success_status] : ["", "", success_status]
@@ -48,7 +48,7 @@ RSpec.describe AudioMixer do
       end
     end
 
-    context "異常系" do
+    context "failure" do
       it "raises when ffprobe fails" do
         failure_status = instance_double(Process::Status, success?: false)
         allow(Open3).to receive(:capture3).and_return(["", "probe failed", failure_status])

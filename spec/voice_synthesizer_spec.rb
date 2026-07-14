@@ -29,7 +29,7 @@ RSpec.describe VoiceSynthesizer do
   end
 
   describe "#synthesize" do
-    context "正常系" do
+    context "success" do
       it "synthesizes each chunk via VOICEPEAK and concatenates with ffmpeg, without a real binary" do
         written_wavs = []
 
@@ -51,7 +51,7 @@ RSpec.describe VoiceSynthesizer do
       end
     end
 
-    context "異常系" do
+    context "failure" do
       it "retries a failed chunk with backoff and eventually raises after MAX_RETRIES" do
         failure_status = instance_double(Process::Status, success?: false)
         allow(Open3).to receive(:popen3) do |*_cmd|

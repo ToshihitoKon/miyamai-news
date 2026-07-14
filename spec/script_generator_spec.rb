@@ -28,7 +28,7 @@ RSpec.describe ScriptGenerator do
 
   describe "#collect_news" do
     context "FeedCache mocked" do
-      context "正常系" do
+      context "success" do
         it "collects entries from the injected FeedCache for every configured source" do
           generator = described_class.new(work_dir: work_dir, episode: episode)
 
@@ -39,7 +39,7 @@ RSpec.describe ScriptGenerator do
         end
       end
 
-      context "異常系" do
+      context "failure" do
         it "aborts news collection when FeedCache raises FetchError" do
           allow(fake_feed_cache).to receive(:fetch).and_raise(FeedCache::FetchError, "boom")
           generator = described_class.new(work_dir: work_dir, episode: episode)
@@ -52,7 +52,7 @@ RSpec.describe ScriptGenerator do
 
   describe "#generate" do
     context "AI CLI mocked via Open3.capture3" do
-      context "正常系" do
+      context "success" do
         it "runs the full pipeline without invoking a real claude binary" do
           generator = described_class.new(work_dir: work_dir, episode: episode)
           success_status = instance_double(Process::Status, success?: true, exitstatus: 0)
@@ -86,7 +86,7 @@ RSpec.describe ScriptGenerator do
         end
       end
 
-      context "異常系" do
+      context "failure" do
         it "aborts when the AI CLI exits with a failure status" do
           generator = described_class.new(work_dir: work_dir, episode: episode)
           failure_status = instance_double(Process::Status, success?: false, exitstatus: 1)
