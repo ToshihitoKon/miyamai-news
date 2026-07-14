@@ -6,29 +6,6 @@ require "fileutils"
 require_relative "internal/config"
 
 class VoiceSynthesizer
-  class << self
-    def voicepeak_bin = @voicepeak_bin ||= Config.get("voicepeak.bin")
-
-    # 各チャンク合成後に空ける秒数。VOICEPEAK の連続起動によるクラッシュ避け。
-    def interval_sec = @interval_sec ||= Config.get("voicepeak.interval_sec").to_f
-
-    # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数。
-    # VOICEPEAK はまれに初期化タイミングでクラッシュするため、待機を倍々に
-    # 伸ばしながら数回やり直せば大抵は成功する。
-    def max_retries = @max_retries ||= Config.get("voicepeak.max_retries").to_i
-    def retry_base_sec = @retry_base_sec ||= Config.get("voicepeak.retry_base_sec").to_f
-
-    # 1チャンクの合成に許す最大秒数。VOICEPEAK はまれに異常終了後もプロセスが
-    # 応答を返さずハングすることがあり、放置すると永久にブロックしてしまう。
-    # この時間を超えたら kill してリトライへ回す。
-    def timeout_sec = @timeout_sec ||= Config.get("voicepeak.timeout_sec").to_f
-
-    # チャンク（文）を結合する際に間に挟む無音の秒数。
-    # 句点区切りのチャンクをそのままつなげると間延びがなく聞き取りにくいため、
-    # 一呼吸おける無音を挟む。
-    def chunk_gap_sec = @chunk_gap_sec ||= Config.get("voicepeak.chunk_gap_sec").to_f
-  end
-
   # ナレーターは宮舞モカで固定。
   NARRATOR = "Miyamai Moca"
 
@@ -50,7 +27,7 @@ class VoiceSynthesizer
 
   # 台本テキストを合成し、生成した mp3 のパスを返す。
   def synthesize(script_path)
-    abort "VOICEPEAK not found: #{self.class.voicepeak_bin}" unless File.executable?(self.class.voicepeak_bin)
+    abort "VOICEPEAK not found: #{voicepeak_bin}" unless File.executable?(voicepeak_bin)
 
     chunks = split_chunks(File.read(script_path))
     abort "empty script: #{script_path}" if chunks.empty?
@@ -73,7 +50,7 @@ class VoiceSynthesizer
       synthesize_chunk(chunk, path)
       # VOICEPEAK は本来 GUI アプリで、間髪入れず連続起動すると初期化中に
       # クラッシュする。次の起動まで少し間隔を空けて安定させる。
-      sleep self.class.interval_sec
+      sleep interval_sec
       path
     end
 
@@ -86,6 +63,27 @@ class VoiceSynthesizer
 
   private
 
+  def voicepeak_bin = @voicepeak_bin ||= Config.get("voicepeak.bin")
+
+  # 各チャンク合成後に空ける秒数。VOICEPEAK の連続起動によるクラッシュ避け。
+  def interval_sec = @interval_sec ||= Config.get("voicepeak.interval_sec").to_f
+
+  # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数。
+  # VOICEPEAK はまれに初期化タイミングでクラッシュするため、待機を倍々に
+  # 伸ばしながら数回やり直せば大抵は成功する。
+  def max_retries = @max_retries ||= Config.get("voicepeak.max_retries").to_i
+  def retry_base_sec = @retry_base_sec ||= Config.get("voicepeak.retry_base_sec").to_f
+
+  # 1チャンクの合成に許す最大秒数。VOICEPEAK はまれに異常終了後もプロセスが
+  # 応答を返さずハングすることがあり、放置すると永久にブロックしてしまう。
+  # この時間を超えたら kill してリトライへ回す。
+  def timeout_sec = @timeout_sec ||= Config.get("voicepeak.timeout_sec").to_f
+
+  # チャンク（文）を結合する際に間に挟む無音の秒数。
+  # 句点区切りのチャンクをそのままつなげると間延びがなく聞き取りにくいため、
+  # 一呼吸おける無音を挟む。
+  def chunk_gap_sec = @chunk_gap_sec ||= Config.get("voicepeak.chunk_gap_sec").to_f
+
   def voice_path = File.join(@work_dir, "voice_#{@date_tag}_#{@slot}.mp3")
 
   # 1チャンク（140文字以内のテキスト）を WAV に合成する。
@@ -96,10 +94,10 @@ class VoiceSynthesizer
       run_voicepeak(text, out_path)
     rescue RuntimeError => e
       attempt += 1
-      raise if attempt > self.class.max_retries
+      raise if attempt > max_retries
 
-      wait = self.class.retry_base_sec * (2**(attempt - 1))
-      warn "    synthesis failed (attempt #{attempt}/#{self.class.max_retries}): #{e.message} / retry in #{wait}s"
+      wait = retry_base_sec * (2**(attempt - 1))
+      warn "    synthesis failed (attempt #{attempt}/#{max_retries}): #{e.message} / retry in #{wait}s"
       sleep wait
       retry
     end
@@ -111,15 +109,15 @@ class VoiceSynthesizer
   def run_voicepeak(text, out_path)
     # 新しいプロセスグループで起動し、ハング時に子孫ごとまとめて kill できるようにする。
     stdin, _stdout, stderr, wait_thr = Open3.popen3(
-      self.class.voicepeak_bin, "--narrator", NARRATOR, "--say", text, "--out", out_path,
+      voicepeak_bin, "--narrator", NARRATOR, "--say", text, "--out", out_path,
       pgroup: true
     )
     stdin.close
     pgid = Process.getpgid(wait_thr.pid)
 
-    unless wait_thr.join(self.class.timeout_sec)
+    unless wait_thr.join(timeout_sec)
       kill_process_group(pgid)
-      raise "VOICEPEAK did not respond within #{self.class.timeout_sec}s (treated as hang, killed)"
+      raise "VOICEPEAK did not respond within #{timeout_sec}s (treated as hang, killed)"
     end
 
     status = wait_thr.value
@@ -180,7 +178,6 @@ class VoiceSynthesizer
   # 複数の WAV を ffmpeg の concat demuxer で1本に連結し、mp3 にエンコードする。
   # チャンク間には chunk_gap_sec 秒の無音を挟み、文の切れ目に一呼吸おく。
   def concat_to_mp3(wav_paths, output)
-    chunk_gap_sec = self.class.chunk_gap_sec
     silence = Tempfile.new(["silence", ".wav"])
     silence.close
     generate_silence(silence.path, chunk_gap_sec) if chunk_gap_sec.positive?

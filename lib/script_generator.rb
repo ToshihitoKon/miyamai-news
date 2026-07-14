@@ -10,48 +10,6 @@ require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
 
 class ScriptGenerator
-  class << self
-    # 番組編成上のカテゴリ定義（config.yaml の program_details.categories）。
-    # label と description のみを持つ。RSS 収集・sources とは完全に無関係
-    # （記事がどのカテゴリに属するかは selector が全体を見て判断する）。
-    def category_details
-      @category_details ||= Config.get("program_details.categories").map do |cfg|
-        { label: cfg.fetch("label"), description: cfg.fetch("description") }
-      end.freeze
-    end
-
-    # 番組全体で紹介するニュースの合計本数の目安（メイン+補欠合計）。カテゴリ単位の
-    # 最低保証はない。台本が長くなりすぎるのを防ぐための、選定ステップの AI への指示。
-    def total_news_count = @total_news_count ||= Config.get("program_details.total_news_count").to_i
-
-    # RSS 収集元の一覧（フラットな配列）。カテゴリ区分は持たない。
-    # YAML 由来の文字列キー/値をコード内で使うシンボルに変換する
-    # （各ソースハッシュのキー、priority の値）。
-    def sources
-      @sources ||= Config.get("rss_feed_sources").map do |src|
-        src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] }
-      end.freeze
-    end
-
-    # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
-    # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
-    def lookback_hours = @lookback_hours ||= Config.get("collect.lookback_hours").to_i
-
-    # FeedCache が entry を保持する日数。フィードに最後に見えた時刻(last_fetched_at)が
-    # これより古い（＝フィードから既に消えている）entry だけがパージされる。
-    def retention_days = @retention_days ||= Config.get("collect.retention_days").to_i
-
-    # フィード取得の並列数
-    def fetch_threads = @fetch_threads ||= Config.get("collect.fetch_threads").to_i
-
-    # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
-    # hnrss などは一時的に 502 を返すことがある。ニュースが揃わないまま
-    # 後段の Claude 呼び出しへ進んでトークンを浪費しないよう、
-    # リトライし尽くしても取れないソースがあれば実行ごと中断する。
-    def fetch_max_retries = @fetch_max_retries ||= Config.get("collect.fetch_max_retries").to_i
-    def fetch_retry_base_sec = @fetch_retry_base_sec ||= Config.get("collect.fetch_retry_base_sec").to_f
-  end
-
   # 始めの挨拶。前置き除去の目印にも使う。
   OPENING_GREETING = "宮舞モカです。"
 
@@ -87,9 +45,9 @@ class ScriptGenerator
     @today_ja = episode.today_ja
     @feed_cache = FeedCache.new(
       path: self.class.feed_cache_path(work_dir),
-      retention_days: self.class.retention_days,
-      max_retries: self.class.fetch_max_retries,
-      retry_base_sec: self.class.fetch_retry_base_sec
+      retention_days:,
+      max_retries: fetch_max_retries,
+      retry_base_sec: fetch_retry_base_sec
     )
   end
 
@@ -132,6 +90,48 @@ class ScriptGenerator
   def used_news_file = used_news_path
 
   private
+
+  # --- 設定値 ---
+
+  # 番組編成上のカテゴリ定義（config.yaml の program_details.categories）。
+  # label と description のみを持つ。RSS 収集・sources とは完全に無関係
+  # （記事がどのカテゴリに属するかは selector が全体を見て判断する）。
+  def category_details
+    @category_details ||= Config.get("program_details.categories").map do |cfg|
+      { label: cfg.fetch("label"), description: cfg.fetch("description") }
+    end.freeze
+  end
+
+  # 番組全体で紹介するニュースの合計本数の目安（メイン+補欠合計）。カテゴリ単位の
+  # 最低保証はない。台本が長くなりすぎるのを防ぐための、選定ステップの AI への指示。
+  def total_news_count = @total_news_count ||= Config.get("program_details.total_news_count").to_i
+
+  # RSS 収集元の一覧（フラットな配列）。カテゴリ区分は持たない。
+  # YAML 由来の文字列キー/値をコード内で使うシンボルに変換する
+  # （各ソースハッシュのキー、priority の値）。
+  def sources
+    @sources ||= Config.get("rss_feed_sources").map do |src|
+      src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] }
+    end.freeze
+  end
+
+  # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
+  # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
+  def lookback_hours = @lookback_hours ||= Config.get("collect.lookback_hours").to_i
+
+  # FeedCache が entry を保持する日数。フィードに最後に見えた時刻(last_fetched_at)が
+  # これより古い（＝フィードから既に消えている）entry だけがパージされる。
+  def retention_days = @retention_days ||= Config.get("collect.retention_days").to_i
+
+  # フィード取得の並列数
+  def fetch_threads = @fetch_threads ||= Config.get("collect.fetch_threads").to_i
+
+  # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
+  # hnrss などは一時的に 502 を返すことがある。ニュースが揃わないまま
+  # 後段の Claude 呼び出しへ進んでトークンを浪費しないよう、
+  # リトライし尽くしても取れないソースがあれば実行ごと中断する。
+  def fetch_max_retries = @fetch_max_retries ||= Config.get("collect.fetch_max_retries").to_i
+  def fetch_retry_base_sec = @fetch_retry_base_sec ||= Config.get("collect.fetch_retry_base_sec").to_f
 
   def news_collected_path = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.txt")
   def news_selected_path  = File.join(@work_dir, "news_selected_#{@date_tag}_#{@slot}.txt")
@@ -271,7 +271,7 @@ class ScriptGenerator
   # 再収集しても前回の window 分を取りこぼさない。前回時刻が無い初回は lookback_hours
   # ぶんさかのぼる（もともと古すぎる記事は対象にしない）。
   def collect_since
-    last_fetch_time || (@now - (self.class.lookback_hours * 3600))
+    last_fetch_time || (@now - (lookback_hours * 3600))
   end
 
   # last_fetch.txt に記録された前回 publish 時刻。無い/壊れていれば nil。
@@ -291,7 +291,7 @@ class ScriptGenerator
   # dedup のみ行い、seen_at/priority は選定 AI の判断材料として残す。
   def collect_news
     since = collect_since
-    items_per_source = fetch_sources_in_parallel(self.class.sources, since)
+    items_per_source = fetch_sources_in_parallel(sources, since)
     items = dedup_by_title(items_per_source.flatten)
 
     render_news_text(items)
@@ -324,7 +324,7 @@ class ScriptGenerator
     queue.close
 
     items_per_source = Array.new(sources.size)
-    workers = self.class.fetch_threads.times.map do
+    workers = fetch_threads.times.map do
       Thread.new do
         # 取得失敗（FetchError）は join 時に呼び出し元へ再送出して中断メッセージに
         # 変換するので、スレッド自身の生バックトレース出力は抑制する
@@ -438,8 +438,8 @@ class ScriptGenerator
     TemplateRenderer.render("selector.prompt", self,
       collected_news:,
       today_ja: @today_ja,
-      category_details: self.class.category_details,
-      total_news_count: self.class.total_news_count,
+      category_details:,
+      total_news_count:,
       news_selected_path: File.expand_path(news_selected_path))
   end
 
@@ -448,8 +448,8 @@ class ScriptGenerator
     TemplateRenderer.render("extractor.prompt", self,
       selected_news:,
       today_ja: @today_ja,
-      category_details: self.class.category_details,
-      total_news_count: self.class.total_news_count,
+      category_details:,
+      total_news_count:,
       news_facts_path: File.expand_path(news_facts_path))
   end
 

@@ -61,7 +61,7 @@ RSpec.describe VoiceSynthesizer do
         synth = described_class.new(work_dir: work_dir, episode: episode)
 
         expect { synth.synthesize(script_path) }.to raise_error(/VOICEPEAK synthesis failed/)
-        expect(Open3).to have_received(:popen3).exactly(described_class.max_retries + 1).times
+        expect(Open3).to have_received(:popen3).exactly(synth.send(:max_retries) + 1).times
       end
 
       it "aborts when VOICEPEAK is not executable" do
