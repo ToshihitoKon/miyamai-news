@@ -71,8 +71,6 @@ collect:
 #   sources: そのカテゴリのソース一覧。各ソースのキー:
 #     name: 表示名（収集したニュース一覧の source に入る）
 #     url / urls: フィードURL。複数フィードを1ソース扱いしたい場合は urls（配列）を使う
-#     top_by_bookmarks: true にすると、はてなブックマーク数を取得して選定 AI への
-#       判断材料として渡す（はてブ用）
 #     priority: "low" を指定すると、選定・台本作成の際に一次情報源より優先度を下げる。
 #       まとめ系・コミュニティ系など玉石混交で流量が多いソース向け
 rss_feed_sources:
@@ -123,13 +121,13 @@ rss_feed_sources:
       - name: "DevelopersIO"
         url: "https://dev.classmethod.jp/feed/"
       # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
-      # はてブはホットエントリと新着の両フィードを読み、ブクマ数上位だけを採用する
-      # （RSS は各30件が上限で、オフセット等のパラメータは効かない）。
+      # はてブはホットエントリと新着の両フィードを読む（RSS は各30件が上限で、オフセット
+      # 等のパラメータは効かない）。ブクマ数は hatena:bookmarkcount を持つフィードから
+      # 自動で取得され、選定 AI への判断材料として渡る（config 側での指定は不要）。
       - name: "はてブ テクノロジー"
         urls:
           - "https://b.hatena.ne.jp/hotentry/it.rss"
           - "https://b.hatena.ne.jp/entrylist/it.rss"
-        top_by_bookmarks: true
         priority: low
       - name: "Qiita 人気記事"
         url: "https://qiita.com/popular-items/feed.atom"

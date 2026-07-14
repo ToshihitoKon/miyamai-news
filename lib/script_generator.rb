@@ -343,9 +343,12 @@ class ScriptGenerator
 
   # 1ソース分の新着記事を FeedCache から全件取得し、ソース名などのメタ情報を付けて返す。
   # 件数の絞り込みはここでは行わない（選定ステップの AI がタイトルから選ぶ）。
+  #
+  # HatenaBookmarks は全ソースに無条件で適用する。はてブ以外のフィードには
+  # hatena:bookmarkcount が無いので、何も付与せず素通りするだけ（安全）。
   def collect_source(src, since)
-    extra_extractor = src[:top_by_bookmarks] ? Internal::HatenaBookmarks : nil
-    items = @feed_cache.fetch(src[:urls] || src[:url], now: @now, since: since, extra_extractor: extra_extractor)
+    items = @feed_cache.fetch(src[:urls] || src[:url], now: @now, since: since,
+      extra_extractor: Internal::HatenaBookmarks)
 
     items.map do |item|
       picked = { title: item[:title], link: item[:link], date: item[:date],
