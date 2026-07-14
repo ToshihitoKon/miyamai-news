@@ -21,6 +21,37 @@ require "date"
 require "fileutils"
 
 require_relative "lib/internal/config"
+
+# ARGV を解析する。値を取るオプション(--bgm/--date/--slot/--config)は次の要素を消費する。
+def parse_args(argv)
+  opts = {}
+  i = 0
+  while i < argv.length
+    case argv[i]
+    when "--config"                then opts[:config] = argv[i += 1]
+    when "--clean"                 then opts[:clean] = true
+    when "--ui-only"               then opts[:ui_only] = true
+    when "--script-only"           then opts[:script_only] = true
+    when "--generate-only"         then opts[:generate_only] = true
+    when "--publish-only"          then opts[:publish_only] = true
+    when "--cli"                   then opts[:cli] = argv[i += 1]
+    when "--antigravity", "--agy"  then opts[:cli] = "antigravity"
+    when "--claude"                then opts[:cli] = "claude"
+    when "--bgm"                   then opts[:bgm] = argv[i += 1]
+    when "--date"                  then opts[:date] = Time.parse(argv[i += 1])
+    when "--slot"                  then opts[:slot] = argv[i += 1]
+    else abort "unknown argument: #{argv[i]}"
+    end
+    i += 1
+  end
+  opts
+end
+
+# lib/script_generator 等は require 時（定数定義）に Config.get を呼ぶため、
+# --config の反映はそれらを require するより前に済ませる必要がある。
+ARGS = parse_args(ARGV)
+Config.path = File.expand_path(ARGS[:config], __dir__) if ARGS[:config]
+
 require_relative "lib/episode"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"
@@ -38,7 +69,7 @@ def episode_used_path(episode)       = File.join(DIST_DIR, "miyamai_news_#{episo
 def episode_transcript_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.transcript.txt")
 
 def main
-  args = parse_args(ARGV)
+  args = ARGS
 
   if args[:clean]
     run_clean
@@ -154,30 +185,6 @@ def clean_published_dist
       warn "unpublished, kept: #{mp3}"
     end
   end
-end
-
-# ARGV を解析する。値を取るオプション(--bgm/--date/--slot)は次の要素を消費する。
-def parse_args(argv)
-  opts = {}
-  i = 0
-  while i < argv.length
-    case argv[i]
-    when "--clean"                then opts[:clean] = true
-    when "--ui-only"              then opts[:ui_only] = true
-    when "--script-only"          then opts[:script_only] = true
-    when "--generate-only"        then opts[:generate_only] = true
-    when "--publish-only"         then opts[:publish_only] = true
-    when "--cli"                  then opts[:cli] = argv[i += 1]
-    when "--antigravity", "--agy" then opts[:cli] = "antigravity"
-    when "--claude"               then opts[:cli] = "claude"
-    when "--bgm"                  then opts[:bgm] = argv[i += 1]
-    when "--date"                 then opts[:date] = Time.parse(argv[i += 1])
-    when "--slot"                 then opts[:slot] = argv[i += 1]
-    else abort "unknown argument: #{argv[i]}"
-    end
-    i += 1
-  end
-  opts
 end
 
 main if __FILE__ == $PROGRAM_NAME
