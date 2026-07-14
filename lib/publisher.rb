@@ -14,9 +14,6 @@ class Publisher
   # og:title/twitter:title/manifest.json の name はこちらを使う。
   PROGRAM_NAME = "宮舞モカの技術ニュース"
 
-  # Config 参照は require 時ではなく初回アクセス時に遅延させる（クラス単位でメモ化）。
-  # こうすることで、このファイルを require する側は Config.path の設定順を
-  # 気にしなくてよくなる。
   class << self
     def public_base = @public_base ||= Config.get("gcs.public_base")
     def default_bucket = @default_bucket ||= Config.get("gcs.bucket")

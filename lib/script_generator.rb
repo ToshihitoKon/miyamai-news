@@ -10,9 +10,6 @@ require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
 
 class ScriptGenerator
-  # Config 参照は require 時ではなく初回アクセス時に遅延させる（クラス単位でメモ化）。
-  # こうすることで、このファイルを require する側は Config.path の設定順を
-  # 気にしなくてよくなる。
   class << self
     # 番組編成上のカテゴリ定義（config.yaml の program_details.categories）。
     # label と description のみを持つ。RSS 収集・sources とは完全に無関係

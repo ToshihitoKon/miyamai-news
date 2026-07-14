@@ -6,9 +6,6 @@ require "fileutils"
 require_relative "internal/config"
 
 class VoiceSynthesizer
-  # Config 参照は require 時ではなく初回アクセス時に遅延させる（クラス単位でメモ化）。
-  # こうすることで、このファイルを require する側は Config.path の設定順を
-  # 気にしなくてよくなる。
   class << self
     def voicepeak_bin = @voicepeak_bin ||= Config.get("voicepeak.bin")
 

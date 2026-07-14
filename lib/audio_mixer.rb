@@ -4,9 +4,6 @@ require "open3"
 require_relative "internal/config"
 
 class AudioMixer
-  # Config 参照は require 時ではなく初回アクセス時に遅延させる（クラス単位でメモ化）。
-  # こうすることで、このファイルを require する側は Config.path の設定順を
-  # 気にしなくてよくなる。
   class << self
     def bgm_volume = @bgm_volume ||= Config.get("mixer.bgm_volume").to_f
     def intro_sec = @intro_sec ||= Config.get("mixer.intro_sec").to_f   # BGM 開始からナレーション開始まで
