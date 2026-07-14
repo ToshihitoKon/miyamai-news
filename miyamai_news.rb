@@ -19,27 +19,33 @@ end
 require "time"
 require "date"
 require "fileutils"
+require "optparse"
 
 require_relative "lib/internal/config"
 
-# ARGV を解析する。値を取るオプション(--config/--date/--slot)は次の要素を消費する。
+# ARGV を解析する。--config の値は lib/* を require する前に Config.path= へ反映する
+# 必要があるため、ARGV 解析自体も他の require より前に行う。
 def parse_args(argv)
   opts = {}
-  i = 0
-  while i < argv.length
-    case argv[i]
-    when "--config"         then opts[:config] = argv[i += 1]
-    when "--clean"          then opts[:clean] = true
-    when "--ui-only"        then opts[:ui_only] = true
-    when "--script-only"    then opts[:script_only] = true
-    when "--generate-only"  then opts[:generate_only] = true
-    when "--publish-only"   then opts[:publish_only] = true
-    when "--date"           then opts[:date] = Time.parse(argv[i += 1])
-    when "--slot"           then opts[:slot] = argv[i += 1]
-    else abort "unknown argument: #{argv[i]}"
-    end
-    i += 1
+  parser = OptionParser.new do |o|
+    o.banner = "Usage: ruby miyamai_news.rb [options]"
+    o.on("--config PATH", "設定ファイルのパス（既定: config.yaml）") { |v| opts[:config] = v }
+    o.on("--clean", "work/ の掃除と公開済み dist/ 成果物の削除") { opts[:clean] = true }
+    o.on("--ui-only", "index.html / manifest.json のみ再生成") { opts[:ui_only] = true }
+    o.on("--script-only", "台本のみ生成して停止") { opts[:script_only] = true }
+    o.on("--generate-only", "生成のみ（dist/ に書き出して終了）") { opts[:generate_only] = true }
+    o.on("--publish-only", "dist/ の該当回を公開のみ") { opts[:publish_only] = true }
+    o.on("--date DATE", "対象の日時（例: 2026-07-10）") { |v| opts[:date] = Time.parse(v) }
+    o.on("--slot SLOT", "対象の時間帯（morning/afternoon/evening）") { |v| opts[:slot] = v }
   end
+
+  begin
+    leftover = parser.parse!(argv)
+    abort "unknown argument: #{leftover.first}" unless leftover.empty?
+  rescue OptionParser::ParseError, ArgumentError => e
+    abort "#{e.message}\n\n#{parser}"
+  end
+
   opts
 end
 
