@@ -62,7 +62,7 @@ def main
     return
   end
 
-  run_generate(episode, args[:bgm]) unless args[:publish_only]
+  run_generate(episode) unless args[:publish_only]
   run_publish(episode) unless args[:generate_only]
 end
 
@@ -75,9 +75,11 @@ def run_script(episode)
   warn "script: #{script_path}"
 end
 
-def run_generate(episode, bgm_override)
+def run_generate(episode)
   # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
-  bgm_path = bgm_override || File.expand_path(Config.get("assets.bgm_path"), BASE_DIR)
+  # index.html にクレジット表記を固定しているため（templates/index.html.erb 参照）、
+  # 差し替え可能にはしていない。
+  bgm_path = File.expand_path(Config.get("assets.bgm_path"), BASE_DIR)
   output_path = episode_mp3_path(episode)
   used_news_output = episode_used_path(episode)
   transcript_output = episode_transcript_path(episode)
@@ -156,7 +158,7 @@ def clean_published_dist
   end
 end
 
-# ARGV を解析する。値を取るオプション(--bgm/--date/--slot)は次の要素を消費する。
+# ARGV を解析する。値を取るオプション(--date/--slot)は次の要素を消費する。
 def parse_args(argv)
   opts = {}
   i = 0
@@ -167,7 +169,6 @@ def parse_args(argv)
     when "--script-only"   then opts[:script_only] = true
     when "--generate-only" then opts[:generate_only] = true
     when "--publish-only"  then opts[:publish_only] = true
-    when "--bgm"           then opts[:bgm] = argv[i += 1]
     when "--date"          then opts[:date] = Time.parse(argv[i += 1])
     when "--slot"          then opts[:slot] = argv[i += 1]
     else abort "unknown argument: #{argv[i]}"

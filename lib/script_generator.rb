@@ -362,14 +362,14 @@ class ScriptGenerator
 
   # --- AI CLI 実行 ---
 
-  # 設定された AI CLI（既定は claude）を実行する。claude_extra_args（--allowedTools 等）は
-  # claude 固有の引数なので、bin が claude のときだけ渡す。
+  # 設定された AI CLI を実行する。claude_extra_args（--allowedTools 等）は claude 固有の
+  # 引数なので、bin が claude のときだけ渡す。
   def run_ai_cli(spinner_message, prompt, *claude_extra_args, model_override: nil)
-    bin = Config.get("ai_agent.bin", "claude")
-    model = model_override || Config.get("ai_agent.model", "claude-opus-4-8")
+    bin = Config.get("ai_agent.bin")
+    model = model_override || Config.get("ai_agent.model")
 
     if bin == "claude"
-      effort = Config.get("ai_agent.effort", "xhigh")
+      effort = Config.get("ai_agent.effort")
       run_command_with_spinner(
         "#{spinner_message} [#{bin}]",
         "AI CLI failed",
@@ -387,8 +387,7 @@ class ScriptGenerator
   end
 
   def get_model_for_role(role)
-    key = "ai_agent.#{role}_model"
-    Config.get(key, Config.get("ai_agent.model", "claude-opus-4-8"))
+    Config.get("ai_agent.#{role}_model", Config.get("ai_agent.model"))
   end
 
   def run_command_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil)

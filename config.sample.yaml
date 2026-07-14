@@ -122,8 +122,7 @@ rss_feed_sources:
         url: "https://dev.classmethod.jp/feed/"
       # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
       # はてブはホットエントリと新着の両フィードを読む（RSS は各30件が上限で、オフセット
-      # 等のパラメータは効かない）。ブクマ数は hatena:bookmarkcount を持つフィードから
-      # 自動で取得され、選定 AI への判断材料として渡る（config 側での指定は不要）。
+      # 等のパラメータは効かない）。
       - name: "はてブ テクノロジー"
         urls:
           - "https://b.hatena.ne.jp/hotentry/it.rss"
