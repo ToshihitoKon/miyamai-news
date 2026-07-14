@@ -6,15 +6,12 @@
   <title>宮舞モカの技術ニュース</title>
   <link rel="alternate" type="application/atom+xml" title="宮舞モカの技術ニュース" href="<%= h(feed_url) %>">
 
-  <!-- PWA (ホーム画面に追加) -->
   <link rel="manifest" href="<%= h(manifest_url) %>">
   <meta name="theme-color" content="#8DA7C2">
-  <!-- iOS はホーム画面追加時に manifest の icons を見ないため、個別に指定する -->
   <link rel="apple-touch-icon" href="<%= h(icon_url) %>">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="宮舞ニュース">
 
-  <!-- Open Graph (Slack のリンクプレビュー用) -->
   <meta property="og:type" content="website">
   <meta property="og:title" content="<%= h(og_title) %>">
   <meta property="og:description" content="<%= h(description) %>">
@@ -23,14 +20,12 @@
   <meta property="og:audio" content="<%= h(current_url) %>">
   <meta property="og:audio:type" content="audio/mpeg">
 
-  <!-- Twitter Summary Card (大きな画像付きプレビュー) -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="<%= h(og_title) %>">
   <meta name="twitter:description" content="<%= h(description) %>">
   <meta name="twitter:image" content="<%= h(cover_url) %>">
 
   <style>
-    /* 宮舞モカのイメージカラー #8DA7C2 を基調にした明るい配色 */
     :root {
       color-scheme: light;
       --moca: #8DA7C2;
@@ -39,17 +34,12 @@
     body {
       margin: 0;
       font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
-      /* sticky footer 構成。主コンテンツ領域(.content)が残り高さを埋めるので
-         footer は常にビューポート最下部に来る。 */
       display: flex;
       flex-direction: column;
       min-height: 100vh;
       background: var(--moca);
       color: #2b3440;
     }
-    /* card を内包する主コンテンツ領域。flex:1 で残り高さを占め、footer を
-       画面最下部へ押し下げる。card はこの中で中央寄せ。縦長になっても
-       card の縦マージンが footer との間隔を保つ（密着しない）。 */
     .content {
       flex: 1;
       display: flex;
@@ -124,8 +114,6 @@
       line-height: 1.6;
       color: #3a4652;
     }
-    /* ビューポート最下部に敷く半透明の帯。モカ背景の上に置くため
-       白の半透明地に濃色文字で、どの背景でも読めるようにする。 */
     .site-footer {
       width: 100%;
       box-sizing: border-box;
@@ -138,8 +126,6 @@
       margin: 0 0 8px;
       font-size: 12px;
     }
-    /* クレジット各項目は横並び。横幅が足りなければ折り返して縦積みになる。
-       column-gap が項目間、row-gap が折り返し時の行間。 */
     .site-footer .credits {
       margin: 0;
       display: flex;
@@ -199,12 +185,10 @@
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;');
 
-    // 先にエスケープしてから URL だけをリンク化する(挿入する href/文字列はエスケープ済み)
     const linkify = (text) =>
       escapeHtml(text).replace(/https?:\/\/[^\s<]+/g,
         (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
 
-    // mp3 の URL から used.txt の URL を導出(miyamai_news_YYYYMMDD.mp3 → .used.txt)
     const usedUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.used.txt');
 
     const loadNews = async (mp3Url) => {
@@ -218,11 +202,8 @@
       }
     };
 
-    // mp3 の URL から文字起こしの URL を導出(miyamai_news_YYYYMMDD.mp3 → .transcript.txt)
     const transcriptUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.transcript.txt');
 
-    // 文字起こしは details を開いたときだけ取得する(閉じたままなら通信しない)。
-    // URL をリンク化する必要は無い(台本にリンクはほぼ含まれない)ので textContent のまま表示する。
     const loadTranscript = async (mp3Url) => {
       transcripttext.textContent = '読み込み中…';
       try {
@@ -234,8 +215,6 @@
       }
     };
 
-    // details を開いた瞬間にその回の文字起こしを取得する。同じ回のまま開閉するたびに
-    // 再取得しないよう、読み込み済みかどうかを dataset で覚えておく。
     transcript.addEventListener('toggle', () => {
       if (transcript.open && transcript.dataset.loadedFor !== player.src) {
         transcript.dataset.loadedFor = player.src;
@@ -243,9 +222,6 @@
       }
     });
 
-    // アーカイブ選択では src とニュース一覧だけ差し替え、再生はしない。
-    // 再生はユーザーが再生ボタンを押したときだけ始まるようにする。
-    // 文字起こしは開いていた場合のみ、選択が変わった回のぶんを読み込み直す。
     sel.addEventListener('change', () => {
       player.src = sel.value;
       now.textContent = sel.options[sel.selectedIndex].text;
@@ -268,9 +244,6 @@
 
     artwork.addEventListener('click', togglePlay);
 
-    // スペースキーでも再生/一時停止を切り替える。select や audio(ネイティブ
-    // コントロール)にフォーカスがある場合はブラウザ標準の挙動(ドロップダウン
-    // 展開・ネイティブトグル)を優先し、何もしない。
     document.addEventListener('keydown', (e) => {
       if (e.code !== 'Space') return;
       const active = document.activeElement;
