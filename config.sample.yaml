@@ -37,6 +37,15 @@ ai_agent:
   writer_model: claude-sonnet-5
   formatter_model: claude-sonnet-5
 
+# Antigravity CLI (agy) を使う場合の設定例。
+# ai_agent:
+#   bin: agy
+#   model: 'Gemini 3.5 Flash (High)'
+#   selector_model: 'Gemini 3.5 Flash (High)'
+#   extractor_model: 'Gemini 3.5 Flash (High)'
+#   writer_model: 'Gemini 3.5 Flash (High)'
+#   formatter_model: 'Gemini 3.5 Flash (High)'
+
 # RSS 収集まわり。
 collect:
   # 前回 publish 記録が無い初回に、何時間前までさかのぼって収集するかの上限。
