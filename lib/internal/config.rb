@@ -14,6 +14,18 @@ module Config
   class MissingKeyError < StandardError; end
 
   class << self
+    # 読み込む config.yaml のパス。未設定なら DEFAULT_PATH。
+    def path
+      @path ||= DEFAULT_PATH
+    end
+
+    # config.yaml のパスを差し替える（--config CLI引数・テストのfixture指定用）。
+    # 読み込み済みの値をキャッシュしていれば破棄し、次の get で新しいパスから読み直す。
+    def path=(new_path)
+      @path = new_path
+      @data = nil
+    end
+
     # ドット区切りのキーで値を引く。キーが存在せず default が渡されていればそれを返す。
     # 存在せず default も未指定なら MissingKeyError。
     def get(dotted_key, default = :__no_default__)
@@ -35,13 +47,13 @@ module Config
     end
 
     def load_data
-      unless File.exist?(DEFAULT_PATH)
+      unless File.exist?(path)
         raise MissingConfigError,
-          "#{DEFAULT_PATH} not found. " \
+          "#{path} not found. " \
           "Run `cp #{File.basename(SAMPLE_PATH)} #{File.basename(DEFAULT_PATH)}` and fill in the values."
       end
 
-      YAML.safe_load_file(DEFAULT_PATH) || {}
+      YAML.safe_load_file(path) || {}
     end
   end
 end
