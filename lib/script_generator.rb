@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "json"
 require "time"
 require "open3"
 require "fileutils"
@@ -28,11 +27,12 @@ class ScriptGenerator
   # FeedCache が entry を保持する日数。フィードに最後に見えた時刻(last_fetched_at)が
   # これより古い（＝フィードから既に消えている）entry だけがパージされる。
   RETENTION_DAYS = Config.get("collect.retention_days").to_i
-  # 各カテゴリの最大件数（台本が長くなりすぎるのを防ぐ）
+  # 各カテゴリの目安件数（台本が長くなりすぎるのを防ぐ）。Ruby が機械的に足切りするの
+  # ではなく、選定ステップの AI への指示に使う。
   MAX_PER_CATEGORY = Config.get("collect.max_per_category").to_i
-  # 1ソースあたりの既定の最大件数。max_items も top_by_bookmarks も指定していない
-  # ソースに適用する。掲載日時ではなく登場(seen_at)で拾うようになり、1ソースが 24h 分の
-  # 新着を大量に返すため、カテゴリ集約時に流量の多いソースが他を押し出さないよう上限を設ける。
+  # 1ソースあたりの既定の選定目安件数。max_items も top_by_bookmarks も指定していない
+  # ソースに適用する。選定ステップの AI への指示に使う（Ruby 側での機械的な足切りには
+  # 使わない）。
   DEFAULT_MAX_PER_SOURCE = Config.get("collect.default_max_per_source").to_i
   # フィード取得の並列数
   FETCH_THREADS = Config.get("collect.fetch_threads").to_i
@@ -56,7 +56,7 @@ class ScriptGenerator
   # このクラスが work/ に作る回ごとの中間ファイルの glob パターン。
   # clean が消してよいものだけを列挙する（last_fetch.txt / feed_cache.json は含めない）。
   def self.work_globs(work_dir)
-    %w[news_*.json news_facts_*.txt script_*.txt tts_script_*.txt news_used_*.txt]
+    %w[news_*.txt script_*.txt tts_script_*.txt]
       .map { |pat| File.join(work_dir, pat) }
   end
 
@@ -90,19 +90,21 @@ class ScriptGenerator
   # VOICEPEAK 向けの整形(tts_script)は行わない（--script-only 用）。
   # 戻り値は format 済みなら tts_script、未整形なら script のパス。
   #
-  # 各ステップ（収集・script+used・整形）はそれぞれ中間ファイルの有無で再利用を判断し、
-  # 途中クラッシュ後の再実行で続きから進める。
-  # 各ステップ（収集・facts・script+used・整形）はそれぞれ中間ファイルの有無で再利用を判断し、
-  # 途中クラッシュ後の再実行で続きから進める。
+  # 各ステップ（収集・選定・facts・script+used・整形）はそれぞれ中間ファイルの有無で
+  # 再利用を判断し、途中クラッシュ後の再実行で続きから進める。
   def generate(format: true)
-    news_json = load_or_collect_news
+    collected_news = load_or_collect_news
+
+    # ステップ1.5: ニュース選定。全候補からソース/カテゴリごとの目安件数を
+    # AI がタイトルから選び出す。
+    selected_news = select_news(collected_news)
 
     # ステップ2.1: ニュース抽出・整理（ファクトシート作成）。
     # 1回の AI 呼び出しでニュースURLから WebFetch して要点をまとめる。
-    extract_news_facts(news_json)
+    extract_news_facts(selected_news)
 
     # ステップ2.2: ライター。ファクトシートをもとに台本と used を生成する。
-    write_script_and_used(news_json)
+    write_script_and_used(selected_news)
 
     return script_path unless format
 
@@ -124,7 +126,8 @@ class ScriptGenerator
 
   private
 
-  def news_json_path   = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.json")
+  def news_collected_path = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.txt")
+  def news_selected_path  = File.join(@work_dir, "news_selected_#{@date_tag}_#{@slot}.txt")
   def news_facts_path  = File.join(@work_dir, "news_facts_#{@date_tag}_#{@slot}.txt")
   def script_path      = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
   def tts_script_path  = File.join(@work_dir, "tts_script_#{@date_tag}_#{@slot}.txt")
@@ -132,13 +135,31 @@ class ScriptGenerator
 
   def last_fetch_path = self.class.last_fetch_path(@work_dir)
 
+  # ステップ1.5: ニュース選定。全候補(collected_news)から、ソース/カテゴリごとの目安件数を
+  # AI がタイトルだけを見て選び出す。選んだニュースの情報（title/link/date/source等）を
+  # そのまま Markdown で書かせ、以降の facts 抽出・執筆はこの選定済みテキストを読む。
+  def select_news(collected_news)
+    if File.exist?(news_selected_path)
+      warn "reuse: #{news_selected_path}"
+      return File.read(news_selected_path)
+    end
+
+    selector_model = get_model_for_role(:selector)
+    run_ai_cli("selecting news",
+      selector_prompt(collected_news), "--allowedTools", "Write", model_override: selector_model)
+
+    rewrite_file(news_selected_path) { |text| strip_facts_preamble(text) }
+    warn "news (selected): #{news_selected_path}"
+    File.read(news_selected_path)
+  end
+
   # ステップ2: ライター。1 回の Claude 呼び出しで script.txt と used.txt を書かせる。
   # Claude が Write で直接書くので、書き込み先の 2 パスをプロンプトで明示する。
   # 出力の前置き・思考メモ混入は Claude 側で防ぎきれないので、書かれたファイルを
   # Ruby が読み直して strip をかけ、上書き保存する。
   # 再開判定は「両方揃って初めてスキップ」。片方でも欠ければ作り直す。
   # ステップ2.1: ニュース抽出・整理。1 回の AI 呼び出しでニュース内容を抽出して facts.txt に書く。
-  def extract_news_facts(news_json)
+  def extract_news_facts(selected_news)
     if File.exist?(news_facts_path)
       warn "reuse: #{news_facts_path}"
       return
@@ -146,7 +167,7 @@ class ScriptGenerator
 
     extractor_model = get_model_for_role(:extractor)
     run_ai_cli("extracting news facts",
-      extractor_prompt(news_json), "--allowedTools", "WebFetch Write", model_override: extractor_model)
+      extractor_prompt(selected_news), "--allowedTools", "WebFetch Write", model_override: extractor_model)
 
     rewrite_file(news_facts_path) { |text| strip_facts_preamble(text) }
     warn "news facts: #{news_facts_path}"
@@ -154,7 +175,7 @@ class ScriptGenerator
 
   # ステップ2.2: ライター。1 回の AI 呼び出しで script.txt と used.txt を書かせる。
   # すでに抽出されたファクトをもとに執筆するため、WebFetch は許可しない（手戻り防止）。
-  def write_script_and_used(news_json)
+  def write_script_and_used(selected_news)
     if File.exist?(script_path) && File.exist?(used_news_path)
       warn "reuse: #{script_path}"
       return
@@ -163,7 +184,7 @@ class ScriptGenerator
     writer_model = get_model_for_role(:writer)
     news_facts = File.read(news_facts_path)
     run_ai_cli("writing script and used news",
-      writer_prompt(news_json, news_facts), "--allowedTools", "Read Write", model_override: writer_model)
+      writer_prompt(selected_news, news_facts), "--allowedTools", "Read Write", model_override: writer_model)
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
     rewrite_file(used_news_path) { |text| strip_used_preamble(text) }
@@ -222,19 +243,19 @@ class ScriptGenerator
 
   # --- ニュース収集 ---
 
-  # ニュース JSON（Claude に渡す本体部分）を返す。
+  # 全候補のニュース一覧（選定ステップへの入力）を返す。
   #
-  # その回に選ばれた entry 集合を news_*.json にスナップショットとして残し、あれば再利用
+  # その回に集まった entry 集合を news_*.txt にスナップショットとして残し、あれば再利用
   # する（台本を作り直すとき収集入力を固定するため）。無ければ FeedCache から集めて作る。
   def load_or_collect_news
-    if File.exist?(news_json_path)
-      warn "reuse: #{news_json_path}"
-      return File.read(news_json_path)
+    if File.exist?(news_collected_path)
+      warn "reuse: #{news_collected_path}"
+      return File.read(news_collected_path)
     end
 
     news_body = collect_news
-    File.write(news_json_path, news_body)
-    warn "news: #{news_json_path}"
+    File.write(news_collected_path, news_body)
+    warn "news: #{news_collected_path}"
     news_body
   end
 
@@ -256,8 +277,10 @@ class ScriptGenerator
     nil
   end
 
-  # FeedCache から since 以降に「初めて登場した」記事を集め、カテゴリ別の JSON にする。
+  # FeedCache から since 以降に「初めて登場した」記事を集め、カテゴリ別のテキストにする。
   # 掲載日時ではなく登場時刻(seen_at)で拾うので、昔書かれて今話題化した記事も取れる。
+  # ここでは件数の絞り込みは行わない（全候補を選定ステップの AI に渡すため）。
+  # dedup のみ行い、seen_at/priority は選定 AI の判断材料として残す。
   def collect_news
     since = collect_since
     jobs = SOURCES.flat_map { |category, sources| sources.map { |src| [category, src] } }
@@ -267,21 +290,32 @@ class ScriptGenerator
     jobs.zip(items_per_job) do |(category, _src), items|
       result[category].concat(items)
     end
-    # カテゴリ内はタイトル重複を除いたうえで、件数枠(MAX_PER_CATEGORY)を priority 順に
-    # 埋める。一次情報源(priority なし)を先に、コミュニティ系(priority: :low)を後ろに置き、
-    # 同順内は新しく登場した順(seen_at 降順)。流量の多いコミュニティ系が一次情報源を枠から
-    # 押し出さないようにするため。seen_at はソート用の内部情報なので最終出力からは落とす。
-    result.transform_values! do |items|
-      dedup_by_title(items)
-        .sort_by { |i| [source_rank(i), -seen_at_epoch(i)] }
-        .first(MAX_PER_CATEGORY)
-        .each { |i| i.delete(:seen_at) }
-    end
+    result.transform_values! { |items| dedup_by_title(items) }
 
-    JSON.pretty_generate(result)
+    render_news_text(result)
   rescue FeedCache::FetchError => e
     # 不完全なニュースのまま Claude 呼び出し（トークン消費）へ進まないよう、ここで止める
     abort "aborting, news collection incomplete: #{e.message}"
+  end
+
+  # カテゴリ別の候補一覧をプレーンテキストにする。この段階では選定ステップの AI にしか
+  # 渡らないので、JSON にする必要はない（機械的にパースしない前提なら、フィールド名を
+  # 毎エントリ繰り返さないぶんトークンも少なく済む）。
+  def render_news_text(grouped)
+    grouped.filter_map do |category, items|
+      next if items.empty?
+
+      lines = items.each_with_index.map { |item, i| render_news_item(i + 1, item) }
+      "## #{CATEGORIES[category][:label]}\n#{lines.join("\n")}"
+    end.join("\n\n")
+  end
+
+  # 候補ニュース1件分を「タイトル / link / メタ情報」の3行にする。
+  def render_news_item(index, item)
+    meta = [item[:date], "seen:#{item[:seen_at]}", item[:source]]
+    meta << "bookmarks:#{item[:bookmarks]}" if item[:bookmarks]
+    meta << "priority:#{item[:priority]}" if item[:priority]
+    "#{index}. #{item[:title]}\n   #{item[:link]}\n   (#{meta.join(" / ")})"
   end
 
   # 全ソースを FETCH_THREADS 並列で収集する。戻り値は jobs と同じ順の items 配列。
@@ -313,35 +347,17 @@ class ScriptGenerator
     items.uniq { |i| i[:title].downcase.gsub(/\s+/, "") }
   end
 
-  # カテゴリ内の件数枠を埋める優先順位。小さいほど先。一次情報源は 0、
-  # priority: :low のコミュニティ系は 1。（この経路の entry は収集直後の Ruby ハッシュで、
-  # priority はシンボル。JSON 再利用パスはここを通らない）
-  def source_rank(item) = item[:priority] == :low ? 1 : 0
-
-  # seen_at（初登場時刻）を数値(epoch 秒)にする。新しい順ソートで -値 を使うため。
-  def seen_at_epoch(item) = Time.iso8601(item[:seen_at]).to_f
-
-  # 1ソース分の新着記事を FeedCache から取得し、ソース名などのメタ情報を付けて返す。
+  # 1ソース分の新着記事を FeedCache から全件取得し、ソース名などのメタ情報を付けて返す。
+  # 件数の絞り込みはここでは行わない（選定ステップの AI がタイトルから選ぶ）。
   def collect_source(src, since)
     extra_extractor = src[:top_by_bookmarks] ? Internal::HatenaBookmarks : nil
     items = @feed_cache.fetch(src[:urls] || src[:url], now: @now, since: since, extra_extractor: extra_extractor)
 
-    if src[:top_by_bookmarks]
-      # はてブ用: ブクマ数の多い順に採用する
-      items = items.sort_by { |i| -Internal::HatenaBookmarks.count_of(i[:extra]) }.first(src[:top_by_bookmarks])
-    else
-      # それ以外は、新しく登場した順(seen_at 降順)の上位だけに絞る。
-      # max_items 指定があればそれを、なければ既定の上限を使う。
-      limit = src[:max_items] || DEFAULT_MAX_PER_SOURCE
-      items = items.sort_by { |i| -seen_at_epoch(i) }.first(limit)
-    end
-
     items.map do |item|
-      # seen_at はカテゴリ集約時のソートに使う内部情報。最終出力前に collect_news で落とす。
       picked = { title: item[:title], link: item[:link], date: item[:date],
                  source: src[:name], seen_at: item[:seen_at] }
       picked[:bookmarks] = Internal::HatenaBookmarks.count_of(item[:extra]) if item[:extra]
-      # 優先度付きソースの記事に印を付け、ライターの取捨選択に使わせる
+      # 優先度付きソースの記事に印を付け、選定・ライターの取捨選択に使わせる
       picked[:priority] = src[:priority] if src[:priority]
       picked
     end
@@ -403,6 +419,8 @@ class ScriptGenerator
     case @cli_type
     when :antigravity
       case role
+      when :selector
+        Config.get("antigravity.selector_model", Config.get("antigravity.model", "gemini-3.5-flash-high"))
       when :extractor
         Config.get("antigravity.extractor_model", Config.get("antigravity.model", "gemini-3.1-pro-high"))
       when :writer
@@ -412,6 +430,8 @@ class ScriptGenerator
       end
     when :claude
       case role
+      when :selector
+        Config.get("claude.selector_model", Config.get("claude.model", "claude-sonnet-5"))
       when :extractor
         Config.get("claude.extractor_model", Config.get("claude.model", "claude-opus-4-8"))
       when :writer
@@ -458,20 +478,39 @@ class ScriptGenerator
   # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # ニュース抽出用タスク。ニュース JSON を差し込み、ファクトシートの書き込み先パスを渡す。
-  def extractor_prompt(news_json)
+  # ニュース選定用タスク。全候補のニュース一覧を差し込み、ソース/カテゴリごとの
+  # 目安件数と、選定結果の書き込み先パスを渡す。
+  def selector_prompt(collected_news)
+    TemplateRenderer.render("selector.prompt", self,
+      collected_news:,
+      today_ja: @today_ja,
+      source_targets: source_target_lines,
+      max_per_category: MAX_PER_CATEGORY,
+      news_selected_path: File.expand_path(news_selected_path))
+  end
+
+  # ソースごとの選定目安件数（表示名: 件数）の一覧。selector プロンプトに渡す。
+  def source_target_lines
+    SOURCES.values.flatten.map do |src|
+      count = src[:top_by_bookmarks] || src[:max_items] || DEFAULT_MAX_PER_SOURCE
+      "#{src[:name]}: #{count}件"
+    end
+  end
+
+  # ニュース抽出用タスク。選定済みニュースを差し込み、ファクトシートの書き込み先パスを渡す。
+  def extractor_prompt(selected_news)
     TemplateRenderer.render("extractor.prompt", self,
-      news_json:,
+      selected_news:,
       today_ja: @today_ja,
       category_labels: CATEGORIES.values.map { |cfg| cfg[:label] },
       news_facts_path: File.expand_path(news_facts_path))
   end
 
-  # ライター用タスク。ファクトシートとニュース JSON を差し込み、台本(script)と used の書き込み先パスを
+  # ライター用タスク。ファクトシートと選定済みニュースを差し込み、台本(script)と used の書き込み先パスを
   # 渡す（Claude が Write で直接書く）。パスは Claude の cwd に依存しないよう絶対パス。
-  def writer_prompt(news_json, news_facts)
+  def writer_prompt(selected_news, news_facts)
     TemplateRenderer.render("writer.prompt", self,
-      news_json:,
+      selected_news:,
       news_facts:,
       today_ja: @today_ja,
       script_path: File.expand_path(script_path),

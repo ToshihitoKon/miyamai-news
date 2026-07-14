@@ -48,6 +48,7 @@ claude:
   model: claude-opus-4-8
   effort: xhigh
   # ロールごとの使用モデル（未指定時は上記 model が使われます）
+  selector_model: claude-sonnet-5
   extractor_model: claude-opus-4-8
   writer_model: claude-sonnet-5
   formatter_model: claude-sonnet-5
@@ -57,6 +58,7 @@ antigravity:
   bin: agy
   model: gemini-3.1-pro-high
   # ロールごとの使用モデル（未指定時は上記 model が使われます）
+  selector_model: gemini-3.5-flash-high
   extractor_model: gemini-3.1-pro-high
   writer_model: gemini-3.5-flash-high
   formatter_model: gemini-3.5-flash-high
@@ -70,9 +72,12 @@ collect:
   # entry だけをキャッシュから破棄する（フィードにまだ載っている entry は何日前に
   # 初登場したかに関わらず保持し続け、再登場による二重紹介を防ぐ）。
   retention_days: 30
-  # 各カテゴリの最大件数。
+  # 各カテゴリの合計目安件数。Ruby が機械的に足切りするのではなく、ニュース選定ステップ
+  # の AI への指示（この件数程度に収めてほしい、という目安）に使う。
   max_per_category: 100
-  # 1ソースあたりの既定の最大件数（max_items 未指定のソースに適用）。
+  # 1ソースあたりの既定の選定目安件数（max_items 未指定のソースに適用）。
+  # こちらも Ruby 側で機械的に足切りするのではなく、選定ステップの AI への目安件数の
+  # 指示に使う。
   default_max_per_source: 20
   # フィード取得の並列数。
   fetch_threads: 5
@@ -83,12 +88,14 @@ collect:
   # 各カテゴリのキー:
   #   label: extractor プロンプトで使う日本語の表示名
   #   sources: そのカテゴリのソース一覧。各ソースのキー:
-  #     name: 表示名（ニュース JSON の source に入る）
+  #     name: 表示名（収集したニュース一覧の source に入る）
   #     url / urls: フィードURL。複数フィードを1ソース扱いしたい場合は urls（配列）を使う
-  #     max_items: このソースから採用する最大件数（省略時は default_max_per_source）
-  #     top_by_bookmarks: はてブ用。ブクマ数上位N件だけを採用する（max_items の代わりに使う）
-  #     priority: "low" を指定すると、カテゴリの件数枠(max_per_category)で一次情報源より
-  #       後回しにする。まとめ系・コミュニティ系など玉石混交で流量が多いソース向け
+  #     max_items: このソースから AI がタイトルを見て選ぶ際の目安件数（省略時は
+  #       default_max_per_source）。Ruby 側で機械的に足切りはしない
+  #     top_by_bookmarks: はてブ用。max_items の代わりに使う目安件数。ブクマ数は選定 AI
+  #       への判断材料として渡すが、機械的に上位N件へ絞り込むわけではない
+  #     priority: "low" を指定すると、選定・台本作成の際に一次情報源より優先度を下げる。
+  #       まとめ系・コミュニティ系など玉石混交で流量が多いソース向け
   sources:
     ai:
       label: "生成AI"
