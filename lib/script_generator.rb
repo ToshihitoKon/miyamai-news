@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "json"
 require "time"
 require "open3"
 require "fileutils"
@@ -57,7 +56,7 @@ class ScriptGenerator
   # このクラスが work/ に作る回ごとの中間ファイルの glob パターン。
   # clean が消してよいものだけを列挙する（last_fetch.txt / feed_cache.json は含めない）。
   def self.work_globs(work_dir)
-    %w[news_*.json news_selected_*.txt news_facts_*.txt script_*.txt tts_script_*.txt news_used_*.txt]
+    %w[news_*.txt script_*.txt tts_script_*.txt]
       .map { |pat| File.join(work_dir, pat) }
   end
 
@@ -94,11 +93,11 @@ class ScriptGenerator
   # 各ステップ（収集・選定・facts・script+used・整形）はそれぞれ中間ファイルの有無で
   # 再利用を判断し、途中クラッシュ後の再実行で続きから進める。
   def generate(format: true)
-    news_json = load_or_collect_news
+    collected_news = load_or_collect_news
 
     # ステップ1.5: ニュース選定。全候補からソース/カテゴリごとの目安件数を
     # AI がタイトルから選び出す。
-    selected_news = select_news(news_json)
+    selected_news = select_news(collected_news)
 
     # ステップ2.1: ニュース抽出・整理（ファクトシート作成）。
     # 1回の AI 呼び出しでニュースURLから WebFetch して要点をまとめる。
@@ -127,7 +126,7 @@ class ScriptGenerator
 
   private
 
-  def news_json_path      = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.json")
+  def news_collected_path = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.txt")
   def news_selected_path  = File.join(@work_dir, "news_selected_#{@date_tag}_#{@slot}.txt")
   def news_facts_path  = File.join(@work_dir, "news_facts_#{@date_tag}_#{@slot}.txt")
   def script_path      = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
@@ -136,10 +135,10 @@ class ScriptGenerator
 
   def last_fetch_path = self.class.last_fetch_path(@work_dir)
 
-  # ステップ1.5: ニュース選定。全候補(news_json)から、ソース/カテゴリごとの目安件数を
+  # ステップ1.5: ニュース選定。全候補(collected_news)から、ソース/カテゴリごとの目安件数を
   # AI がタイトルだけを見て選び出す。選んだニュースの情報（title/link/date/source等）を
   # そのまま Markdown で書かせ、以降の facts 抽出・執筆はこの選定済みテキストを読む。
-  def select_news(news_json)
+  def select_news(collected_news)
     if File.exist?(news_selected_path)
       warn "reuse: #{news_selected_path}"
       return File.read(news_selected_path)
@@ -147,7 +146,7 @@ class ScriptGenerator
 
     selector_model = get_model_for_role(:selector)
     run_ai_cli("selecting news",
-      selector_prompt(news_json), "--allowedTools", "Write", model_override: selector_model)
+      selector_prompt(collected_news), "--allowedTools", "Write", model_override: selector_model)
 
     rewrite_file(news_selected_path) { |text| strip_facts_preamble(text) }
     warn "news (selected): #{news_selected_path}"
@@ -244,19 +243,19 @@ class ScriptGenerator
 
   # --- ニュース収集 ---
 
-  # 全候補のニュース JSON（選定ステップへの入力）を返す。
+  # 全候補のニュース一覧（選定ステップへの入力）を返す。
   #
-  # その回に集まった entry 集合を news_*.json にスナップショットとして残し、あれば再利用
+  # その回に集まった entry 集合を news_*.txt にスナップショットとして残し、あれば再利用
   # する（台本を作り直すとき収集入力を固定するため）。無ければ FeedCache から集めて作る。
   def load_or_collect_news
-    if File.exist?(news_json_path)
-      warn "reuse: #{news_json_path}"
-      return File.read(news_json_path)
+    if File.exist?(news_collected_path)
+      warn "reuse: #{news_collected_path}"
+      return File.read(news_collected_path)
     end
 
     news_body = collect_news
-    File.write(news_json_path, news_body)
-    warn "news: #{news_json_path}"
+    File.write(news_collected_path, news_body)
+    warn "news: #{news_collected_path}"
     news_body
   end
 
@@ -278,7 +277,7 @@ class ScriptGenerator
     nil
   end
 
-  # FeedCache から since 以降に「初めて登場した」記事を集め、カテゴリ別の JSON にする。
+  # FeedCache から since 以降に「初めて登場した」記事を集め、カテゴリ別のテキストにする。
   # 掲載日時ではなく登場時刻(seen_at)で拾うので、昔書かれて今話題化した記事も取れる。
   # ここでは件数の絞り込みは行わない（全候補を選定ステップの AI に渡すため）。
   # dedup のみ行い、seen_at/priority は選定 AI の判断材料として残す。
@@ -293,10 +292,30 @@ class ScriptGenerator
     end
     result.transform_values! { |items| dedup_by_title(items) }
 
-    JSON.pretty_generate(result)
+    render_news_text(result)
   rescue FeedCache::FetchError => e
     # 不完全なニュースのまま Claude 呼び出し（トークン消費）へ進まないよう、ここで止める
     abort "aborting, news collection incomplete: #{e.message}"
+  end
+
+  # カテゴリ別の候補一覧をプレーンテキストにする。この段階では選定ステップの AI にしか
+  # 渡らないので、JSON にする必要はない（機械的にパースしない前提なら、フィールド名を
+  # 毎エントリ繰り返さないぶんトークンも少なく済む）。
+  def render_news_text(grouped)
+    grouped.filter_map do |category, items|
+      next if items.empty?
+
+      lines = items.each_with_index.map { |item, i| render_news_item(i + 1, item) }
+      "## #{CATEGORIES[category][:label]}\n#{lines.join("\n")}"
+    end.join("\n\n")
+  end
+
+  # 候補ニュース1件分を「タイトル / link / メタ情報」の3行にする。
+  def render_news_item(index, item)
+    meta = [item[:date], "seen:#{item[:seen_at]}", item[:source]]
+    meta << "bookmarks:#{item[:bookmarks]}" if item[:bookmarks]
+    meta << "priority:#{item[:priority]}" if item[:priority]
+    "#{index}. #{item[:title]}\n   #{item[:link]}\n   (#{meta.join(" / ")})"
   end
 
   # 全ソースを FETCH_THREADS 並列で収集する。戻り値は jobs と同じ順の items 配列。
@@ -459,11 +478,11 @@ class ScriptGenerator
   # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # ニュース選定用タスク。全候補のニュース JSON を差し込み、ソース/カテゴリごとの
+  # ニュース選定用タスク。全候補のニュース一覧を差し込み、ソース/カテゴリごとの
   # 目安件数と、選定結果の書き込み先パスを渡す。
-  def selector_prompt(news_json)
+  def selector_prompt(collected_news)
     TemplateRenderer.render("selector.prompt", self,
-      news_json:,
+      collected_news:,
       today_ja: @today_ja,
       source_targets: source_target_lines,
       max_per_category: MAX_PER_CATEGORY,

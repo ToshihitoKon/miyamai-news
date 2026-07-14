@@ -88,7 +88,7 @@ collect:
   # 各カテゴリのキー:
   #   label: extractor プロンプトで使う日本語の表示名
   #   sources: そのカテゴリのソース一覧。各ソースのキー:
-  #     name: 表示名（ニュース JSON の source に入る）
+  #     name: 表示名（収集したニュース一覧の source に入る）
   #     url / urls: フィードURL。複数フィードを1ソース扱いしたい場合は urls（配列）を使う
   #     max_items: このソースから AI がタイトルを見て選ぶ際の目安件数（省略時は
   #       default_max_per_source）。Ruby 側で機械的に足切りはしない
