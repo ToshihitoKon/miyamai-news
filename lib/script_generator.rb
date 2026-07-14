@@ -10,16 +10,23 @@ require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
 
 class ScriptGenerator
-  # カテゴリ定義（config.yaml の rss_feed_sources）。台本の番組構成（何本立てか）もこれに従う。
-  # YAML 由来の文字列キー/値をコード内で使うシンボルに変換する
-  # （category 名、各ソースハッシュのキー、priority の値）。
-  CATEGORIES = Config.get("rss_feed_sources").to_h do |category, cfg|
-    sources = cfg.fetch("sources").map { |src| src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] } }
-    [category.to_sym, { label: cfg.fetch("label", category), sources: sources }]
+  # 番組編成上のカテゴリ定義（config.yaml の program_details.categories）。
+  # label と description のみを持つ。RSS 収集・SOURCES とは完全に無関係
+  # （記事がどのカテゴリに属するかは selector が全体を見て判断する）。
+  CATEGORY_DETAILS = Config.get("program_details.categories").map do |cfg|
+    { label: cfg.fetch("label"), description: cfg.fetch("description") }
   end.freeze
 
-  # カテゴリごとのソース一覧だけを取り出したもの。ニュース収集で使う。
-  SOURCES = CATEGORIES.transform_values { |cfg| cfg[:sources] }.freeze
+  # 番組全体で紹介するニュースの合計本数の目安（メイン+補欠合計）。カテゴリ単位の
+  # 最低保証はない。台本が長くなりすぎるのを防ぐための、選定ステップの AI への指示。
+  TOTAL_NEWS_COUNT = Config.get("program_details.total_news_count").to_i
+
+  # RSS 収集元の一覧（フラットな配列）。カテゴリ区分は持たない。
+  # YAML 由来の文字列キー/値をコード内で使うシンボルに変換する
+  # （各ソースハッシュのキー、priority の値）。
+  SOURCES = Config.get("rss_feed_sources").map do |src|
+    src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] }
+  end.freeze
 
   # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
   # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
@@ -27,9 +34,6 @@ class ScriptGenerator
   # FeedCache が entry を保持する日数。フィードに最後に見えた時刻(last_fetched_at)が
   # これより古い（＝フィードから既に消えている）entry だけがパージされる。
   RETENTION_DAYS = Config.get("collect.retention_days").to_i
-  # 各カテゴリの目安件数（台本が長くなりすぎるのを防ぐ）。Ruby が機械的に足切りするの
-  # ではなく、選定ステップの AI への指示に使う。
-  MAX_PER_CATEGORY = Config.get("collect.max_per_category").to_i
   # フィード取得の並列数
   FETCH_THREADS = Config.get("collect.fetch_threads").to_i
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
@@ -271,37 +275,28 @@ class ScriptGenerator
     nil
   end
 
-  # FeedCache から since 以降に「初めて登場した」記事を集め、カテゴリ別のテキストにする。
+  # FeedCache から since 以降に「初めて登場した」記事を集め、フラットなテキストにする。
   # 掲載日時ではなく登場時刻(seen_at)で拾うので、昔書かれて今話題化した記事も取れる。
   # ここでは件数の絞り込みは行わない（全候補を選定ステップの AI に渡すため）。
+  # カテゴリ区分は持たない（カテゴリへの分類は selector 段階の AI が行う）。
   # dedup のみ行い、seen_at/priority は選定 AI の判断材料として残す。
   def collect_news
     since = collect_since
-    jobs = SOURCES.flat_map { |category, sources| sources.map { |src| [category, src] } }
-    items_per_job = fetch_jobs_in_parallel(jobs, since)
+    items_per_source = fetch_sources_in_parallel(SOURCES, since)
+    items = dedup_by_title(items_per_source.flatten)
 
-    result = SOURCES.keys.to_h { |category| [category, []] }
-    jobs.zip(items_per_job) do |(category, _src), items|
-      result[category].concat(items)
-    end
-    result.transform_values! { |items| dedup_by_title(items) }
-
-    render_news_text(result)
+    render_news_text(items)
   rescue FeedCache::FetchError => e
     # 不完全なニュースのまま Claude 呼び出し（トークン消費）へ進まないよう、ここで止める
     abort "aborting, news collection incomplete: #{e.message}"
   end
 
-  # カテゴリ別の候補一覧をプレーンテキストにする。この段階では選定ステップの AI にしか
+  # 候補一覧をプレーンテキストにする。この段階では選定ステップの AI にしか
   # 渡らないので、JSON にする必要はない（機械的にパースしない前提なら、フィールド名を
-  # 毎エントリ繰り返さないぶんトークンも少なく済む）。
-  def render_news_text(grouped)
-    grouped.filter_map do |category, items|
-      next if items.empty?
-
-      lines = items.each_with_index.map { |item, i| render_news_item(i + 1, item) }
-      "## #{CATEGORIES[category][:label]}\n#{lines.join("\n")}"
-    end.join("\n\n")
+  # 毎エントリ繰り返さないぶんトークンも少なく済む）。カテゴリ見出しは付けない
+  # （分類は selector が行う）。
+  def render_news_text(items)
+    items.each_with_index.map { |item, i| render_news_item(i + 1, item) }.join("\n")
   end
 
   # 候補ニュース1件分を「タイトル / link / メタ情報」の3行にする。
@@ -312,14 +307,14 @@ class ScriptGenerator
     "#{index}. #{item[:title]}\n   #{item[:link]}\n   (#{meta.join(" / ")})"
   end
 
-  # 全ソースを FETCH_THREADS 並列で収集する。戻り値は jobs と同じ順の items 配列。
+  # 全ソースを FETCH_THREADS 並列で収集する。戻り値は sources と同じ順の items 配列。
   # FeedCache はソース単位の fetch を並列に呼んでよい（内部でキャッシュ更新を直列化する）。
-  def fetch_jobs_in_parallel(jobs, since)
+  def fetch_sources_in_parallel(sources, since)
     queue = Queue.new
-    jobs.each_with_index { |(_category, src), i| queue << [src, i] }
+    sources.each_with_index { |src, i| queue << [src, i] }
     queue.close
 
-    items_per_job = Array.new(jobs.size)
+    items_per_source = Array.new(sources.size)
     workers = FETCH_THREADS.times.map do
       Thread.new do
         # 取得失敗（FetchError）は join 時に呼び出し元へ再送出して中断メッセージに
@@ -328,12 +323,12 @@ class ScriptGenerator
         while (job = queue.pop)
           src, i = job
           warn "collecting: #{src[:name]}"
-          items_per_job[i] = collect_source(src, since)
+          items_per_source[i] = collect_source(src, since)
         end
       end
     end
     workers.each(&:join)
-    items_per_job
+    items_per_source
   end
 
   # タイトルの重複除去（大文字小文字・空白を無視。先勝ち）
@@ -426,14 +421,16 @@ class ScriptGenerator
   # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # ニュース選定用タスク。全候補のニュース一覧を差し込み、カテゴリごとの目安件数と、
-  # 選定結果の書き込み先パスを渡す。ソース単位の絞り込みはせず、priority を判断材料
-  # として選定 AI に渡す（面白い記事はソースを問わず採用する方針のため）。
+  # ニュース選定用タスク。全候補（フラット）のニュース一覧を差し込み、番組全体の
+  # 合計目安件数と、カテゴリの分類観点（label+description）、選定結果の書き込み先
+  # パスを渡す。ソース単位の絞り込みはせず、priority を判断材料として選定 AI に渡す
+  # （面白い記事はソースを問わず採用する方針のため）。
   def selector_prompt(collected_news)
     TemplateRenderer.render("selector.prompt", self,
       collected_news:,
       today_ja: @today_ja,
-      max_per_category: MAX_PER_CATEGORY,
+      category_details: CATEGORY_DETAILS,
+      total_news_count: TOTAL_NEWS_COUNT,
       news_selected_path: File.expand_path(news_selected_path))
   end
 
@@ -442,7 +439,8 @@ class ScriptGenerator
     TemplateRenderer.render("extractor.prompt", self,
       selected_news:,
       today_ja: @today_ja,
-      category_labels: CATEGORIES.values.map { |cfg| cfg[:label] },
+      category_details: CATEGORY_DETAILS,
+      total_news_count: TOTAL_NEWS_COUNT,
       news_facts_path: File.expand_path(news_facts_path))
   end
 
