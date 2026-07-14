@@ -18,7 +18,7 @@ assets:
   bgm_path: 古びた魔法書_気まぐれBGM工房.mp3
   # 再生ページ / Slack プレビュー用の横長バナー画像のオブジェクト名。
   # 事前に gs://<bucket>/<cover_image> へ手動アップロードしておく。
-  cover_image: miyamai_news.png
+  cover_image: miyamai_news.webp
   # PWA(ホーム画面追加)用の正方形アイコンのオブジェクト名。512x512 以上推奨。
   # cover_image と同じく、事前に gs://<bucket>/<icon_image> へ手動アップロードしておく。
   icon_image: miyamai_news_icon.png
