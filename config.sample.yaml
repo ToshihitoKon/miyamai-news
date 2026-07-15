@@ -177,8 +177,11 @@ rss_feed_sources:
 
 # BGM 合成(ミキシング)まわり。
 mixer:
-  # BGM の音量(ナレーションを 1.0 としたときの相対値)。
-  bgm_volume: 0.15
+  # BGM の音量。ffmpeg の volume フィルタにそのまま渡す倍率(voice_boost_dbとは独立)。
+  bgm_volume: 0.23
+  # ナレーション音声に足すゲイン(dB)。VOICEPEAKの出力音量が小さめなため底上げする。
+  # 上げすぎるとピークが天井に張り付きクリップするため、実際の音声で確認しながら調整する。
+  voice_boost_db: 6
   # BGM 開始からナレーション開始までの秒数。
   intro_sec: 3
   # ナレーション終了からフェードアウト開始までの秒数。

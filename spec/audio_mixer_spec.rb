@@ -37,11 +37,12 @@ RSpec.describe AudioMixer do
 
         fade_start = mixer.send(:intro_sec) + 12.5 + mixer.send(:tail_sec)
         total_dur = fade_start + mixer.send(:fade_sec)
+        boost_db = Regexp.escape(mixer.send(:voice_boost_db).to_s)
         expect(Open3).to have_received(:capture3).with(
           "ffmpeg", "-y",
           "-stream_loop", "-1", "-i", bgm_path,
           "-i", voice_path,
-          "-filter_complex", a_string_matching(/amix=inputs=2/),
+          "-filter_complex", a_string_matching(/\[1:a\]volume=#{boost_db}dB,adelay=.*amix=inputs=2/),
           "-map", "[out]", "-t", total_dur.to_s,
           "-c:a", "libmp3lame", "-q:a", "4", output_path
         )
