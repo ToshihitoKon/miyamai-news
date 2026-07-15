@@ -451,7 +451,8 @@ class ScriptGenerator
 
   # ライター用タスク。ファクトシートと選定済みニュースを差し込み、台本(script)と used の書き込み先パスを
   # 渡す（Claude が Write で直接書く）。パスは Claude の cwd に依存しないよう絶対パス。
-  # used_news をカテゴリ別に出力させるため category_details も渡す。
+  # category_details（label+description）は、各カテゴリで本来何を話すべきかという
+  # 番組構成の意図をライターにも伝えるために渡す。
   def writer_prompt(selected_news, news_facts)
     TemplateRenderer.render("writer.prompt", self,
       selected_news:,
