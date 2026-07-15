@@ -234,14 +234,10 @@ class ScriptGenerator
   # 一覧本体より前に混入した前置きや照合の思考メモを落とす。
   # プロンプトで禁止しても稀に出るため、機械的に確実に取り除く。
   #
-  # 本体は「N.（タイトル）→ 次行が URL」という3行構造なので、単に「1.」で始まる行を
-  # 探すのではなく、直後の行が http で始まる「1.」を本体の起点とみなす。
-  # 思考メモにも「1. …」のような番号付き解説が混ざることがあり、それを取り違えないため。
+  # 本体は「■ カテゴリ名」という見出しから始まる構造なので、最初の「■」行を本体の起点とみなす。
   def strip_used_preamble(used)
     lines = used.lines
-    start = lines.each_index.find do |i|
-      lines[i].match?(/^\s*1\.\s/) && lines[i + 1]&.strip&.start_with?("http")
-    end
+    start = lines.each_index.find { |i| lines[i].strip.start_with?("■") }
     # 想定した構造が見つからなければそのまま返して人間が気づけるようにする
     return used unless start
 
@@ -455,11 +451,14 @@ class ScriptGenerator
 
   # ライター用タスク。ファクトシートと選定済みニュースを差し込み、台本(script)と used の書き込み先パスを
   # 渡す（Claude が Write で直接書く）。パスは Claude の cwd に依存しないよう絶対パス。
+  # category_details は番組構成の意図（各カテゴリの description）と、used_news の
+  # カテゴリ見出しに使う正式なラベル一覧の両方を兼ねる。
   def writer_prompt(selected_news, news_facts)
     TemplateRenderer.render("writer.prompt", self,
       selected_news:,
       news_facts:,
       today_ja: @today_ja,
+      category_details:,
       script_path: File.expand_path(script_path),
       used_news_path: File.expand_path(used_news_path))
   end
