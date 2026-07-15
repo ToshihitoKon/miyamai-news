@@ -17,7 +17,7 @@ class AudioMixer
     total_dur = fade_start + fade_sec
     delay_ms = (intro_sec * 1000).to_i
 
-    warn "voice: #{voice_dur.round(1)}s / bgm volume: #{bgm_volume} / total: #{total_dur.round(1)}s"
+    warn "voice: #{voice_dur.round(1)}s / voice boost: #{voice_boost_db}dB / bgm volume: #{bgm_volume} / total: #{total_dur.round(1)}s"
 
     run_mix(voice_path, output_path, fade_start: fade_start, total_dur: total_dur, delay_ms: delay_ms)
     warn "mixed: #{output_path}"
@@ -27,6 +27,8 @@ class AudioMixer
   private
 
   def bgm_volume = @bgm_volume ||= Config.get("mixer.bgm_volume").to_f
+  # VOICEPEAK の出力音量が小さめなため底上げするゲイン(dB)。未指定時は0(無調整)。
+  def voice_boost_db = @voice_boost_db ||= Config.get("mixer.voice_boost_db", 0).to_f
   def intro_sec = @intro_sec ||= Config.get("mixer.intro_sec").to_f   # BGM 開始からナレーション開始まで
   def tail_sec = @tail_sec ||= Config.get("mixer.tail_sec").to_f     # ナレーション終了からフェードアウト開始まで
   def fade_sec = @fade_sec ||= Config.get("mixer.fade_sec").to_f     # フェードアウトにかける秒数
@@ -45,7 +47,7 @@ class AudioMixer
   # normalize=0: amix の自動音量正規化を無効化し、指定した音量バランスを保つ
   def run_mix(voice_path, output_path, fade_start:, total_dur:, delay_ms:)
     filter = "[0:a]volume=#{bgm_volume},afade=t=out:st=#{fade_start}:d=#{fade_sec}[bgm]; " \
-             "[1:a]adelay=#{delay_ms}|#{delay_ms}[voice]; " \
+             "[1:a]volume=#{voice_boost_db}dB,adelay=#{delay_ms}|#{delay_ms}[voice]; " \
              "[bgm][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]"
 
     _out, err, status = Open3.capture3(

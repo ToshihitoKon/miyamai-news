@@ -29,6 +29,22 @@ RSpec.describe VoiceSynthesizer do
   end
 
   describe "#synthesize" do
+    context "when voice_path already exists" do
+      it "skips synthesis entirely and reuses the existing mp3" do
+        existing_voice_path = File.join(work_dir, "voice_20260714_afternoon.mp3")
+        File.write(existing_voice_path, "already synthesized")
+        allow(Open3).to receive(:popen3)
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+        voice_path = synth.synthesize(script_path)
+
+        expect(voice_path).to eq(existing_voice_path)
+        # before ブロックで File.executable? は true をstubしているため、実行可否チェック
+        # 自体が呼ばれていないことは「VOICEPEAK起動(popen3)が発生していない」ことで確認する。
+        expect(Open3).not_to have_received(:popen3)
+      end
+    end
+
     context "success" do
       it "synthesizes each chunk via VOICEPEAK and concatenates with ffmpeg, without a real binary" do
         written_wavs = []
