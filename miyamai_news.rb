@@ -51,6 +51,17 @@ end
 ARGS = parse_args(ARGV)
 Config.path = File.expand_path(ARGS[:config], __dir__) if ARGS[:config]
 
+# clean系・ui_only は pipeline.mode と無関係の独立コマンドなので検証をスキップする。
+# それ以外は各コンポーネントが実行中に MissingKeyError で落ちて中途半端に失敗するのを
+# 避けるため、起動直後に必要な config が揃っているか一括で検証する。
+unless ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
+  begin
+    Config.validate_for!(Config.mode)
+  rescue Config::MissingKeyError, ArgumentError => e
+    abort e.message
+  end
+end
+
 require_relative "lib/episode"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"
@@ -66,6 +77,16 @@ def episode_mp3_path(episode)        = File.join(DIST_DIR, "miyamai_news_#{episo
 def episode_used_path(episode)       = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.used.txt")
 # 読み仮名化前の人間可読な原稿。公開ページでは「文字起こし」として提示する。
 def episode_transcript_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.transcript.txt")
+
+# --script-only/--generate-only は synthesize 相当（facts抽出・執筆まで進む）以上、
+# --publish-only は publish 相当以上の config が検証されていないと実行できない。
+# 満たさなければ、必要な config が未検証のまま実行が進んで途中で失敗するのを防ぐため
+# ここで止める。
+def ensure_mode_allows!(required_mode)
+  return if Config::MODE_ORDER.fetch(Config.mode) >= Config::MODE_ORDER.fetch(required_mode)
+
+  abort "pipeline.mode=#{Config.mode} では #{required_mode} 以上を要求するこのフラグは実行できません"
+end
 
 def main
   args = ARGS
@@ -93,12 +114,42 @@ def main
   FileUtils.mkdir_p(DIST_DIR)
 
   if args[:script_only]
+    ensure_mode_allows!("synthesize")
     run_script(episode)
     return
   end
 
-  run_generate(episode) unless args[:publish_only]
-  run_publish(episode) unless args[:generate_only]
+  if args[:publish_only]
+    ensure_mode_allows!("publish")
+    run_publish(episode)
+    return
+  end
+
+  if args[:generate_only]
+    ensure_mode_allows!("synthesize")
+    run_generate(episode)
+    return
+  end
+
+  # フラグなし実行は pipeline.mode の上限まで自動的に進む。
+  case Config.mode
+  when "digest"
+    run_digest_only(episode)
+  when "synthesize"
+    run_generate(episode)
+  when "publish"
+    run_generate(episode)
+    run_publish(episode)
+  end
+end
+
+# ニュース収集・AI選別・facts抽出までで停止する。pipeline.mode: digest のフラグなし
+# 実行に対応する（--script-only とは異なり、facts抽出止まりで台本執筆までは進まない）。
+def run_digest_only(episode)
+  facts_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).digest
+  ScriptGenerator.record_reached!(work_dir: WORK_DIR, mode: "digest", at: Time.now)
+
+  warn "news facts: #{facts_path}"
 end
 
 # 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。
@@ -129,6 +180,9 @@ def run_generate(episode)
   FileUtils.cp(generator.used_news_file, used_news_output)
   FileUtils.cp(generator.script_file, transcript_output)
 
+  # synthesize に到達した実行時刻で収集 window の起点を確定する（digest分も同時に進む）。
+  ScriptGenerator.record_reached!(work_dir: WORK_DIR, mode: "synthesize", at: Time.now)
+
   warn "audio: #{output_path}"
   warn "used news: #{used_news_output}"
   warn "transcript: #{transcript_output}"
@@ -146,11 +200,12 @@ def run_publish(episode)
 
   Publisher.new(date: episode.date).run(mp3_path, used_path, transcript_path)
 
-  # publish が成功した実行時刻で収集 window の起点を確定する。以後の収集はこの時刻より
-  # 後の記事だけを対象にする。Publisher#run は失敗時に内部で abort するので、ここへ
-  # 到達するのは成功時のみ。起点は実行時刻(Time.now)。過去回を publish し直しても未来の
-  # window を巻き戻さないよう、回の日付ではなく実行時刻を使う。
-  ScriptGenerator.record_publish(work_dir: WORK_DIR, at: Time.now)
+  # publish が成功した実行時刻で収集 window の起点を確定する（digest/synthesize分も
+  # 同時に進む）。以後の収集はこの時刻より後の記事だけを対象にする。Publisher#run は
+  # 失敗時に内部で abort するので、ここへ到達するのは成功時のみ。起点は実行時刻
+  # (Time.now)。過去回を publish し直しても未来の window を巻き戻さないよう、回の
+  # 日付ではなく実行時刻を使う。
+  ScriptGenerator.record_reached!(work_dir: WORK_DIR, mode: "publish", at: Time.now)
 end
 
 # 新しい回を公開せず、既存 archives.csv から index.html / manifest.json だけを
@@ -174,7 +229,7 @@ end
 
 # work/ の回ごとの中間ファイルを削除する。各コンポーネントが「自分が作る中間ファイルの
 # glob パターン」を申告するので、それに一致するものだけを消す（ホワイトリスト方式）。
-# 回をまたいで保持する状態（last_fetch.txt / feed_cache.json）はパターンに含まれないので
+# 回をまたいで保持する状態（last_fetch.json / feed_cache.json）はパターンに含まれないので
 # 残る。消すと過去に見た記事を新着として拾い直し、重複紹介が起きるため。
 def clean_work_dir
   patterns = ScriptGenerator.work_globs(WORK_DIR) + VoiceSynthesizer.work_globs(WORK_DIR)

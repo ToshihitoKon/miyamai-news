@@ -4,6 +4,10 @@
 #   cp config.sample.yaml config.yaml
 # としてから、環境に合わせて値を書き換える。config.yaml は git 管理外。
 
+# このfixtureはフルパイプライン相当の値を全て持つため、明示的に publish にする。
+pipeline:
+  mode: publish
+
 # GCS への公開まわり。
 gcs:
   # 成果物を置く GCS バケット名。
