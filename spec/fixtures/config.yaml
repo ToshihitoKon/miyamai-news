@@ -43,6 +43,10 @@ voicepeak:
   # 句点で区切った文がそのままつながると間延びなく聞こえてしまうため、
   # 一呼吸おけるよう無音を挟む。
   chunk_gap_sec: 0.4
+  # 台本中の [interval:mid] タグ（個々のニュース記事の切り替え）で挟む無音の秒数。
+  mid_pause_sec: 1.0
+  # 台本中の [interval:long] タグ（カテゴリ／トピックの転換）で挟む無音の秒数。
+  long_pause_sec: 2.0
 
 # 台本生成・整形に使う AI CLI の設定。
 ai_agent:

@@ -35,6 +35,8 @@ module Internal
       attribute :retry_base_sec, Types::Coercible::Float
       attribute :timeout_sec, Types::Coercible::Float
       attribute :chunk_gap_sec, Types::Coercible::Float
+      attribute :mid_pause_sec, Types::Coercible::Float
+      attribute :long_pause_sec, Types::Coercible::Float
     end
 
     class AiAgent < Base
