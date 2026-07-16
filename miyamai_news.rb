@@ -34,6 +34,8 @@ def parse_args(argv)
     o.on("--clean", "work/ の掃除と公開済み dist/ 成果物の削除") { opts[:clean] = true }
     o.on("--clean-archive", "archived/ 配下の退避済み成果物を完全削除") { opts[:clean_archive] = true }
     o.on("--ui-only", "index.html / manifest.json のみ再生成") { opts[:ui_only] = true }
+    o.on("--confirm-fetch", "未確認の収集windowを確定する（成果物を確認済みのときに使う）") { opts[:confirm_fetch] = true }
+    o.on("--auto-confirm", "前回の未確認収集windowを確認なしで自動確定する（CI向け）") { opts[:auto_confirm] = true }
     o.on("--digest-only", "ニュース選別・要約のみ生成して停止") { opts[:digest_only] = true }
     o.on("--script-only", "台本のみ生成して停止") { opts[:script_only] = true }
     o.on("--synthesize-only", "音声合成・BGM合成のみ（dist/ に書き出して終了）") { opts[:synthesize_only] = true }
@@ -59,11 +61,12 @@ end
 ARGS = parse_args(ARGV)
 
 # clean系・ui_only は pipeline.mode とは無関係だが、実際には Publisher（GCS操作）を
-# 経由するため gcs セクションだけは要求する。それ以外は各コンポーネントが実行中に
-# MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な config が
-# 揃っているか一括で検証する。Config.path= は代入した時点で即座に新しいパスから読み直す
-# 設計（lib/internal/config.rb 参照）なので、--config 指定時の読み込みエラーもこのガードで
-# まとめて拾えるよう同じ begin ブロック内に置く。
+# 経由するため gcs セクションだけは要求する。confirm_fetch は work/last_fetch.json のみを
+# 触り GCS も pipeline.mode も伴わないので検証を全てスキップする。それ以外は各コンポーネント
+# が実行中に MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な
+# config が揃っているか一括で検証する。Config.path= は代入した時点で即座に新しいパスから
+# 読み直す設計（lib/internal/config.rb 参照）なので、--config 指定時の読み込みエラーも
+# このガードでまとめて拾えるよう同じ begin ブロック内に置く。
 begin
   # cwd 基準で解決する（一般的な CLI の期待動作。__dir__ 基準だとスクリプト位置基準になり、
   # リポジトリ外のディレクトリから相対パスを指定したときに意図と異なる場所を読んでしまう）。
@@ -71,7 +74,7 @@ begin
 
   if ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
     Config.validate_gcs!
-  else
+  elsif !ARGS[:confirm_fetch]
     Config.validate_for!(Config.mode)
   end
 rescue Config::MissingConfigError, Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
@@ -123,6 +126,11 @@ def main
     return
   end
 
+  if args[:confirm_fetch]
+    run_confirm_fetch
+    return
+  end
+
   # 番組コンテキスト（日付・slot）は実行時刻から Episode が導く。--date/--slot の明示
   # 指定があればそれを尊重する（Episode 側で自動判定を上書き）。
   episode = Episode.new(now: args[:date] || Time.now, date: args[:date]&.to_date, slot: args[:slot])
@@ -130,30 +138,31 @@ def main
   FileUtils.mkdir_p(WORK_DIR)
   FileUtils.mkdir_p(DIST_DIR)
 
+  resolve_pending_fetch!(auto_confirm: args[:auto_confirm])
+
   if args[:digest_only]
     ensure_mode_allows!("digest")
-    run_digest(episode)
-    record_reached!("digest")
+    generator = run_digest(episode)
+    mark_fetch_pending! if generator.fetched_news?
     return
   end
 
   if args[:script_only]
     ensure_mode_allows!("synthesize")
-    run_script(episode)
+    generator = run_script(episode)
+    mark_fetch_pending! if generator.fetched_news?
     return
   end
 
   if args[:publish_only]
     ensure_mode_allows!("publish")
     run_publish(episode)
-    record_reached!("publish")
+    confirm_fetch_immediately!
     return
   end
 
   # フラグなしは pipeline.mode の上限まで、--synthesize-only は synthesize までを上限に、
-  # run_digest→run_synthesize→run_publish を順に呼ぶだけ。到達した最大 mode を最後に
-  # 一度だけ記録する（工程の途中で記録すると、スクリプト全体が完了する前に収集 window
-  # が進んでしまう）。
+  # run_digest→run_synthesize→run_publish を順に呼ぶだけ。
   if args[:synthesize_only]
     ensure_mode_allows!("synthesize")
     target_mode = "synthesize"
@@ -161,39 +170,94 @@ def main
     target_mode = Config.mode
   end
 
-  run_digest(episode)
-  run_synthesize(episode) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
-  run_publish(episode) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
+  generator = run_digest(episode)
+  run_synthesize(episode, generator) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
 
-  record_reached!(target_mode)
+  # publish まで到達するときだけ「公開＝確定」を即座に反映する。到達しないときは、
+  # 新規収集が起きていれば pending 化するだけに留める（人間の確認を待つ）。
+  if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
+    run_publish(episode)
+    confirm_fetch_immediately!
+  elsif generator.fetched_news?
+    mark_fetch_pending!
+  end
 end
 
-def record_reached!(mode)
-  LastFetchStore.new(work_dir: WORK_DIR).record_reached!(mode: mode, at: Time.now)
+def mark_fetch_pending!
+  LastFetchStore.new(work_dir: WORK_DIR).mark_pending!(at: Time.now)
+end
+
+def confirm_fetch_immediately!
+  LastFetchStore.new(work_dir: WORK_DIR).confirm_immediately!(at: Time.now)
+end
+
+# 前回実行で pending_at が残っていれば、確定させるかロールバックするか尋ねる。
+# --auto-confirm 指定時は対話せず自動確定する（CI等の非対話実行向け）。
+# デフォルト(Enter/N)はロールバック側（安全側）: 確認を怠って収集windowが誤って
+# 進むより、取りこぼしが起きない方を既定にする。
+def resolve_pending_fetch!(auto_confirm:)
+  store = LastFetchStore.new(work_dir: WORK_DIR)
+  pending = store.pending_at
+  return unless pending
+
+  if auto_confirm
+    store.confirm!
+    warn "auto-confirmed pending fetch window: #{pending}"
+    return
+  end
+
+  print "前回の収集windowが未確認です（#{pending}）。確定しますか？確定しなければロールバックします。 [y/N]: "
+  answer = $stdin.gets&.strip
+  if answer&.match?(/\Ay\z/i)
+    store.confirm!
+    warn "confirmed pending fetch window: #{pending}"
+  else
+    store.rollback!
+    warn "rolled back pending fetch window (kept confirmed_at)"
+  end
+end
+
+# pending中の収集windowを確認なしで即座に確定する独立コマンド。成果物を確認できた
+# タイミングで、次回実行を待たずに使う。
+def run_confirm_fetch
+  store = LastFetchStore.new(work_dir: WORK_DIR)
+  pending = store.pending_at
+  unless pending
+    warn "確定対象の pending な収集windowがありません"
+    return
+  end
+
+  store.confirm!
+  warn "confirmed fetch window: #{pending}"
 end
 
 # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
+# 戻り値の ScriptGenerator を呼び出し元が見て、新規収集が起きたか(#fetched_news?)を判断する。
 def run_digest(episode)
-  facts_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).digest
+  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode)
+  facts_path = generator.digest
 
   warn "news facts: #{facts_path}"
+  generator
 end
 
 # 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。
 # 中身を確認・手直ししたうえで、フラグなしで再実行すれば既存の台本を再利用して
-# 整形〜音声合成〜publish まで続きから進む。run_digest とは別系統（writer執筆まで
-# 進めるが tts 整形・音声合成はしない）なので、収集 window の記録は行わない。
+# 整形〜音声合成〜publish まで続きから進む。
 def run_script(episode)
-  script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).generate(format: false)
+  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode)
+  script_path = generator.generate(format: false)
 
   warn "script: #{script_path}"
+  generator
 end
 
 # 台本執筆・tts整形・音声合成・BGM合成までを実行する。pipeline.mode: synthesize の
 # 到達点。ScriptGenerator#generate は内部で digest 相当の工程を呼ぶが、run_digest が
 # 作った中間ファイルがあれば再利用するだけなので、run_digest の後に呼んでも
-# AI を二重に呼ばない。
-def run_synthesize(episode)
+# AI を二重に呼ばない。generator は run_digest が返したインスタンスを引き継ぎ、
+# 収集が起きたかどうかの判定（fetched_news?）を最初の呼び出し時点のまま保つ。
+def run_synthesize(episode, generator)
   # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
   # index.html にクレジット表記を固定しているため（templates/index.html.erb 参照）、
   # 差し替え可能にはしていない。
@@ -202,7 +266,6 @@ def run_synthesize(episode)
   used_news_output = episode_used_path(episode)
   transcript_output = episode_transcript_path(episode)
 
-  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode)
   tts_script_path = generator.generate
   voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, episode: episode).synthesize(tts_script_path)
   AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)

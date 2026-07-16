@@ -85,6 +85,12 @@ class ScriptGenerator
   # 番組で実際に触れたニュース一覧（used_news）のパス。成果物として書き出す用。
   def used_news_file = used_news_path
 
+  # この実行で実際に新規のRSS収集（FeedCache#fetch）が発生したか。既存の
+  # news_collected_path を再利用しただけなら false。呼び出し側（miyamai_news.rb）が
+  # 収集windowを pending 化すべきかどうかの判断に使う。#digest/#generate 実行後にのみ
+  # 意味を持つ（呼ぶ前は常に false）。
+  def fetched_news? = @fetched_news == true
+
   private
 
   # --- 設定値 ---
@@ -242,35 +248,29 @@ class ScriptGenerator
   # その回に集まった entry 集合を news_*.txt にスナップショットとして残し、あれば再利用
   # する（台本を作り直すとき収集入力を固定するため）。無ければ FeedCache から集めて作る。
   def load_or_collect_news
+    @fetched_news = false
+
     if File.exist?(news_collected_path)
       warn "reuse: #{news_collected_path}"
       return File.read(news_collected_path)
     end
 
+    @fetched_news = true
     news_body = collect_news
     File.write(news_collected_path, news_body)
     warn "news: #{news_collected_path}"
     news_body
   end
 
-  # 収集 window の起点。last_fetch.json の自分の mode（pipeline.mode）キー、つまり
-  # 前回このmodeに到達した時点を使う。これは自分の mode の到達時にしか進まないので、
-  # 到達しない回を作り直す間は起点が固定され、破棄→再収集しても前回の window 分を
-  # 取りこぼさない。前回時刻が無い初回は lookback_hours ぶんさかのぼる
-  # （もともと古すぎる記事は対象にしない）。
+  # 収集 window の起点。last_fetch.json の confirmed_at、つまり人間が前回の成果物を
+  # 確認して確定させた時点を使う。実行が完了しただけでは進まない（pending_at 止まり）。
+  # 前回時刻が無い初回は lookback_hours ぶんさかのぼる（もともと古すぎる記事は対象にしない）。
   def collect_since
     last_fetch_time || (@now - (lookback_hours * 3600))
   end
 
-  # last_fetch.json に記録された、自分の mode が前回到達した時刻。無い/壊れていれば nil。
-  def last_fetch_time
-    raw = @last_fetch_store.load[Config.mode]
-    return nil unless raw
-
-    Time.iso8601(raw)
-  rescue ArgumentError
-    nil
-  end
+  # last_fetch.json に記録された、確定済みの収集window起点。無い/壊れていれば nil。
+  def last_fetch_time = @last_fetch_store.confirmed_at
 
   # FeedCache から since 以降に「初めて登場した」記事を集め、フラットなテキストにする。
   # 掲載日時ではなく登場時刻(seen_at)で拾うので、昔書かれて今話題化した記事も取れる。

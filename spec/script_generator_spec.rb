@@ -148,18 +148,43 @@ RSpec.describe ScriptGenerator do
   end
 
   describe "#collect_since" do
-    it "uses the recorded timestamp for the current pipeline.mode" do
+    it "uses the confirmed timestamp" do
       at = Time.utc(2026, 7, 14, 9, 0, 0)
-      LastFetchStore.new(work_dir: work_dir).record_reached!(mode: Config.mode, at: at)
+      LastFetchStore.new(work_dir: work_dir).confirm_immediately!(at: at)
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       expect(generator.send(:collect_since)).to eq(at)
     end
 
-    it "falls back to lookback_hours when nothing has been recorded yet" do
+    it "falls back to lookback_hours when nothing has been confirmed yet" do
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       expect(generator.send(:collect_since)).to eq(now - generator.send(:lookback_hours) * 3600)
+    end
+  end
+
+  describe "#fetched_news?" do
+    it "is true after collecting news for the first time" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      generator.send(:load_or_collect_news)
+
+      expect(generator.fetched_news?).to be true
+    end
+
+    it "is false when an existing news snapshot is reused" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+      File.write(generator.send(:news_collected_path), "1. Title A\n")
+
+      generator.send(:load_or_collect_news)
+
+      expect(generator.fetched_news?).to be false
+    end
+
+    it "is false before any collection has run" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      expect(generator.fetched_news?).to be false
     end
   end
 end
