@@ -33,6 +33,7 @@ def parse_args(argv)
     o.on("--clean", "work/ の掃除と公開済み dist/ 成果物の削除") { opts[:clean] = true }
     o.on("--clean-archive", "archived/ 配下の退避済み成果物を完全削除") { opts[:clean_archive] = true }
     o.on("--ui-only", "index.html / manifest.json のみ再生成") { opts[:ui_only] = true }
+    o.on("--digest-only", "ニュース選別・要約のみ生成して停止") { opts[:digest_only] = true }
     o.on("--script-only", "台本のみ生成して停止") { opts[:script_only] = true }
     o.on("--generate-only", "生成のみ（dist/ に書き出して終了）") { opts[:generate_only] = true }
     o.on("--publish-only", "dist/ の該当回を公開のみ") { opts[:publish_only] = true }
@@ -81,10 +82,10 @@ def episode_used_path(episode)       = File.join(DIST_DIR, "miyamai_news_#{episo
 # 読み仮名化前の人間可読な原稿。公開ページでは「文字起こし」として提示する。
 def episode_transcript_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.transcript.txt")
 
-# --script-only/--generate-only は synthesize 相当（facts抽出・執筆まで進む）以上、
-# --publish-only は publish 相当以上の config が検証されていないと実行できない。
-# 満たさなければ、必要な config が未検証のまま実行が進んで途中で失敗するのを防ぐため
-# ここで止める。
+# --digest-only は digest 相当、--script-only/--generate-only は synthesize 相当
+# （facts抽出・執筆まで進む）以上、--publish-only は publish 相当以上の config が
+# 検証されていないと実行できない。満たさなければ、必要な config が未検証のまま
+# 実行が進んで途中で失敗するのを防ぐためここで止める。
 def ensure_mode_allows!(required_mode)
   return if Config::MODE_ORDER.fetch(Config.mode) >= Config::MODE_ORDER.fetch(required_mode)
 
@@ -115,6 +116,13 @@ def main
 
   FileUtils.mkdir_p(WORK_DIR)
   FileUtils.mkdir_p(DIST_DIR)
+
+  if args[:digest_only]
+    ensure_mode_allows!("digest")
+    run_digest(episode)
+    record_reached!("digest")
+    return
+  end
 
   if args[:script_only]
     ensure_mode_allows!("synthesize")
