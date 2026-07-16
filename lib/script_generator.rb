@@ -91,41 +91,35 @@ class ScriptGenerator
   # label と description のみを持つ。RSS 収集・sources とは完全に無関係
   # （記事がどのカテゴリに属するかは selector が全体を見て判断する）。
   def category_details
-    @category_details ||= Config.get("program_details.categories").map do |cfg|
-      { label: cfg.fetch("label"), description: cfg.fetch("description") }
+    @category_details ||= Config.program_details.categories.map do |c|
+      { label: c.label, description: c.description }
     end.freeze
   end
 
   # 番組全体で紹介するニュースの合計本数の目安（メイン+補欠合計）。カテゴリ単位の
   # 最低保証はない。台本が長くなりすぎるのを防ぐための、選定ステップの AI への指示。
-  def total_news_count = @total_news_count ||= Config.get("program_details.total_news_count").to_i
+  def total_news_count = Config.program_details.total_news_count
 
   # RSS 収集元の一覧（フラットな配列）。カテゴリ区分は持たない。
-  # YAML 由来の文字列キー/値をコード内で使うシンボルに変換する
-  # （各ソースハッシュのキー、priority の値）。
-  def sources
-    @sources ||= Config.get("rss_feed_sources").map do |src|
-      src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] }
-    end.freeze
-  end
+  def sources = Config.rss_feed_sources
 
   # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
   # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
-  def lookback_hours = @lookback_hours ||= Config.get("collect.lookback_hours").to_i
+  def lookback_hours = Config.collect.lookback_hours
 
   # FeedCache が entry を保持する日数。フィードに最後に見えた時刻(last_fetched_at)が
   # これより古い（＝フィードから既に消えている）entry だけがパージされる。
-  def retention_days = @retention_days ||= Config.get("collect.retention_days").to_i
+  def retention_days = Config.collect.retention_days
 
   # フィード取得の並列数
-  def fetch_threads = @fetch_threads ||= Config.get("collect.fetch_threads").to_i
+  def fetch_threads = Config.collect.fetch_threads
 
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
   # hnrss などは一時的に 502 を返すことがある。ニュースが揃わないまま
   # 後段の Claude 呼び出しへ進んでトークンを浪費しないよう、
   # リトライし尽くしても取れないソースがあれば実行ごと中断する。
-  def fetch_max_retries = @fetch_max_retries ||= Config.get("collect.fetch_max_retries").to_i
-  def fetch_retry_base_sec = @fetch_retry_base_sec ||= Config.get("collect.fetch_retry_base_sec").to_f
+  def fetch_max_retries = Config.collect.fetch_max_retries
+  def fetch_retry_base_sec = Config.collect.fetch_retry_base_sec
 
   def news_collected_path = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.txt")
   def news_selected_path  = File.join(@work_dir, "news_selected_#{@date_tag}_#{@slot}.txt")
@@ -133,7 +127,6 @@ class ScriptGenerator
   def script_path      = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
   def tts_script_path  = File.join(@work_dir, "tts_script_#{@date_tag}_#{@slot}.txt")
   def used_news_path   = File.join(@work_dir, "news_used_#{@date_tag}_#{@slot}.txt")
-
 
   # digest（収集→選定→facts抽出）を実行し、facts抽出で使った選定済みニュースの
   # テキストを返す。generate はこの戻り値を使って続きのライター工程に渡す。
@@ -329,7 +322,7 @@ class ScriptGenerator
         Thread.current.report_on_exception = false
         while (job = queue.pop)
           src, i = job
-          warn "collecting: #{src[:name]}"
+          warn "collecting: #{src.name}"
           items_per_source[i] = collect_source(src, since)
         end
       end
@@ -349,15 +342,15 @@ class ScriptGenerator
   # HatenaBookmarks は全ソースに無条件で適用する。はてブ以外のフィードには
   # hatena:bookmarkcount が無いので、何も付与せず素通りするだけ（安全）。
   def collect_source(src, since)
-    items = @feed_cache.fetch(src[:urls] || src[:url], now: @now, since: since,
+    items = @feed_cache.fetch(src.urls || src.url, now: @now, since: since,
       extra_extractor: Internal::HatenaBookmarks)
 
     items.map do |item|
       picked = { title: item[:title], link: item[:link], date: item[:date],
-                 source: src[:name], seen_at: item[:seen_at] }
+                 source: src.name, seen_at: item[:seen_at] }
       picked[:bookmarks] = Internal::HatenaBookmarks.count_of(item[:extra]) if item[:extra]
       # 優先度付きソースの記事に印を付け、選定・ライターの取捨選択に使わせる
-      picked[:priority] = src[:priority] if src[:priority]
+      picked[:priority] = src.priority if src.priority
       picked
     end
   end
@@ -367,11 +360,11 @@ class ScriptGenerator
   # 設定された AI CLI を実行する。claude_extra_args（--allowedTools 等）は claude 固有の
   # 引数なので、bin が claude のときだけ渡す。
   def run_ai_cli(spinner_message, prompt, *claude_extra_args, model_override: nil)
-    bin = Config.get("ai_agent.bin")
-    model = model_override || Config.get("ai_agent.model")
+    bin = Config.ai_agent.bin
+    model = model_override || Config.ai_agent.model
 
     if bin == "claude"
-      effort = Config.get("ai_agent.effort")
+      effort = Config.ai_agent.effort
       run_command_with_spinner(
         "#{spinner_message} [#{bin}]",
         "AI CLI failed",
@@ -389,7 +382,7 @@ class ScriptGenerator
   end
 
   def get_model_for_role(role)
-    Config.get("ai_agent.#{role}_model", Config.get("ai_agent.model"))
+    Config.ai_agent.model_for(role)
   end
 
   def run_command_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil)

@@ -73,26 +73,26 @@ class VoiceSynthesizer
 
   def voice_path = File.join(@work_dir, "voice_#{@date_tag}_#{@slot}.mp3")
 
-  def voicepeak_bin = @voicepeak_bin ||= Config.get("voicepeak.bin")
+  def voicepeak_bin = Config.voicepeak.bin
 
   # 各チャンク合成後に空ける秒数。VOICEPEAK の連続起動によるクラッシュ避け。
-  def interval_sec = @interval_sec ||= Config.get("voicepeak.interval_sec").to_f
+  def interval_sec = Config.voicepeak.interval_sec
 
   # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数。
   # VOICEPEAK はまれに初期化タイミングでクラッシュするため、待機を倍々に
   # 伸ばしながら数回やり直せば大抵は成功する。
-  def max_retries = @max_retries ||= Config.get("voicepeak.max_retries").to_i
-  def retry_base_sec = @retry_base_sec ||= Config.get("voicepeak.retry_base_sec").to_f
+  def max_retries = Config.voicepeak.max_retries
+  def retry_base_sec = Config.voicepeak.retry_base_sec
 
   # 1チャンクの合成に許す最大秒数。VOICEPEAK はまれに異常終了後もプロセスが
   # 応答を返さずハングすることがあり、放置すると永久にブロックしてしまう。
   # この時間を超えたら kill してリトライへ回す。
-  def timeout_sec = @timeout_sec ||= Config.get("voicepeak.timeout_sec").to_f
+  def timeout_sec = Config.voicepeak.timeout_sec
 
   # チャンク（文）を結合する際に間に挟む無音の秒数。
   # 句点区切りのチャンクをそのままつなげると間延びがなく聞き取りにくいため、
   # 一呼吸おける無音を挟む。
-  def chunk_gap_sec = @chunk_gap_sec ||= Config.get("voicepeak.chunk_gap_sec").to_f
+  def chunk_gap_sec = Config.voicepeak.chunk_gap_sec
 
   # 1チャンク（140文字以内のテキスト）を WAV に合成する。
   # 失敗時は指数バックオフ（retry_base_sec * 2**n）で max_retries 回まで再試行する。

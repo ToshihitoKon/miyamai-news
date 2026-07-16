@@ -26,12 +26,12 @@ class AudioMixer
 
   private
 
-  def bgm_volume = @bgm_volume ||= Config.get("mixer.bgm_volume").to_f
+  def bgm_volume = Config.mixer.bgm_volume
   # VOICEPEAK の出力音量が小さめなため底上げするゲイン(dB)。未指定時は0(無調整)。
-  def voice_boost_db = @voice_boost_db ||= Config.get("mixer.voice_boost_db", 0).to_f
-  def intro_sec = @intro_sec ||= Config.get("mixer.intro_sec").to_f   # BGM 開始からナレーション開始まで
-  def tail_sec = @tail_sec ||= Config.get("mixer.tail_sec").to_f     # ナレーション終了からフェードアウト開始まで
-  def fade_sec = @fade_sec ||= Config.get("mixer.fade_sec").to_f     # フェードアウトにかける秒数
+  def voice_boost_db = Config.mixer.voice_boost_db
+  def intro_sec = Config.mixer.intro_sec   # BGM 開始からナレーション開始まで
+  def tail_sec = Config.mixer.tail_sec     # ナレーション終了からフェードアウト開始まで
+  def fade_sec = Config.mixer.fade_sec     # フェードアウトにかける秒数
 
   def probe_duration(path)
     out, err, status = Open3.capture3(

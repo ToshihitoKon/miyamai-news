@@ -59,5 +59,31 @@ RSpec.describe Config do
         expect { Config.validate_for!("digest") }.to raise_error(Config::MissingKeyError, /ai_agent/)
       end
     end
+
+    it "raises InvalidConfigError when a section has a type mismatch" do
+      data = YAML.safe_load_file(default_path)
+      data["gcs"]["bucket"] = ["not", "a", "string"]
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "config.yaml")
+        File.write(path, YAML.dump(data))
+        Config.path = path
+
+        expect { Config.validate_for!("publish") }.to raise_error(Config::InvalidConfigError)
+      end
+    end
+  end
+
+  describe "section accessors" do
+    it "exposes each top-level section as a typed struct" do
+      expect(Config.gcs.bucket).to eq("your-bucket-name")
+      expect(Config.ai_agent.model_for(:selector)).to eq("claude-sonnet-5")
+      expect(Config.program_details.categories.first.label).to eq("生成AI")
+    end
+
+    it "returns nil for a section absent from the loaded config" do
+      Config.path = File.expand_path("../fixtures/config_digest.yaml", __dir__)
+
+      expect(Config.gcs).to be_nil
+    end
   end
 end

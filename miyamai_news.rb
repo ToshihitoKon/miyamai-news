@@ -14,6 +14,8 @@ gemfile do
   gem "rss"
   gem "csv"
   gem "rexml"
+  gem "dry-struct"
+  gem "dry-types"
 end
 
 require "time"
@@ -57,7 +59,7 @@ Config.path = File.expand_path(ARGS[:config], __dir__) if ARGS[:config]
 unless ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
   begin
     Config.validate_for!(Config.mode)
-  rescue Config::MissingKeyError, ArgumentError => e
+  rescue Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
     abort e.message
   end
 end
@@ -174,7 +176,7 @@ def run_synthesize(episode)
   # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
   # index.html にクレジット表記を固定しているため（templates/index.html.erb 参照）、
   # 差し替え可能にはしていない。
-  bgm_path = File.expand_path(Config.get("assets.bgm_path"), BASE_DIR)
+  bgm_path = File.expand_path(Config.assets.bgm_path, BASE_DIR)
   output_path = episode_mp3_path(episode)
   used_news_output = episode_used_path(episode)
   transcript_output = episode_transcript_path(episode)
