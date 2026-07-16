@@ -14,6 +14,8 @@ gemfile do
   gem "rss"
   gem "csv"
   gem "rexml"
+  gem "dry-struct"
+  gem "dry-types"
 end
 
 require "time"
@@ -31,8 +33,9 @@ def parse_args(argv)
     o.on("--clean", "work/ の掃除と公開済み dist/ 成果物の削除") { opts[:clean] = true }
     o.on("--clean-archive", "archived/ 配下の退避済み成果物を完全削除") { opts[:clean_archive] = true }
     o.on("--ui-only", "index.html / manifest.json のみ再生成") { opts[:ui_only] = true }
+    o.on("--digest-only", "ニュース選別・要約のみ生成して停止") { opts[:digest_only] = true }
     o.on("--script-only", "台本のみ生成して停止") { opts[:script_only] = true }
-    o.on("--generate-only", "生成のみ（dist/ に書き出して終了）") { opts[:generate_only] = true }
+    o.on("--synthesize-only", "音声合成・BGM合成のみ（dist/ に書き出して終了）") { opts[:synthesize_only] = true }
     o.on("--publish-only", "dist/ の該当回を公開のみ") { opts[:publish_only] = true }
     o.on("--date DATE", "対象の日時（例: 2026-07-10）") { |v| opts[:date] = Time.parse(v) }
     o.on("--slot SLOT", "対象の時間帯（morning/afternoon/evening）") { |v| opts[:slot] = v }
@@ -51,7 +54,19 @@ end
 ARGS = parse_args(ARGV)
 Config.path = File.expand_path(ARGS[:config], __dir__) if ARGS[:config]
 
+# clean系・ui_only は pipeline.mode と無関係の独立コマンドなので検証をスキップする。
+# それ以外は各コンポーネントが実行中に MissingKeyError で落ちて中途半端に失敗するのを
+# 避けるため、起動直後に必要な config が揃っているか一括で検証する。
+unless ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
+  begin
+    Config.validate_for!(Config.mode)
+  rescue Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
+    abort e.message
+  end
+end
+
 require_relative "lib/episode"
+require_relative "lib/internal/last_fetch_store"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"
 require_relative "lib/audio_mixer"
@@ -66,6 +81,16 @@ def episode_mp3_path(episode)        = File.join(DIST_DIR, "miyamai_news_#{episo
 def episode_used_path(episode)       = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.used.txt")
 # 読み仮名化前の人間可読な原稿。公開ページでは「文字起こし」として提示する。
 def episode_transcript_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.transcript.txt")
+
+# --digest-only は digest 相当、--script-only/--synthesize-only は synthesize 相当
+# （facts抽出・執筆まで進む）以上、--publish-only は publish 相当以上の config が
+# 検証されていないと実行できない。満たさなければ、必要な config が未検証のまま
+# 実行が進んで途中で失敗するのを防ぐためここで止める。
+def ensure_mode_allows!(required_mode)
+  return if Config::MODE_ORDER.fetch(Config.mode) >= Config::MODE_ORDER.fetch(required_mode)
+
+  abort "pipeline.mode=#{Config.mode} では #{required_mode} 以上を要求するこのフラグは実行できません"
+end
 
 def main
   args = ARGS
@@ -92,29 +117,74 @@ def main
   FileUtils.mkdir_p(WORK_DIR)
   FileUtils.mkdir_p(DIST_DIR)
 
+  if args[:digest_only]
+    ensure_mode_allows!("digest")
+    run_digest(episode)
+    record_reached!("digest")
+    return
+  end
+
   if args[:script_only]
+    ensure_mode_allows!("synthesize")
     run_script(episode)
     return
   end
 
-  run_generate(episode) unless args[:publish_only]
-  run_publish(episode) unless args[:generate_only]
+  if args[:publish_only]
+    ensure_mode_allows!("publish")
+    run_publish(episode)
+    record_reached!("publish")
+    return
+  end
+
+  # フラグなしは pipeline.mode の上限まで、--synthesize-only は synthesize までを上限に、
+  # run_digest→run_synthesize→run_publish を順に呼ぶだけ。到達した最大 mode を最後に
+  # 一度だけ記録する（工程の途中で記録すると、スクリプト全体が完了する前に収集 window
+  # が進んでしまう）。
+  if args[:synthesize_only]
+    ensure_mode_allows!("synthesize")
+    target_mode = "synthesize"
+  else
+    target_mode = Config.mode
+  end
+
+  run_digest(episode)
+  run_synthesize(episode) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
+  run_publish(episode) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
+
+  record_reached!(target_mode)
+end
+
+def record_reached!(mode)
+  LastFetchStore.new(work_dir: WORK_DIR).record_reached!(mode: mode, at: Time.now)
+end
+
+# ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
+def run_digest(episode)
+  facts_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).digest
+
+  warn "news facts: #{facts_path}"
 end
 
 # 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。
 # 中身を確認・手直ししたうえで、フラグなしで再実行すれば既存の台本を再利用して
-# 整形〜音声合成〜publish まで続きから進む。
+# 整形〜音声合成〜publish まで続きから進む。run_digest とは別系統（writer執筆まで
+# 進めるが tts 整形・音声合成はしない）なので、収集 window の記録は行わない。
 def run_script(episode)
   script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).generate(format: false)
 
   warn "script: #{script_path}"
 end
 
-def run_generate(episode)
+# 台本執筆・tts整形・音声合成・BGM合成までを実行する。pipeline.mode: synthesize の
+# 到達点。ScriptGenerator#generate は内部で digest 相当の工程を呼ぶが、run_digest が
+# 作った中間ファイルがあれば再利用するだけなので、run_digest の後に呼んでも
+# AI を二重に呼ばない。
+def run_synthesize(episode)
   # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
   # index.html にクレジット表記を固定しているため（templates/index.html.erb 参照）、
   # 差し替え可能にはしていない。
-  bgm_path = File.expand_path(Config.get("assets.bgm_path"), BASE_DIR)
+  bgm_path = File.expand_path(Config.assets.bgm_path, BASE_DIR)
   output_path = episode_mp3_path(episode)
   used_news_output = episode_used_path(episode)
   transcript_output = episode_transcript_path(episode)
@@ -145,12 +215,6 @@ def run_publish(episode)
   transcript_path = nil unless transcript_path && File.exist?(transcript_path)
 
   Publisher.new(date: episode.date).run(mp3_path, used_path, transcript_path)
-
-  # publish が成功した実行時刻で収集 window の起点を確定する。以後の収集はこの時刻より
-  # 後の記事だけを対象にする。Publisher#run は失敗時に内部で abort するので、ここへ
-  # 到達するのは成功時のみ。起点は実行時刻(Time.now)。過去回を publish し直しても未来の
-  # window を巻き戻さないよう、回の日付ではなく実行時刻を使う。
-  ScriptGenerator.record_publish(work_dir: WORK_DIR, at: Time.now)
 end
 
 # 新しい回を公開せず、既存 archives.csv から index.html / manifest.json だけを
@@ -174,7 +238,7 @@ end
 
 # work/ の回ごとの中間ファイルを削除する。各コンポーネントが「自分が作る中間ファイルの
 # glob パターン」を申告するので、それに一致するものだけを消す（ホワイトリスト方式）。
-# 回をまたいで保持する状態（last_fetch.txt / feed_cache.json）はパターンに含まれないので
+# 回をまたいで保持する状態（last_fetch.json / feed_cache.json）はパターンに含まれないので
 # 残る。消すと過去に見た記事を新着として拾い直し、重複紹介が起きるため。
 def clean_work_dir
   patterns = ScriptGenerator.work_globs(WORK_DIR) + VoiceSynthesizer.work_globs(WORK_DIR)

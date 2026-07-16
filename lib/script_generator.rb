@@ -8,30 +8,21 @@ require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
+require_relative "internal/last_fetch_store"
 
 class ScriptGenerator
   # 始めの挨拶。前置き除去の目印にも使う。
   OPENING_GREETING = "宮舞モカです。"
 
-  # 収集 window の起点を記録する単一ファイル（date/slot 非依存）。
-  def self.last_fetch_path(work_dir) = File.join(work_dir, "last_fetch.txt")
-
   # フィードの seen_at 履歴を溜める単一ファイル（date/slot 非依存）。
-  # 回をまたいで保持する状態なので、last_fetch.txt と同じく clean 対象に含めない。
+  # 回をまたいで保持する状態なので、last_fetch.json と同じく clean 対象に含めない。
   def self.feed_cache_path(work_dir) = File.join(work_dir, "feed_cache.json")
 
   # このクラスが work/ に作る回ごとの中間ファイルの glob パターン。
-  # clean が消してよいものだけを列挙する（last_fetch.txt / feed_cache.json は含めない）。
+  # clean が消してよいものだけを列挙する（last_fetch.json / feed_cache.json は含めない）。
   def self.work_globs(work_dir)
     %w[news_*.txt script_*.txt tts_script_*.txt]
       .map { |pat| File.join(work_dir, pat) }
-  end
-
-  # 収集 window の起点を at で確定する。publish 成功時に呼ぶ。
-  # この時刻より後の記事だけが次回の収集対象になる。収集(collect)ではなく publish で
-  # 確定するので、publish しないまま何度作り直しても起点が動かず、取りこぼしが出ない。
-  def self.record_publish(work_dir:, at:)
-    File.write(last_fetch_path(work_dir), at.iso8601)
   end
 
   # @param work_dir [String] 中間ファイルの置き場
@@ -45,6 +36,7 @@ class ScriptGenerator
     @today_ja = episode.today_ja
     @greeting_date_ja = episode.greeting_date_ja
     @slot_ja = episode.slot_ja
+    @last_fetch_store = LastFetchStore.new(work_dir: work_dir)
     @feed_cache = FeedCache.new(
       path: self.class.feed_cache_path(work_dir),
       retention_days:,
@@ -53,22 +45,24 @@ class ScriptGenerator
     )
   end
 
+  # ニュースを収集し、AI選別(selector)・facts抽出(extractor)まで進めて止める。
+  # pipeline.mode: digest の停止点。facts(ニュース要約)自体が単一ツールとしても
+  # 実用的な出力になるよう、selectorの出力(タイトル一覧)より一段先まで進める。
+  # 戻り値は facts ファイルのパス。
+  def digest
+    digest_news
+    news_facts_path
+  end
+
   # 台本を生成する。format: false なら人間が読む台本(script)と used まで作って止め、
   # VOICEPEAK 向けの整形(tts_script)は行わない（--script-only 用）。
   # 戻り値は format 済みなら tts_script、未整形なら script のパス。
   #
   # 各ステップ（収集・選定・facts・script+used・整形）はそれぞれ中間ファイルの有無で
-  # 再利用を判断し、途中クラッシュ後の再実行で続きから進める。
+  # 再利用を判断し、途中クラッシュ後の再実行で続きから進める。digest 相当のステップは
+  # 中間ファイルがあれば再利用されるので、digest 実行後に呼んでも二重に AI を呼ばない。
   def generate(format: true)
-    collected_news = load_or_collect_news
-
-    # ステップ1.5: ニュース選定。全候補からソース/カテゴリごとの目安件数を
-    # AI がタイトルから選び出す。
-    selected_news = select_news(collected_news)
-
-    # ステップ2.1: ニュース抽出・整理（ファクトシート作成）。
-    # 1回の AI 呼び出しでニュースURLから WebFetch して要点をまとめる。
-    extract_news_facts(selected_news)
+    selected_news = digest_news
 
     # ステップ2.2: ライター。ファクトシートをもとに台本と used を生成する。
     write_script_and_used(selected_news)
@@ -99,41 +93,35 @@ class ScriptGenerator
   # label と description のみを持つ。RSS 収集・sources とは完全に無関係
   # （記事がどのカテゴリに属するかは selector が全体を見て判断する）。
   def category_details
-    @category_details ||= Config.get("program_details.categories").map do |cfg|
-      { label: cfg.fetch("label"), description: cfg.fetch("description") }
+    @category_details ||= Config.program_details.categories.map do |c|
+      { label: c.label, description: c.description }
     end.freeze
   end
 
   # 番組全体で紹介するニュースの合計本数の目安（メイン+補欠合計）。カテゴリ単位の
   # 最低保証はない。台本が長くなりすぎるのを防ぐための、選定ステップの AI への指示。
-  def total_news_count = @total_news_count ||= Config.get("program_details.total_news_count").to_i
+  def total_news_count = Config.program_details.total_news_count
 
   # RSS 収集元の一覧（フラットな配列）。カテゴリ区分は持たない。
-  # YAML 由来の文字列キー/値をコード内で使うシンボルに変換する
-  # （各ソースハッシュのキー、priority の値）。
-  def sources
-    @sources ||= Config.get("rss_feed_sources").map do |src|
-      src.to_h { |k, v| [k.to_sym, k == "priority" ? v.to_sym : v] }
-    end.freeze
-  end
+  def sources = Config.rss_feed_sources
 
   # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
   # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
-  def lookback_hours = @lookback_hours ||= Config.get("collect.lookback_hours").to_i
+  def lookback_hours = Config.collect.lookback_hours
 
   # FeedCache が entry を保持する日数。フィードに最後に見えた時刻(last_fetched_at)が
   # これより古い（＝フィードから既に消えている）entry だけがパージされる。
-  def retention_days = @retention_days ||= Config.get("collect.retention_days").to_i
+  def retention_days = Config.collect.retention_days
 
   # フィード取得の並列数
-  def fetch_threads = @fetch_threads ||= Config.get("collect.fetch_threads").to_i
+  def fetch_threads = Config.collect.fetch_threads
 
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
   # hnrss などは一時的に 502 を返すことがある。ニュースが揃わないまま
   # 後段の Claude 呼び出しへ進んでトークンを浪費しないよう、
   # リトライし尽くしても取れないソースがあれば実行ごと中断する。
-  def fetch_max_retries = @fetch_max_retries ||= Config.get("collect.fetch_max_retries").to_i
-  def fetch_retry_base_sec = @fetch_retry_base_sec ||= Config.get("collect.fetch_retry_base_sec").to_f
+  def fetch_max_retries = Config.collect.fetch_max_retries
+  def fetch_retry_base_sec = Config.collect.fetch_retry_base_sec
 
   def news_collected_path = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.txt")
   def news_selected_path  = File.join(@work_dir, "news_selected_#{@date_tag}_#{@slot}.txt")
@@ -142,7 +130,13 @@ class ScriptGenerator
   def tts_script_path  = File.join(@work_dir, "tts_script_#{@date_tag}_#{@slot}.txt")
   def used_news_path   = File.join(@work_dir, "news_used_#{@date_tag}_#{@slot}.txt")
 
-  def last_fetch_path = self.class.last_fetch_path(@work_dir)
+  # digest（収集→選定→facts抽出）を実行し、facts抽出で使った選定済みニュースの
+  # テキストを返す。generate はこの戻り値を使って続きのライター工程に渡す。
+  def digest_news
+    selected_news = select_news(load_or_collect_news)
+    extract_news_facts(selected_news)
+    selected_news
+  end
 
   # ステップ1.5: ニュース選定。全候補(collected_news)から、ソース/カテゴリごとの目安件数を
   # AI がタイトルだけを見て選び出す。選んだニュースの情報（title/link/date/source等）を
@@ -264,20 +258,21 @@ class ScriptGenerator
     news_body
   end
 
-  # 収集 window の起点。last_fetch.txt（＝前回 publish 時点）を使う。これは publish
-  # 成功時にしか進まないので、publish していない回を作り直す間は起点が固定され、破棄→
-  # 再収集しても前回の window 分を取りこぼさない。前回時刻が無い初回は lookback_hours
-  # ぶんさかのぼる（もともと古すぎる記事は対象にしない）。
+  # 収集 window の起点。last_fetch.json の自分の mode（pipeline.mode）キー、つまり
+  # 前回このmodeに到達した時点を使う。これは自分の mode の到達時にしか進まないので、
+  # 到達しない回を作り直す間は起点が固定され、破棄→再収集しても前回の window 分を
+  # 取りこぼさない。前回時刻が無い初回は lookback_hours ぶんさかのぼる
+  # （もともと古すぎる記事は対象にしない）。
   def collect_since
     last_fetch_time || (@now - (lookback_hours * 3600))
   end
 
-  # last_fetch.txt に記録された前回 publish 時刻。無い/壊れていれば nil。
-  # publish 成功時にのみ更新される（収集 window の起点）。
+  # last_fetch.json に記録された、自分の mode が前回到達した時刻。無い/壊れていれば nil。
   def last_fetch_time
-    return nil unless File.exist?(last_fetch_path)
+    raw = @last_fetch_store.load[Config.mode]
+    return nil unless raw
 
-    Time.iso8601(File.read(last_fetch_path).strip)
+    Time.iso8601(raw)
   rescue ArgumentError
     nil
   end
@@ -329,7 +324,7 @@ class ScriptGenerator
         Thread.current.report_on_exception = false
         while (job = queue.pop)
           src, i = job
-          warn "collecting: #{src[:name]}"
+          warn "collecting: #{src.name}"
           items_per_source[i] = collect_source(src, since)
         end
       end
@@ -349,15 +344,15 @@ class ScriptGenerator
   # HatenaBookmarks は全ソースに無条件で適用する。はてブ以外のフィードには
   # hatena:bookmarkcount が無いので、何も付与せず素通りするだけ（安全）。
   def collect_source(src, since)
-    items = @feed_cache.fetch(src[:urls] || src[:url], now: @now, since: since,
+    items = @feed_cache.fetch(src.urls || src.url, now: @now, since: since,
       extra_extractor: Internal::HatenaBookmarks)
 
     items.map do |item|
       picked = { title: item[:title], link: item[:link], date: item[:date],
-                 source: src[:name], seen_at: item[:seen_at] }
+                 source: src.name, seen_at: item[:seen_at] }
       picked[:bookmarks] = Internal::HatenaBookmarks.count_of(item[:extra]) if item[:extra]
       # 優先度付きソースの記事に印を付け、選定・ライターの取捨選択に使わせる
-      picked[:priority] = src[:priority] if src[:priority]
+      picked[:priority] = src.priority if src.priority
       picked
     end
   end
@@ -367,11 +362,11 @@ class ScriptGenerator
   # 設定された AI CLI を実行する。claude_extra_args（--allowedTools 等）は claude 固有の
   # 引数なので、bin が claude のときだけ渡す。
   def run_ai_cli(spinner_message, prompt, *claude_extra_args, model_override: nil)
-    bin = Config.get("ai_agent.bin")
-    model = model_override || Config.get("ai_agent.model")
+    bin = Config.ai_agent.bin
+    model = model_override || Config.ai_agent.model
 
     if bin == "claude"
-      effort = Config.get("ai_agent.effort")
+      effort = Config.ai_agent.effort
       run_command_with_spinner(
         "#{spinner_message} [#{bin}]",
         "AI CLI failed",
@@ -389,7 +384,7 @@ class ScriptGenerator
   end
 
   def get_model_for_role(role)
-    Config.get("ai_agent.#{role}_model", Config.get("ai_agent.model"))
+    Config.ai_agent.model_for(role)
   end
 
   def run_command_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil)

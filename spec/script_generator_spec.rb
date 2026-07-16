@@ -4,6 +4,7 @@ require "spec_helper"
 require "fileutils"
 require "tmpdir"
 require "episode"
+require "internal/last_fetch_store"
 require "script_generator"
 
 RSpec.describe ScriptGenerator do
@@ -46,6 +47,34 @@ RSpec.describe ScriptGenerator do
 
           expect { generator.send(:collect_news) }.to raise_error(SystemExit)
         end
+      end
+    end
+  end
+
+  describe "#digest" do
+    context "AI CLI mocked via Open3.capture3" do
+      it "stops after selector and extractor, without writing script/tts_script" do
+        generator = described_class.new(work_dir: work_dir, episode: episode)
+        success_status = instance_double(Process::Status, success?: true, exitstatus: 0)
+        call_count = 0
+
+        allow(Open3).to receive(:capture3) do |*_cmd, **_opts|
+          call_count += 1
+          case call_count
+          when 1
+            File.write(generator.send(:news_selected_path), "## 生成AI\n1. Title A\n   https://example.com/a\n   (meta)\n")
+          when 2
+            File.write(generator.send(:news_facts_path), "## Title A\n概要です。\n")
+          end
+          ["", "", success_status]
+        end
+
+        facts_path = generator.digest
+
+        expect(call_count).to eq(2)
+        expect(facts_path).to eq(generator.send(:news_facts_path))
+        expect(File.read(facts_path)).to include("概要です")
+        expect(File.exist?(generator.send(:script_path))).to be false
       end
     end
   end
@@ -95,6 +124,22 @@ RSpec.describe ScriptGenerator do
           expect { generator.generate }.to raise_error(SystemExit)
         end
       end
+    end
+  end
+
+  describe "#collect_since" do
+    it "uses the recorded timestamp for the current pipeline.mode" do
+      at = Time.utc(2026, 7, 14, 9, 0, 0)
+      LastFetchStore.new(work_dir: work_dir).record_reached!(mode: Config.mode, at: at)
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      expect(generator.send(:collect_since)).to eq(at)
+    end
+
+    it "falls back to lookback_hours when nothing has been recorded yet" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      expect(generator.send(:collect_since)).to eq(now - generator.send(:lookback_hours) * 3600)
     end
   end
 end
