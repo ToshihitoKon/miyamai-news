@@ -89,19 +89,19 @@ class Publisher
 
   private
 
-  def public_base = @public_base ||= Config.get("gcs.public_base")
-  def default_bucket = @default_bucket ||= Config.get("gcs.bucket")
+  def public_base = Config.gcs.public_base
+  def default_bucket = Config.gcs.bucket
 
   # archives.csv で保持するエピソード数の上限。超えた古い回は archived/ へ退避する。
-  def retention_episodes = @retention_episodes ||= Config.get("gcs.retention_episodes").to_i
+  def retention_episodes = Config.gcs.retention_episodes
 
   # 横長バナー画像。Slack のリンクプレビューと再生ページの両方で使う。
   # GCS への事前アップロードが前提（README 参照）。
-  def cover_image = @cover_image ||= Config.get("assets.cover_image")
+  def cover_image = Config.assets.cover_image
 
   # PWA(ホーム画面追加)用の正方形アイコン。manifest.json から参照する。
   # cover_image と同じく GCS への事前アップロードが前提（README 参照）。
-  def icon_image = @icon_image ||= Config.get("assets.icon_image")
+  def icon_image = Config.assets.icon_image
 
   def public_url(object)
     "#{public_base}/#{@bucket}/#{object}"

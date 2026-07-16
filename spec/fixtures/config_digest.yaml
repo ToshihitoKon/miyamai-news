@@ -1,0 +1,28 @@
+# pipeline.mode: digest の最小構成。gcs/voicepeak/mixer/assets を持たない
+# fixture で、Config.validate_for!("digest") が通ることを検証する。
+pipeline:
+  mode: digest
+
+ai_agent:
+  bin: claude
+  model: claude-opus-4-8
+  effort: xhigh
+  selector_model: claude-sonnet-5
+  extractor_model: claude-opus-4-8
+
+program_details:
+  total_news_count: 8
+  categories:
+    - label: "生成AI"
+      description: "LLM・生成AIモデルそのものに関する話題。"
+
+collect:
+  lookback_hours: 24
+  retention_days: 30
+  fetch_threads: 5
+  fetch_max_retries: 3
+  fetch_retry_base_sec: 2
+
+rss_feed_sources:
+  - name: "Hacker News (AI)"
+    url: "https://hnrss.org/newest?q=AI&points=50"
