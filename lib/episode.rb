@@ -36,4 +36,10 @@ class Episode
 
   # 台本プロンプトに埋め込む表示用の日付（例: 2026年07月12日）。
   def today_ja = @date.strftime("%Y年%m月%d日")
+
+  # 始めの挨拶に埋め込む、年を省いた表示用の日付（例: 7月12日）。
+  def greeting_date_ja = @date.strftime("%-m月%-d日")
+
+  # 始めの挨拶に埋め込む、slot の日本語表現（例: 深夜の）。
+  def slot_ja = Slot.ja_label(@slot)
 end

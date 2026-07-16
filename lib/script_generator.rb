@@ -43,6 +43,8 @@ class ScriptGenerator
     @slot = episode.slot
     @date_tag = episode.date_tag
     @today_ja = episode.today_ja
+    @greeting_date_ja = episode.greeting_date_ja
+    @slot_ja = episode.slot_ja
     @feed_cache = FeedCache.new(
       path: self.class.feed_cache_path(work_dir),
       retention_days:,
@@ -458,6 +460,8 @@ class ScriptGenerator
       selected_news:,
       news_facts:,
       today_ja: @today_ja,
+      greeting_date_ja: @greeting_date_ja,
+      slot_ja: @slot_ja,
       category_details:,
       script_path: File.expand_path(script_path),
       used_news_path: File.expand_path(used_news_path))

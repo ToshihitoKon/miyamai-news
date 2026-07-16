@@ -31,4 +31,14 @@ module Slot
   def broadcast_date(time)
     time.hour < DAY_START_HOUR ? (time.to_date - 1) : time.to_date
   end
+
+  # slot の日本語表現（台本の始めの挨拶に使う）。
+  JA_LABELS = {
+    "morning" => "朝の",
+    "afternoon" => "昼の",
+    "evening" => "夜の",
+    "midnight" => "深夜の"
+  }.freeze
+
+  def ja_label(slot) = JA_LABELS.fetch(slot)
 end
