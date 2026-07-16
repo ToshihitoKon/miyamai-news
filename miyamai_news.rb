@@ -35,7 +35,7 @@ def parse_args(argv)
     o.on("--ui-only", "index.html / manifest.json のみ再生成") { opts[:ui_only] = true }
     o.on("--digest-only", "ニュース選別・要約のみ生成して停止") { opts[:digest_only] = true }
     o.on("--script-only", "台本のみ生成して停止") { opts[:script_only] = true }
-    o.on("--generate-only", "生成のみ（dist/ に書き出して終了）") { opts[:generate_only] = true }
+    o.on("--synthesize-only", "音声合成・BGM合成のみ（dist/ に書き出して終了）") { opts[:synthesize_only] = true }
     o.on("--publish-only", "dist/ の該当回を公開のみ") { opts[:publish_only] = true }
     o.on("--date DATE", "対象の日時（例: 2026-07-10）") { |v| opts[:date] = Time.parse(v) }
     o.on("--slot SLOT", "対象の時間帯（morning/afternoon/evening）") { |v| opts[:slot] = v }
@@ -82,7 +82,7 @@ def episode_used_path(episode)       = File.join(DIST_DIR, "miyamai_news_#{episo
 # 読み仮名化前の人間可読な原稿。公開ページでは「文字起こし」として提示する。
 def episode_transcript_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.transcript.txt")
 
-# --digest-only は digest 相当、--script-only/--generate-only は synthesize 相当
+# --digest-only は digest 相当、--script-only/--synthesize-only は synthesize 相当
 # （facts抽出・執筆まで進む）以上、--publish-only は publish 相当以上の config が
 # 検証されていないと実行できない。満たさなければ、必要な config が未検証のまま
 # 実行が進んで途中で失敗するのを防ぐためここで止める。
@@ -137,11 +137,11 @@ def main
     return
   end
 
-  # フラグなしは pipeline.mode の上限まで、--generate-only は synthesize までを上限に、
+  # フラグなしは pipeline.mode の上限まで、--synthesize-only は synthesize までを上限に、
   # run_digest→run_synthesize→run_publish を順に呼ぶだけ。到達した最大 mode を最後に
   # 一度だけ記録する（工程の途中で記録すると、スクリプト全体が完了する前に収集 window
   # が進んでしまう）。
-  if args[:generate_only]
+  if args[:synthesize_only]
     ensure_mode_allows!("synthesize")
     target_mode = "synthesize"
   else
