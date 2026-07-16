@@ -29,6 +29,7 @@ def parse_args(argv)
     o.banner = "Usage: ruby miyamai_news.rb [options]"
     o.on("--config PATH", "設定ファイルのパス（既定: config.yaml）") { |v| opts[:config] = v }
     o.on("--clean", "work/ の掃除と公開済み dist/ 成果物の削除") { opts[:clean] = true }
+    o.on("--clean-archive", "archived/ 配下の退避済み成果物を完全削除") { opts[:clean_archive] = true }
     o.on("--ui-only", "index.html / manifest.json のみ再生成") { opts[:ui_only] = true }
     o.on("--script-only", "台本のみ生成して停止") { opts[:script_only] = true }
     o.on("--generate-only", "生成のみ（dist/ に書き出して終了）") { opts[:generate_only] = true }
@@ -71,6 +72,11 @@ def main
 
   if args[:clean]
     run_clean
+    return
+  end
+
+  if args[:clean_archive]
+    run_clean_archive
     return
   end
 
@@ -153,6 +159,12 @@ end
 # 即時反映したいときに使う。
 def run_republish_ui
   Publisher.new.republish_ui
+end
+
+# publish のたびに archived/ へ退避された(保持件数を超えた)成果物を完全削除する。
+# 通常の publish/generate フローには一切影響しない、独立した掃除コマンド。
+def run_clean_archive
+  Publisher.new.clean_archive
 end
 
 def run_clean

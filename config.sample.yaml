@@ -1,6 +1,11 @@
 gcs:
   bucket: your-bucket-name
   public_base: https://storage.googleapis.com
+  # archives.csv で保持するエピソード数の上限。publish のたびに、この件数を
+  # 超えた古い回を archives.csv/feed.xml の一覧から外し、GCS 上の実ファイル
+  # (mp3/used.txt/transcript.txt) は archived/ プレフィックス配下へ退避する
+  # (削除はしない。実削除は --clean-archive で行う)。
+  retention_episodes: 5
 
 assets:
   bgm_path: 古びた魔法書_気まぐれBGM工房.mp3

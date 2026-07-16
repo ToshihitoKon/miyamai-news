@@ -25,13 +25,23 @@ class Publisher
     @title  = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
   end
 
+  # 1回のエピソードを構成するファイルの拡張子。mp3 のファイル名からの
+  # 置換規則(拡張子違いの同名ファイル)を1箇所にまとめ、run/archive_episode_files
+  # など複数箇所での置換ロジックの重複・食い違いを防ぐ。新しい付随ファイルが
+  # 増えたときはここに追加すればよい。
+  EPISODE_FILE_EXTENSIONS = [".mp3", ".used.txt", ".transcript.txt"].freeze
+
+  # mp3 のファイル名から、同じ回に属する全ファイル名(mp3 自身を含む)を返す。
+  def self.episode_object_names(mp3_filename)
+    EPISODE_FILE_EXTENSIONS.map { |ext| mp3_filename.sub(/\.mp3\z/, ext) }
+  end
+
   # GCS 上のオブジェクト名は、渡された mp3 のファイル名をそのまま使う
   # （例: miyamai_news_20260710_afternoon.mp3）。日付から組み立て直すと
   # slot が落ちて朝昼夜深夜が同名で上書きし合うため、呼び出し側のファイル名を正とする。
   def run(mp3_path, used_txt_path = nil, transcript_txt_path = nil)
     filename = File.basename(mp3_path)
-    used_object = filename.sub(/\.mp3\z/, ".used.txt")
-    transcript_object = filename.sub(/\.mp3\z/, ".transcript.txt")
+    _mp3_object, used_object, transcript_object = self.class.episode_object_names(filename)
 
     upload_mp3(mp3_path, filename)
     upload_used_news(used_txt_path, used_object) if used_txt_path
@@ -68,10 +78,22 @@ class Publisher
       out: File::NULL, err: File::NULL)
   end
 
+  # archived/ プレフィックス配下(update_archives が退避させた保持件数超過分)を
+  # まとめて実削除する。publish 時の隔離処理とは独立して、明示的に呼ばれたときだけ動く。
+  # archived/ が空の場合はワイルドカードがマッチせず gcloud が失敗するが、
+  # 「削除するものが無かった」だけなので abort しない。
+  def clean_archive
+    system(["gcloud", "storage", "rm", "--recursive", "gs://#{@bucket}/archived/**"].shelljoin)
+    puts "done: cleaned gs://#{@bucket}/archived/"
+  end
+
   private
 
   def public_base = @public_base ||= Config.get("gcs.public_base")
   def default_bucket = @default_bucket ||= Config.get("gcs.bucket")
+
+  # archives.csv で保持するエピソード数の上限。超えた古い回は archived/ へ退避する。
+  def retention_episodes = @retention_episodes ||= Config.get("gcs.retention_episodes").to_i
 
   # 横長バナー画像。Slack のリンクプレビューと再生ページの両方で使う。
   # GCS への事前アップロードが前提（README 参照）。
@@ -88,6 +110,11 @@ class Publisher
   def gcloud_storage(*args)
     cmd = ["gcloud", "storage", *args].shelljoin
     system(cmd) || abort("gcloud storage failed: #{cmd}")
+  end
+
+  def gcloud_storage_mv(object)
+    cmd = ["gcloud", "storage", "mv", "gs://#{@bucket}/#{object}", "gs://#{@bucket}/archived/#{object}"].shelljoin
+    raise "gcloud storage mv failed: #{cmd}" unless system(cmd)
   end
 
   # --- mp3 ---------------------------------------------------------------
@@ -138,6 +165,8 @@ class Publisher
   # updated_at 空(date の 00:00:00Z にフォールバック)として扱う。
   # 同一 filename は上書き。1日に複数回(朝昼夜)ある場合は date が同じでも
   # filename が異なる行として共存する。降順(新しい順)で保持。
+  # retention_episodes を超えた古い回は台帳から外し、実ファイルは archived/ へ退避する
+  # (削除はしない。実削除は Publisher#clean_archive で行う)。
 
   def update_archives(filename, used_news = "")
     local_csv = File.join(Dir.tmpdir, "miyamai_archives_#{Process.pid}.csv")
@@ -152,12 +181,26 @@ class Publisher
     rows.sort_by! { |r| [r[0], r[4].to_s] }
     rows.reverse!
 
+    expired_rows = rows.drop(retention_episodes)
+    rows = rows.first(retention_episodes)
+    expired_rows.each { |r| archive_episode_files(r[1]) }
+
     CSV.open(local_csv, "w") { |csv| rows.each { |r| csv << r } }
     gcloud_storage("cp", "--content-type=text/csv", local_csv, "gs://#{@bucket}/archives.csv")
 
     rows
   ensure
     File.delete(local_csv) if local_csv && File.exist?(local_csv)
+  end
+
+  # 保持件数を超えた回の実ファイルを archived/ へ退避する。used.txt/transcript.txt は
+  # 無い回もあるので、個別の移動失敗は警告に留めて処理を継続する。
+  def archive_episode_files(filename)
+    self.class.episode_object_names(filename).each do |object|
+      gcloud_storage_mv(object)
+    rescue StandardError => e
+      warn "archive skipped: #{e.message}"
+    end
   end
 
   # 既存 archives.csv を取得する。
