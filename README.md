@@ -51,7 +51,7 @@ pipeline:
   mode: publish  # digest（既定）/ synthesize / publish
 ```
 
-必須の config キーは mode によって変わり、起動時に一括検証される（不足していれば
+必須の config セクションは mode によって変わり、起動時に一括検証される（不足していれば
 実行前にまとめてエラーになる）。`digest` だけを使うなら `gcs`/`voicepeak`/`mixer`/`assets`
 セクションは不要。
 

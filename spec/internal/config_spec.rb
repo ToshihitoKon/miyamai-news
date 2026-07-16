@@ -38,38 +38,25 @@ RSpec.describe Config do
         expect { Config.validate_for!("digest") }.not_to raise_error
       end
 
-      it "raises MissingKeyError for synthesize, listing the missing keys" do
-        expect { Config.validate_for!("synthesize") }.to raise_error(Config::MissingKeyError, /voicepeak\.bin/)
+      it "raises MissingKeyError for synthesize, listing the missing sections" do
+        expect { Config.validate_for!("synthesize") }.to raise_error(Config::MissingKeyError, /voicepeak/)
       end
 
-      it "raises MissingKeyError for publish, listing the missing keys" do
-        expect { Config.validate_for!("publish") }.to raise_error(Config::MissingKeyError, /gcs\.bucket/)
+      it "raises MissingKeyError for publish, listing the missing sections" do
+        expect { Config.validate_for!("publish") }.to raise_error(Config::MissingKeyError, /gcs/)
       end
     end
 
-    it "accepts ai_agent.model as a fallback when role-specific models are absent" do
+    it "raises MissingKeyError when a required section is entirely absent" do
       Config.path = File.expand_path("../fixtures/config_digest.yaml", __dir__)
       data = YAML.safe_load_file(Config.path)
-      data["ai_agent"].delete("selector_model")
+      data.delete("ai_agent")
       Dir.mktmpdir do |dir|
         path = File.join(dir, "config.yaml")
         File.write(path, YAML.dump(data))
         Config.path = path
 
-        expect { Config.validate_for!("digest") }.not_to raise_error
-      end
-    end
-
-    it "requires ai_agent.effort only when ai_agent.bin is claude" do
-      Config.path = File.expand_path("../fixtures/config_digest.yaml", __dir__)
-      data = YAML.safe_load_file(Config.path)
-      data["ai_agent"].delete("effort")
-      Dir.mktmpdir do |dir|
-        path = File.join(dir, "config.yaml")
-        File.write(path, YAML.dump(data))
-        Config.path = path
-
-        expect { Config.validate_for!("digest") }.to raise_error(Config::MissingKeyError, /ai_agent\.effort/)
+        expect { Config.validate_for!("digest") }.to raise_error(Config::MissingKeyError, /ai_agent/)
       end
     end
   end

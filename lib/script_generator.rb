@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "time"
-require "json"
 require "open3"
 require "fileutils"
 require "tty-spinner"
@@ -9,16 +8,11 @@ require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
+require_relative "last_fetch_store"
 
 class ScriptGenerator
   # 始めの挨拶。前置き除去の目印にも使う。
   OPENING_GREETING = "宮舞モカです。"
-
-  # 収集 window の起点を mode 別に記録するファイル（date/slot 非依存）。
-  def self.last_fetch_path(work_dir) = File.join(work_dir, "last_fetch.json")
-
-  # 旧形式(単一 ISO8601 時刻)の記録ファイル。存在すれば起動時に自動移行する。
-  def self.legacy_last_fetch_path(work_dir) = File.join(work_dir, "last_fetch.txt")
 
   # フィードの seen_at 履歴を溜める単一ファイル（date/slot 非依存）。
   # 回をまたいで保持する状態なので、last_fetch.json と同じく clean 対象に含めない。
@@ -31,39 +25,6 @@ class ScriptGenerator
       .map { |pat| File.join(work_dir, pat) }
   end
 
-  # mode に到達したことを at で記録する。到達した mode 以下の全ての下位 mode も
-  # 同時に同じ時刻へ進める。例えば publish 到達時は digest/synthesize/publish の
-  # 3キー全てを更新する。上位 mode を回した後に下位 mode 単体を回すと、既に処理済みの
-  # 記事が選定 AI の対象に不要に再度上がってしまうため、これを避ける。
-  def self.record_reached!(work_dir:, mode:, at:)
-    data = load_last_fetch(work_dir)
-    reached_order = Config::MODE_ORDER.fetch(mode)
-    Config::MODE_ORDER.each { |m, order| data[m] = at.iso8601 if order <= reached_order }
-    File.write(last_fetch_path(work_dir), JSON.generate(data))
-  end
-
-  # mode 別の到達時刻を読み込む。last_fetch.json が無く旧 last_fetch.txt が残っていれば
-  # 全 mode キーへ同じ時刻をコピーして自動移行する。
-  def self.load_last_fetch(work_dir)
-    json_path = last_fetch_path(work_dir)
-    return JSON.parse(File.read(json_path)) if File.exist?(json_path)
-
-    migrate_legacy_last_fetch(work_dir) || {}
-  end
-
-  def self.migrate_legacy_last_fetch(work_dir)
-    legacy_path = legacy_last_fetch_path(work_dir)
-    return nil unless File.exist?(legacy_path)
-
-    at = Time.iso8601(File.read(legacy_path).strip)
-    data = Config::MODE_ORDER.keys.to_h { |m| [m, at.iso8601] }
-    File.write(last_fetch_path(work_dir), JSON.generate(data))
-    File.delete(legacy_path)
-    data
-  rescue ArgumentError
-    nil # 壊れた旧ファイルは移行せず残す（last_fetch_time 側で安全側にフォールバックする）
-  end
-
   # @param work_dir [String] 中間ファイルの置き場
   # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
   def initialize(work_dir:, episode:)
@@ -73,6 +34,7 @@ class ScriptGenerator
     @slot = episode.slot
     @date_tag = episode.date_tag
     @today_ja = episode.today_ja
+    @last_fetch_store = LastFetchStore.new(work_dir: work_dir)
     @feed_cache = FeedCache.new(
       path: self.class.feed_cache_path(work_dir),
       retention_days:,
@@ -312,7 +274,7 @@ class ScriptGenerator
 
   # last_fetch.json に記録された、自分の mode が前回到達した時刻。無い/壊れていれば nil。
   def last_fetch_time
-    raw = self.class.load_last_fetch(@work_dir)[Config.mode]
+    raw = @last_fetch_store.load[Config.mode]
     return nil unless raw
 
     Time.iso8601(raw)

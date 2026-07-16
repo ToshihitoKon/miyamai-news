@@ -4,6 +4,7 @@ require "spec_helper"
 require "fileutils"
 require "tmpdir"
 require "episode"
+require "last_fetch_store"
 require "script_generator"
 
 RSpec.describe ScriptGenerator do
@@ -126,61 +127,10 @@ RSpec.describe ScriptGenerator do
     end
   end
 
-  describe ".record_reached!" do
-    it "advances the reached mode and every lower mode to the same timestamp" do
-      at = Time.utc(2026, 7, 14, 9, 0, 0)
-
-      described_class.record_reached!(work_dir: work_dir, mode: "synthesize", at: at)
-
-      data = described_class.load_last_fetch(work_dir)
-      expect(data["digest"]).to eq(at.iso8601)
-      expect(data["synthesize"]).to eq(at.iso8601)
-      expect(data).not_to have_key("publish")
-    end
-
-    it "does not roll back a higher mode when a lower mode is reached later" do
-      earlier = Time.utc(2026, 7, 14, 9, 0, 0)
-      later = Time.utc(2026, 7, 14, 10, 0, 0)
-      described_class.record_reached!(work_dir: work_dir, mode: "publish", at: earlier)
-
-      described_class.record_reached!(work_dir: work_dir, mode: "digest", at: later)
-
-      data = described_class.load_last_fetch(work_dir)
-      expect(data["digest"]).to eq(later.iso8601)
-      expect(data["publish"]).to eq(earlier.iso8601)
-    end
-  end
-
-  describe ".load_last_fetch" do
-    it "returns an empty hash when neither last_fetch.json nor the legacy file exists" do
-      expect(described_class.load_last_fetch(work_dir)).to eq({})
-    end
-
-    it "migrates the legacy last_fetch.txt into last_fetch.json for every mode" do
-      at = Time.utc(2026, 7, 10, 8, 0, 0)
-      legacy_path = described_class.legacy_last_fetch_path(work_dir)
-      File.write(legacy_path, at.iso8601)
-
-      data = described_class.load_last_fetch(work_dir)
-
-      expect(data.values).to all(eq(at.iso8601))
-      expect(File.exist?(legacy_path)).to be false
-      expect(File.exist?(described_class.last_fetch_path(work_dir))).to be true
-    end
-
-    it "leaves a corrupt legacy file untouched and returns an empty hash" do
-      legacy_path = described_class.legacy_last_fetch_path(work_dir)
-      File.write(legacy_path, "not-a-timestamp")
-
-      expect(described_class.load_last_fetch(work_dir)).to eq({})
-      expect(File.exist?(legacy_path)).to be true
-    end
-  end
-
   describe "#collect_since" do
     it "uses the recorded timestamp for the current pipeline.mode" do
       at = Time.utc(2026, 7, 14, 9, 0, 0)
-      described_class.record_reached!(work_dir: work_dir, mode: Config.mode, at: at)
+      LastFetchStore.new(work_dir: work_dir).record_reached!(mode: Config.mode, at: at)
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       expect(generator.send(:collect_since)).to eq(at)

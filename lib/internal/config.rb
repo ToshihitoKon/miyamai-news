@@ -19,46 +19,14 @@ module Config
   #   publish:    synthesize の続きから GCS publish まで（フルパイプライン）。
   MODE_ORDER = { "digest" => 0, "synthesize" => 1, "publish" => 2 }.freeze
 
-  # 各 mode で新たに必須になる config キーの差分。累積required_keys_forで合算する。
-  # 文字列は単独で必須、配列は「いずれか1つあればよい」候補（ai_agent.model への
-  # フォールバックがある role 別モデル指定などに使う）。
-  REQUIRED_KEYS_DELTA = {
-    "digest" => [
-      "ai_agent.bin",
-      "ai_agent.model",
-      %w[ai_agent.selector_model ai_agent.model],
-      %w[ai_agent.extractor_model ai_agent.model],
-      "program_details.categories",
-      "program_details.total_news_count",
-      "rss_feed_sources",
-      "collect.lookback_hours",
-      "collect.retention_days",
-      "collect.fetch_threads",
-      "collect.fetch_max_retries",
-      "collect.fetch_retry_base_sec",
-    ],
-    "synthesize" => [
-      %w[ai_agent.writer_model ai_agent.model],
-      %w[ai_agent.formatter_model ai_agent.model],
-      "voicepeak.bin",
-      "voicepeak.interval_sec",
-      "voicepeak.max_retries",
-      "voicepeak.retry_base_sec",
-      "voicepeak.timeout_sec",
-      "voicepeak.chunk_gap_sec",
-      "mixer.bgm_volume",
-      "mixer.intro_sec",
-      "mixer.tail_sec",
-      "mixer.fade_sec",
-      "assets.bgm_path",
-    ],
-    "publish" => [
-      "gcs.public_base",
-      "gcs.bucket",
-      "gcs.retention_episodes",
-      "assets.cover_image",
-      "assets.icon_image",
-    ],
+  # 各 mode で新たに必須になる config のトップレベルセクション名の差分。
+  # セクション単位で「存在するか」だけを見る（配列要素やロール別モデルの
+  # フォールバックのような細かい候補判定はしない）。セクション内の個々のキーの
+  # 欠損は、既存の Config.get(default付き) や各コンポーネントの参照に委ねる。
+  REQUIRED_SECTIONS_DELTA = {
+    "digest" => %w[ai_agent program_details rss_feed_sources collect],
+    "synthesize" => %w[voicepeak mixer assets],
+    "publish" => %w[gcs],
   }.freeze
 
   class << self
@@ -90,32 +58,24 @@ module Config
       get("pipeline.mode", "digest")
     end
 
-    # target_mode までに必須の config キーが揃っているか一括検証する。
+    # target_mode までに必須のトップレベルセクションが揃っているか一括検証する。
     # 欠けていれば起動直後にまとめて MissingKeyError を出し、実行途中で中途半端に
     # 失敗するのを防ぐ。
     def validate_for!(target_mode)
       raise ArgumentError, "unknown pipeline mode: #{target_mode}" unless MODE_ORDER.key?(target_mode)
 
-      missing = required_keys_for(target_mode).reject { |key| present?(key) }
-      missing << "ai_agent.effort" if get("ai_agent.bin", "claude") == "claude" && !present?("ai_agent.effort")
-
+      missing = required_sections_for(target_mode).reject { |section| data.key?(section) }
       return if missing.empty?
 
-      labels = missing.map { |key| Array(key).join(" or ") }
       raise MissingKeyError,
-        "missing config keys for pipeline.mode=#{target_mode}:\n" + labels.map { |l| "  - #{l}" }.join("\n")
+        "missing config sections for pipeline.mode=#{target_mode}:\n" + missing.map { |s| "  - #{s}" }.join("\n")
     end
 
     private
 
-    # target_mode 自身とそれより手前の全 mode の必須キーを合算する（加算方式）。
-    def required_keys_for(target_mode)
-      MODE_ORDER[target_mode].downto(0).flat_map { |order| REQUIRED_KEYS_DELTA.fetch(MODE_ORDER.key(order)) }
-    end
-
-    # 文字列キーは単独で必須、配列（候補リスト）はいずれか1つ存在すればよい。
-    def present?(key_or_candidates)
-      Array(key_or_candidates).any? { |key| !dig(key).nil? }
+    # target_mode 自身とそれより手前の全 mode の必須セクションを合算する（加算方式）。
+    def required_sections_for(target_mode)
+      MODE_ORDER[target_mode].downto(0).flat_map { |order| REQUIRED_SECTIONS_DELTA.fetch(MODE_ORDER.key(order)) }
     end
 
     def dig(dotted_key)

@@ -63,6 +63,7 @@ unless ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
 end
 
 require_relative "lib/episode"
+require_relative "lib/last_fetch_store"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"
 require_relative "lib/audio_mixer"
@@ -122,46 +123,54 @@ def main
   if args[:publish_only]
     ensure_mode_allows!("publish")
     run_publish(episode)
+    record_reached!("publish")
     return
   end
 
+  # フラグなしは pipeline.mode の上限まで、--generate-only は synthesize までを上限に、
+  # run_digest→run_synthesize→run_publish を順に呼ぶだけ。到達した最大 mode を最後に
+  # 一度だけ記録する（工程の途中で記録すると、スクリプト全体が完了する前に収集 window
+  # が進んでしまう）。
   if args[:generate_only]
     ensure_mode_allows!("synthesize")
-    run_generate(episode)
-    return
+    target_mode = "synthesize"
+  else
+    target_mode = Config.mode
   end
 
-  # フラグなし実行は pipeline.mode の上限まで自動的に進む。
-  case Config.mode
-  when "digest"
-    run_digest_only(episode)
-  when "synthesize"
-    run_generate(episode)
-  when "publish"
-    run_generate(episode)
-    run_publish(episode)
-  end
+  run_digest(episode)
+  run_synthesize(episode) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
+  run_publish(episode) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
+
+  record_reached!(target_mode)
 end
 
-# ニュース収集・AI選別・facts抽出までで停止する。pipeline.mode: digest のフラグなし
-# 実行に対応する（--script-only とは異なり、facts抽出止まりで台本執筆までは進まない）。
-def run_digest_only(episode)
+def record_reached!(mode)
+  LastFetchStore.new(work_dir: WORK_DIR).record_reached!(mode: mode, at: Time.now)
+end
+
+# ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
+def run_digest(episode)
   facts_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).digest
-  ScriptGenerator.record_reached!(work_dir: WORK_DIR, mode: "digest", at: Time.now)
 
   warn "news facts: #{facts_path}"
 end
 
 # 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。
 # 中身を確認・手直ししたうえで、フラグなしで再実行すれば既存の台本を再利用して
-# 整形〜音声合成〜publish まで続きから進む。
+# 整形〜音声合成〜publish まで続きから進む。run_digest とは別系統（writer執筆まで
+# 進めるが tts 整形・音声合成はしない）なので、収集 window の記録は行わない。
 def run_script(episode)
   script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).generate(format: false)
 
   warn "script: #{script_path}"
 end
 
-def run_generate(episode)
+# 台本執筆・tts整形・音声合成・BGM合成までを実行する。pipeline.mode: synthesize の
+# 到達点。ScriptGenerator#generate は内部で digest 相当の工程を呼ぶが、run_digest が
+# 作った中間ファイルがあれば再利用するだけなので、run_digest の後に呼んでも
+# AI を二重に呼ばない。
+def run_synthesize(episode)
   # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
   # index.html にクレジット表記を固定しているため（templates/index.html.erb 参照）、
   # 差し替え可能にはしていない。
@@ -180,9 +189,6 @@ def run_generate(episode)
   FileUtils.cp(generator.used_news_file, used_news_output)
   FileUtils.cp(generator.script_file, transcript_output)
 
-  # synthesize に到達した実行時刻で収集 window の起点を確定する（digest分も同時に進む）。
-  ScriptGenerator.record_reached!(work_dir: WORK_DIR, mode: "synthesize", at: Time.now)
-
   warn "audio: #{output_path}"
   warn "used news: #{used_news_output}"
   warn "transcript: #{transcript_output}"
@@ -199,13 +205,6 @@ def run_publish(episode)
   transcript_path = nil unless transcript_path && File.exist?(transcript_path)
 
   Publisher.new(date: episode.date).run(mp3_path, used_path, transcript_path)
-
-  # publish が成功した実行時刻で収集 window の起点を確定する（digest/synthesize分も
-  # 同時に進む）。以後の収集はこの時刻より後の記事だけを対象にする。Publisher#run は
-  # 失敗時に内部で abort するので、ここへ到達するのは成功時のみ。起点は実行時刻
-  # (Time.now)。過去回を publish し直しても未来の window を巻き戻さないよう、回の
-  # 日付ではなく実行時刻を使う。
-  ScriptGenerator.record_reached!(work_dir: WORK_DIR, mode: "publish", at: Time.now)
 end
 
 # 新しい回を公開せず、既存 archives.csv から index.html / manifest.json だけを
