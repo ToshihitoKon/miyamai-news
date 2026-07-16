@@ -16,6 +16,12 @@ class VoiceSynthesizer
   # 挿入され、ここで検出・除去したうえで直前チャンクの後に長めの無音を挟む。
   INTERVAL_TAG = /\[interval:(mid|long)\]/
 
+  # 本文を「直後にタグが無ければ末尾まで、あればタグの手前まで」の非貪欲マッチで
+  # 繰り返し切り出す。各マッチは [そのテキスト片, 直後のタグ名(無ければnil)] という
+  # 組になるため、split の交互配列のように「奇数番目がテキストで偶数番目がタグ」
+  # といった順序の暗黙知に頼らずに済む。
+  TEXT_WITH_FOLLOWING_TAG = /(.*?)(?:#{INTERVAL_TAG}|\z)/m
+
   # このクラスが work/ に作る回ごとの中間ファイル/ディレクトリの glob パターン。
   # clean が消してよいものを列挙する（wav_* はチャンク wav を入れるディレクトリ）。
   def self.work_globs(work_dir)
@@ -165,9 +171,11 @@ class VoiceSynthesizer
   def split_chunks(script)
     normalized = script.gsub(/\r\n?/, "\n")
 
-    # キャプチャ付き split で [text, tag, text, tag, ..., text] の交互配列にする。
-    parts = normalized.split(INTERVAL_TAG)
-    text_and_pause = parts.each_slice(2).map { |text, tag| [text, tag&.to_sym] }
+    # 各要素が [そのテキスト片, 直後のタグ(あれば:mid/:long)] の組になる。
+    # 末尾には空文字列＋タグなしの組が必ず1つ余分に付くため取り除く。
+    text_and_pause = normalized.scan(TEXT_WITH_FOLLOWING_TAG)
+      .map { |text, tag| [text, tag&.to_sym] }
+    text_and_pause.pop if text_and_pause.last == ["", nil]
 
     chunks = []
     text_and_pause.each do |text, pause|
