@@ -11,7 +11,7 @@ gcs:
   # 公開 URL のベース。通常はこのままでよい。
   public_base: https://storage.googleapis.com
   # archives.csv で保持するエピソード数の上限。
-  retention_episodes: 30
+  retention_episodes: 5
 
 # 音声・ページに使うアセットのパス。
 assets:

@@ -45,11 +45,11 @@ RSpec.describe Publisher do
   end
 
   describe "#run with retention_episodes" do
-    # spec/fixtures/config.yaml の gcs.retention_episodes: 30 を前提に、
-    # 既存 archives.csv へ 30 件の過去回を仕込み、保持件数超過分が
+    # spec/fixtures/config.yaml の gcs.retention_episodes: 5 を前提に、
+    # 既存 archives.csv へ 5 件の過去回を仕込み、保持件数超過分が
     # archived/ へ退避されることを検証する。
     let(:existing_rows) do
-      (1..30).map do |n|
+      (1..5).map do |n|
         date = Date.new(2026, 6, 1) + n
         fname = "miyamai_news_#{date.strftime('%Y%m%d')}_morning.mp3"
         [date.to_s, fname, "宮舞モカの技術ニュース #{date}", "", "#{date}T00:00:00Z"]
