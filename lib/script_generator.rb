@@ -8,7 +8,7 @@ require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
-require_relative "last_fetch_store"
+require_relative "internal/last_fetch_store"
 
 class ScriptGenerator
   # 始めの挨拶。前置き除去の目印にも使う。

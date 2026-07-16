@@ -39,10 +39,11 @@ module Config
     end
 
     # config.yaml のパスを差し替える（--config CLI引数・テストのfixture指定用）。
-    # 読み込み済みの値をキャッシュしていれば破棄し、次のアクセスで新しいパスから読み直す。
+    # 差し替えた時点で新しいパスから即座に読み直す（遅延させない。以前は次回アクセス
+    # 時まで遅延させていたが、path= の直後に読み込みエラーへ気づけた方が分かりやすい）。
     def path=(new_path)
       @path = new_path
-      @app_config = nil
+      @app_config = load_app_config
     end
 
     def mode = app_config.pipeline.mode
@@ -77,8 +78,13 @@ module Config
       MODE_ORDER[target_mode].downto(0).flat_map { |order| REQUIRED_SECTIONS_DELTA.fetch(MODE_ORDER.key(order)) }
     end
 
+    # path= を経ていない初回アクセス時だけ、DEFAULT_PATH から遅延ロードする。
     def app_config
-      @app_config ||= Internal::Config::AppConfig.new(raw_data)
+      @app_config ||= load_app_config
+    end
+
+    def load_app_config
+      Internal::Config::AppConfig.new(raw_data)
     rescue Dry::Struct::Error => e
       raise InvalidConfigError, "invalid config: #{e.message}"
     end

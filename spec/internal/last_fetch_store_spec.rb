@@ -3,7 +3,7 @@
 require "spec_helper"
 require "fileutils"
 require "tmpdir"
-require "last_fetch_store"
+require "internal/last_fetch_store"
 
 RSpec.describe LastFetchStore do
   let(:work_dir) { Dir.mktmpdir }

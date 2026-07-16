@@ -65,7 +65,7 @@ unless ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
 end
 
 require_relative "lib/episode"
-require_relative "lib/last_fetch_store"
+require_relative "lib/internal/last_fetch_store"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"
 require_relative "lib/audio_mixer"

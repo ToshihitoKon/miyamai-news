@@ -4,7 +4,7 @@ require "spec_helper"
 require "fileutils"
 require "tmpdir"
 require "episode"
-require "last_fetch_store"
+require "internal/last_fetch_store"
 require "script_generator"
 
 RSpec.describe ScriptGenerator do

@@ -66,9 +66,8 @@ RSpec.describe Config do
       Dir.mktmpdir do |dir|
         path = File.join(dir, "config.yaml")
         File.write(path, YAML.dump(data))
-        Config.path = path
 
-        expect { Config.validate_for!("publish") }.to raise_error(Config::InvalidConfigError)
+        expect { Config.path = path }.to raise_error(Config::InvalidConfigError)
       end
     end
   end

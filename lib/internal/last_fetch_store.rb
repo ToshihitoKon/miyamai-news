@@ -2,7 +2,7 @@
 
 require "time"
 require "json"
-require_relative "internal/config"
+require_relative "config"
 
 # 収集 window の起点（各 pipeline.mode が前回到達した時刻）を work/last_fetch.json に
 # 永続化する。ScriptGenerator の収集ロジックとは無関係な、単なる記録の読み書きに

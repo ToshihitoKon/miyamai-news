@@ -29,8 +29,7 @@ module Internal
 
     class Voicepeak < Base
       attribute :bin, Types::Strict::String
-      # YAMLでは秒数を整数(1, 10等)で書くことが多いため、Integer→Floatの
-      # コアジョンを許容する（Strict::Floatだと1.0のような小数表記を強制してしまう）。
+      # YAMLで秒数を整数(1, 10等)で書けるようにCoercible::Floatを使う。
       attribute :interval_sec, Types::Coercible::Float
       attribute :max_retries, Types::Strict::Integer
       attribute :retry_base_sec, Types::Coercible::Float
@@ -41,8 +40,8 @@ module Internal
     class AiAgent < Base
       attribute :bin, Types::Strict::String
       attribute :model, Types::Strict::String
-      # claude固有の引数。bin が claude 以外の場合は使われないため任意（config.sample.yaml
-      # の agy 設定例のように、claude 以外の bin では effort を書かない）。
+      # run_ai_cli が bin == "claude" のときだけ参照する。他の bin では
+      # 書かれていても無視されるため任意属性にする。
       attribute? :effort, Types::Strict::String
       attribute? :selector_model, Types::Strict::String
       attribute? :extractor_model, Types::Strict::String
