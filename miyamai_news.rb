@@ -268,7 +268,9 @@ def clean_published_dist
   publisher = Publisher.new
   mp3s.each do |mp3|
     if publisher.object_exists?(File.basename(mp3))
-      FileUtils.rm_f([mp3, mp3.sub(/\.mp3\z/, ".used.txt"), mp3.sub(/\.mp3\z/, ".transcript.txt")])
+      dir = File.dirname(mp3)
+      episode_files = Publisher.episode_object_names(File.basename(mp3)).map { |name| File.join(dir, name) }
+      FileUtils.rm_f(episode_files)
       warn "published, deleted: #{mp3}"
     else
       warn "unpublished, kept: #{mp3}"

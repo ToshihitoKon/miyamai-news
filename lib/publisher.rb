@@ -10,6 +10,7 @@ require "open3"
 require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/command_error"
+require_relative "slot"
 
 class Publisher
   # サイト全体を指す固定の番組名。archives.csv の title 列（回ごとに日付が付く）とは別物。
@@ -301,6 +302,7 @@ class Publisher
     end.join("\n")
 
     TemplateRenderer.render("feed.xml", self,
+      program_name: PROGRAM_NAME,
       feed_url: public_url("feed.xml"),
       page_url: public_url("index.html"),
       updated: feed_datetime(rows.first[0], rows.first[4]), # 降順なので先頭が最新
@@ -372,12 +374,7 @@ class Publisher
   # ファイル名末尾の slot(_morning/_afternoon/_evening/_midnight)を日本語ラベルにする。
   # 1日に複数回ある回を UI やフィードで見分けるための表示用。
   # slot を持たない旧ファイル名は空文字を返す(後方互換)。
-  SLOT_LABELS = { "morning" => "朝", "afternoon" => "昼", "evening" => "夜", "midnight" => "深夜" }.freeze
-
-  def slot_label(filename)
-    m = filename.match(/_(morning|afternoon|evening|midnight)\.mp3\z/)
-    m ? SLOT_LABELS.fetch(m[1]) : ""
-  end
+  def slot_label(filename) = Slot.ja_label_from_filename(filename)
 
   # "YYYY-MM-DD" に slot ラベルを添えた表示用の日付。slot が無ければ日付のみ。
   def date_with_slot(date, filename)
