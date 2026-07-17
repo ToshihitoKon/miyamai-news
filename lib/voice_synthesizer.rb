@@ -133,12 +133,18 @@ class VoiceSynthesizer
   # kill してから RuntimeError を投げる（呼び出し元のリトライで再試行される）。
   def run_voicepeak(text, out_path)
     # 新しいプロセスグループで起動し、ハング時に子孫ごとまとめて kill できるようにする。
-    stdin, _stdout, stderr, wait_thr = Open3.popen3(
+    stdin, stdout, stderr, wait_thr = Open3.popen3(
       voicepeak_bin, "--narrator", NARRATOR, "--say", text, "--out", out_path,
       pgroup: true
     )
     stdin.close
     pgid = Process.getpgid(wait_thr.pid)
+
+    # stdout/stderr を join 前に別スレッドで読み進める。読まずに join を待つと、
+    # 出力がパイプバッファ（約64KB）を超えた際に子プロセスの write がブロックし、
+    # 正常動作中でも timeout_sec 超過による偽ハング判定を招くため。
+    stdout_reader = Thread.new { stdout.read }
+    stderr_reader = Thread.new { stderr.read }
 
     unless wait_thr.join(timeout_sec)
       kill_process_group(pgid)
@@ -146,10 +152,13 @@ class VoiceSynthesizer
     end
 
     status = wait_thr.value
-    err = stderr.read
+    err = stderr_reader.value
     raise "VOICEPEAK synthesis failed: #{Internal::CommandError.tail(err)}" unless status.success?
     raise "VOICEPEAK did not produce an audio file: #{out_path}" unless File.exist?(out_path)
   ensure
+    stdout_reader&.kill
+    stderr_reader&.kill
+    stdout&.close
     stderr&.close
   end
 
