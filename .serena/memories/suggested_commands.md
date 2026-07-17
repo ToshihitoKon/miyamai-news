@@ -4,7 +4,7 @@
 ```sh
 ruby miyamai_news.rb                  # 生成→公開まで一気通し
 ruby miyamai_news.rb --script-only    # 台本のみ生成して停止（work/に書き出す、確認・手直し用）
-ruby miyamai_news.rb --generate-only  # 生成のみ（dist/に書き出して終了、音声合成まで含む）
+ruby miyamai_news.rb --synthesize-only  # 音声合成・BGM合成のみ（dist/に書き出して終了）
 ruby miyamai_news.rb --publish-only   # dist/の該当回を公開のみ
 ruby miyamai_news.rb --clean          # work/を掃除し、公開済みのdist/成果物を削除
 ruby miyamai_news.rb --ui-only        # 新しい回を公開せずindex.html/manifest.jsonだけ再生成
