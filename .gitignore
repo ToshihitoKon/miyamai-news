@@ -8,10 +8,6 @@
 *.webp
 *.webm
 
-# 生成物
-/feed.xml
-/index.html
-
 # 中間ファイル・成果物（ディレクトリ構造だけ .gitkeep で残す）
 /work/*
 !/work/.gitkeep
