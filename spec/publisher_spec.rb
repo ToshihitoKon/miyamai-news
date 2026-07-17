@@ -25,17 +25,18 @@ RSpec.describe Publisher do
     it "uploads mp3/used/transcript and writes archives/index/feed/manifest via gcloud storage, without a real gcloud" do
       publisher = described_class.new(date: Date.new(2026, 7, 14))
       commands = []
+      # 初回公開シナリオ: archives.csv はまだ GCS に存在しない(object_exists? が false)。
+      no_objects_status = instance_double(Process::Status, success?: false)
+      allow(Open3).to receive(:capture3).and_return(["", "One or more URLs matched no objects.", no_objects_status])
 
       allow(publisher).to receive(:system) do |*args, **_opts|
-        joined = args.map(&:to_s).join(" ")
-        commands << joined
-        # 初回公開シナリオ: archives.csv はまだ GCS に存在しない
-        joined.include?(" ls ") ? false : true
+        commands << args.map(&:to_s).join(" ")
+        true
       end
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(commands).to include(a_string_matching(%r{gcloud storage ls gs://.*archives\.csv}))
+      expect(Open3).to have_received(:capture3).with("gcloud", "storage", "ls", a_string_matching(/archives\.csv/))
       expect(commands).to include(a_string_matching(/#{Regexp.escape(File.basename(mp3_path))}/))
       expect(commands).to include(a_string_matching(/archives\.csv/))
       expect(commands).to include(a_string_matching(/index\.html/))
@@ -57,11 +58,17 @@ RSpec.describe Publisher do
     end
     let(:oldest_fname) { existing_rows.first[1] }
 
+    def stub_archives_exist(exists: true)
+      status = instance_double(Process::Status, success?: exists)
+      err = exists ? "" : "One or more URLs matched no objects."
+      allow(Open3).to receive(:capture3).and_return(["", err, status])
+    end
+
     def stub_gcloud_with_existing_archives(publisher, existing_rows)
+      stub_archives_exist(exists: true)
       commands = []
       allow(publisher).to receive(:system) do |*args, **_opts|
-        joined = args.map(&:to_s).join(" ")
-        commands << joined
+        commands << args.map(&:to_s).join(" ")
 
         # fetch_existing_archives の `cp gs://.../archives.csv <local_csv>` 呼び出しを
         # 検知し、ダウンロード先の一時ファイルへ既存台帳を書き込んでおく。
@@ -69,7 +76,7 @@ RSpec.describe Publisher do
           CSV.open(args[4], "w") { |csv| existing_rows.each { |r| csv << r } }
         end
 
-        !joined.include?(" ls ") || joined.include?("archives.csv")
+        true
       end
       commands
     end
@@ -87,28 +94,57 @@ RSpec.describe Publisher do
 
     it "does not move anything when within the retention limit" do
       publisher = described_class.new(date: Date.new(2026, 7, 14))
+      stub_archives_exist(exists: false)
       commands = []
 
       allow(publisher).to receive(:system) do |*args, **_opts|
-        joined = args.map(&:to_s).join(" ")
-        commands << joined
-        joined.include?(" ls ") ? false : true
+        commands << args.map(&:to_s).join(" ")
+        true
       end
 
       publisher.run(mp3_path, used_path, transcript_path)
 
       expect(commands).not_to include(a_string_matching(/gcloud storage mv/))
     end
+
+    it "aborts instead of overwriting the ledger when checking for it hits a transient gcloud failure" do
+      publisher = described_class.new(date: Date.new(2026, 7, 14))
+      status = instance_double(Process::Status, success?: false)
+      allow(Open3).to receive(:capture3).and_return(["", "gcloud crashed: connection reset", status])
+      allow(publisher).to receive(:system).and_return(true)
+
+      expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(/transient failure/)
+      expect(publisher).not_to have_received(:system).with(*%w[gcloud storage cp], a_string_matching(/archives\.csv/))
+    end
   end
 
   describe "#clean_archive" do
+    let(:publisher) { described_class.new }
+    let(:success_status) { instance_double(Process::Status, success?: true) }
+    let(:failure_status) { instance_double(Process::Status, success?: false) }
+
     it "deletes everything under archived/ via gcloud storage rm" do
-      publisher = described_class.new
-      allow(publisher).to receive(:system).and_return(true)
+      allow(Open3).to receive(:capture3).and_return(["", "", success_status])
 
       publisher.clean_archive
 
-      expect(publisher).to have_received(:system).with(a_string_matching(%r{gcloud storage rm --recursive gs://\S*/archived/}))
+      expect(Open3).to have_received(:capture3).with(
+        "gcloud", "storage", "rm", "--recursive", a_string_matching(%r{gs://\S*/archived/})
+      )
+    end
+
+    it "does not abort when archived/ is empty (no matching objects)" do
+      err = "ERROR: (gcloud.storage.rm) The following URLs matched no objects or files:\n"
+      allow(Open3).to receive(:capture3).and_return(["", err, failure_status])
+
+      expect { publisher.clean_archive }.not_to raise_error
+    end
+
+    it "aborts on a transient gcloud failure instead of reporting success" do
+      err = "ERROR: gcloud crashed (ProxyError): Max retries exceeded\n"
+      allow(Open3).to receive(:capture3).and_return(["", err, failure_status])
+
+      expect { publisher.clean_archive }.to raise_error(SystemExit)
     end
   end
 
@@ -163,15 +199,37 @@ RSpec.describe Publisher do
   end
 
   describe "#object_exists?" do
-    it "delegates to `gcloud storage ls`" do
-      publisher = described_class.new
-      allow(publisher).to receive(:system).and_return(true)
+    let(:publisher) { described_class.new }
+    let(:success_status) { instance_double(Process::Status, success?: true) }
+    let(:failure_status) { instance_double(Process::Status, success?: false) }
+
+    it "returns true when gcloud storage ls succeeds" do
+      allow(Open3).to receive(:capture3).and_return(["", "", success_status])
 
       expect(publisher.object_exists?("foo.mp3")).to be true
-      expect(publisher).to have_received(:system).with(
-        "gcloud", "storage", "ls", a_string_matching(%r{gs://.*/foo\.mp3}),
-        out: File::NULL, err: File::NULL
+      expect(Open3).to have_received(:capture3).with(
+        "gcloud", "storage", "ls", a_string_matching(%r{gs://.*/foo\.mp3})
       )
+    end
+
+    it "returns false when gcloud reports no matching objects (genuine absence)" do
+      err = "ERROR: (gcloud.storage.ls) One or more URLs matched no objects.\n"
+      allow(Open3).to receive(:capture3).and_return(["", err, failure_status])
+
+      expect(publisher.object_exists?("foo.mp3")).to be false
+    end
+
+    it "raises instead of returning false on a transient gcloud failure" do
+      err = "ERROR: (gcloud.storage.ls) Your current active account does not have any valid credentials\n"
+      allow(Open3).to receive(:capture3).and_return(["", err, failure_status])
+
+      expect { publisher.object_exists?("foo.mp3") }.to raise_error(/transient failure/)
+    end
+
+    it "raises a descriptive error when gcloud itself is not installed" do
+      allow(Open3).to receive(:capture3).and_raise(Errno::ENOENT.new("gcloud"))
+
+      expect { publisher.object_exists?("foo.mp3") }.to raise_error(/gcloud not found/)
     end
   end
 end
