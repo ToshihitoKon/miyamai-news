@@ -7,6 +7,9 @@ module Internal
   # 単一 URL の HTTP GET を、リダイレクト追従と指数バックオフ付きリトライで実行する。
   # フィードの内容や用途には関与しない、純粋な取得ユーティリティ。
   class HttpFetcher
+    # 追従するリダイレクトの上限ホップ数。無限リダイレクトループでの永久ハングを防ぐ。
+    MAX_REDIRECTS = 5
+
     # @param max_retries [Integer] 最大リトライ回数
     # @param retry_base_sec [Float] 指数バックオフの初期待機秒数
     def initialize(max_retries: 3, retry_base_sec: 2.0)
@@ -33,13 +36,22 @@ module Internal
 
     private
 
+    # リダイレクトを MAX_REDIRECTS 回まで追従する。Location は相対URIのことがある
+    # （RFC 7231 で許容されており実サーバーでも一般的）ため、直前の URL を基点に
+    # URI#merge で解決する。
     def get_once(url)
-      res = Net::HTTP.get_response(URI.parse(url))
-      # リダイレクトするサーバーがある（例: GitHub の releases.atom）
-      res = Net::HTTP.get_response(URI.parse(res["location"])) if res.is_a?(Net::HTTPRedirection)
-      raise "HTTP #{res.code}" unless res.is_a?(Net::HTTPSuccess)
+      current = URI.parse(url)
 
-      res.body
+      MAX_REDIRECTS.times do
+        res = Net::HTTP.get_response(current)
+        return res.body if res.is_a?(Net::HTTPSuccess)
+        raise "HTTP #{res.code}" unless res.is_a?(Net::HTTPRedirection)
+
+        location = res["location"] or raise "HTTP #{res.code} redirect without a Location header"
+        current = current.merge(location)
+      end
+
+      raise "too many redirects (> #{MAX_REDIRECTS}) starting from #{url}"
     end
   end
 end
