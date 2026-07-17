@@ -87,6 +87,84 @@ RSpec.describe VoiceSynthesizer do
         expect { synth.synthesize(script_path) }.to raise_error(SystemExit)
       end
     end
+
+    context "with a real child process (no Open3 mock)" do
+      # パイプバッファ（多くの環境で64KB）を超える量の stdout を書き出すダミー
+      # VOICEPEAK を実際に起動する。stdout を読まずに join を待つ実装だと、子プロセスの
+      # write がブロックしたまま timeout_sec を超え、偽ハングと誤判定してしまう。
+      let(:chatty_bin_path) do
+        path = File.join(work_dir, "chatty_voicepeak.sh")
+        File.write(path, <<~SH)
+          #!/bin/sh
+          out_path=""
+          while [ "$#" -gt 0 ]; do
+            if [ "$1" = "--out" ]; then
+              out_path="$2"
+            fi
+            shift
+          done
+          yes "dummy VOICEPEAK output line for pipe buffer pressure" | head -n 20000
+          echo "fake wav" > "$out_path"
+        SH
+        FileUtils.chmod("+x", path)
+        path
+      end
+
+      before { allow(Config.voicepeak).to receive(:bin).and_return(chatty_bin_path) }
+
+      it "does not falsely time out even when the child writes more than the pipe buffer holds" do
+        allow(Config.voicepeak).to receive(:timeout_sec).and_return(5)
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+        out_path = File.join(work_dir, "chunk.wav")
+
+        expect { synth.send(:run_voicepeak, "text", out_path) }.not_to raise_error
+        expect(File.read(out_path)).to eq("fake wav\n")
+      end
+    end
+
+    context "with a quiet real child process (fd leak check)" do
+      # パイプバッファを超えない少量出力のダミー VOICEPEAK。偽タイムアウト（上の
+      # context）の影響を受けずに、stdout/stderr の close 漏れだけを切り分けて検証する。
+      let(:quiet_bin_path) do
+        path = File.join(work_dir, "quiet_voicepeak.sh")
+        File.write(path, <<~SH)
+          #!/bin/sh
+          out_path=""
+          while [ "$#" -gt 0 ]; do
+            if [ "$1" = "--out" ]; then
+              out_path="$2"
+            fi
+            shift
+          done
+          echo "a bit of stdout"
+          echo "a bit of stderr" >&2
+          echo "fake wav" > "$out_path"
+        SH
+        FileUtils.chmod("+x", path)
+        path
+      end
+
+      before { allow(Config.voicepeak).to receive(:bin).and_return(quiet_bin_path) }
+
+      it "closes both stdout and stderr pipes after a successful run (no fd leak)" do
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+        out_path = File.join(work_dir, "chunk.wav")
+        opened_pipes = []
+
+        original_popen3 = Open3.method(:popen3)
+        allow(Open3).to receive(:popen3) do |*args, **kwargs|
+          stdin, stdout, stderr, wait_thr = original_popen3.call(*args, **kwargs)
+          opened_pipes << stdout << stderr
+          [stdin, stdout, stderr, wait_thr]
+        end
+
+        synth.send(:run_voicepeak, "text", out_path)
+
+        expect(opened_pipes).not_to be_empty
+        expect(opened_pipes).to all(be_closed)
+      end
+    end
   end
 
   describe "#split_chunks" do
