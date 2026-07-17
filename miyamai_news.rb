@@ -30,18 +30,18 @@ def parse_args(argv)
   opts = {}
   parser = OptionParser.new do |o|
     o.banner = "Usage: ruby miyamai_news.rb [options]"
-    o.on("--config PATH", "設定ファイルのパス（既定: config.yaml）") { |v| opts[:config] = v }
-    o.on("--clean", "work/ の掃除と公開済み dist/ 成果物の削除") { opts[:clean] = true }
-    o.on("--clean-archive", "archived/ 配下の退避済み成果物を完全削除") { opts[:clean_archive] = true }
-    o.on("--ui-only", "index.html / manifest.json のみ再生成") { opts[:ui_only] = true }
-    o.on("--confirm-fetch", "未確認の収集windowを確定する（成果物を確認済みのときに使う）") { opts[:confirm_fetch] = true }
-    o.on("--auto-confirm", "前回の未確認収集windowを確認なしで自動確定する（CI向け）") { opts[:auto_confirm] = true }
-    o.on("--digest-only", "ニュース選別・要約のみ生成して停止") { opts[:digest_only] = true }
-    o.on("--script-only", "台本のみ生成して停止") { opts[:script_only] = true }
-    o.on("--synthesize-only", "音声合成・BGM合成のみ（dist/ に書き出して終了）") { opts[:synthesize_only] = true }
-    o.on("--publish-only", "dist/ の該当回を公開のみ") { opts[:publish_only] = true }
-    o.on("--date DATE", "対象の日時（例: 2026-07-10）") { |v| opts[:date] = Time.parse(v) }
-    o.on("--slot SLOT", "対象の時間帯（#{Slot::JA_LABELS.keys.join('/')}）") do |v|
+    o.on("--config PATH", "path to the config file (default: config.yaml)") { |v| opts[:config] = v }
+    o.on("--clean", "clean work/ and delete published dist/ artifacts") { opts[:clean] = true }
+    o.on("--clean-archive", "permanently delete archived artifacts under archived/") { opts[:clean_archive] = true }
+    o.on("--ui-only", "regenerate index.html / manifest.json only") { opts[:ui_only] = true }
+    o.on("--confirm-fetch", "confirm the pending fetch window (use after reviewing the artifacts)") { opts[:confirm_fetch] = true }
+    o.on("--auto-confirm", "auto-confirm the pending fetch window without prompting (for CI)") { opts[:auto_confirm] = true }
+    o.on("--digest-only", "generate news selection/summary only, then stop") { opts[:digest_only] = true }
+    o.on("--script-only", "generate the script only, then stop") { opts[:script_only] = true }
+    o.on("--synthesize-only", "voice/BGM synthesis only (write to dist/ and exit)") { opts[:synthesize_only] = true }
+    o.on("--publish-only", "publish the target episode from dist/ only") { opts[:publish_only] = true }
+    o.on("--date DATE", "target date (e.g. 2026-07-10)") { |v| opts[:date] = Time.parse(v) }
+    o.on("--slot SLOT", "target slot (#{Slot::JA_LABELS.keys.join('/')})") do |v|
       abort "invalid argument: --slot #{v} (must be one of: #{Slot::JA_LABELS.keys.join(', ')})" unless Slot::JA_LABELS.key?(v)
 
       opts[:slot] = v
@@ -105,7 +105,7 @@ def episode_transcript_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episo
 def ensure_mode_allows!(required_mode)
   return if Config::MODE_ORDER.fetch(Config.mode) >= Config::MODE_ORDER.fetch(required_mode)
 
-  abort "pipeline.mode=#{Config.mode} では #{required_mode} 以上を要求するこのフラグは実行できません"
+  abort "this flag requires pipeline.mode >= #{required_mode}, but pipeline.mode=#{Config.mode}"
 end
 
 def main
@@ -206,7 +206,7 @@ def resolve_pending_fetch!(auto_confirm:)
     return
   end
 
-  print "前回の収集windowが未確認です（#{pending}）。確定しますか？確定しなければロールバックします。 [y/N]: "
+  print "The previous fetch window is unconfirmed (#{pending}). Confirm it? Answering no rolls it back. [y/N]: "
   answer = $stdin.gets&.strip
   if answer&.match?(/\Ay\z/i)
     store.confirm!
@@ -223,7 +223,7 @@ def run_confirm_fetch
   store = LastFetchStore.new(work_dir: WORK_DIR)
   pending = store.pending_at
   unless pending
-    warn "確定対象の pending な収集windowがありません"
+    warn "no pending fetch window to confirm"
     return
   end
 
