@@ -144,22 +144,6 @@ def main
   FileUtils.mkdir_p(WORK_DIR)
   FileUtils.mkdir_p(DIST_DIR)
 
-  resolve_pending_fetch!(auto_confirm: args[:auto_confirm])
-
-  if args[:digest_only]
-    ensure_mode_allows!("digest")
-    generator = run_digest(episode)
-    mark_fetch_pending!(generator) if generator.fetched_news?
-    return
-  end
-
-  if args[:script_only]
-    ensure_mode_allows!("synthesize")
-    generator = run_script(episode)
-    mark_fetch_pending!(generator) if generator.fetched_news?
-    return
-  end
-
   if args[:publish_only]
     ensure_mode_allows!("publish")
     run_publish(episode)
@@ -167,6 +151,29 @@ def main
     # 新しい時刻に進めてはいけない（fetch していない時刻で確定すると取りこぼす）。
     # pending が残っていれば公開＝確定として昇格させ、無ければ何もしない。
     confirm_pending_fetch!
+    return
+  end
+
+  # 前回 pending の確定/ロールバックは、収集の起点(since)を確定する直前＝新規 fetch が
+  # 実際に走る直前にだけ尋ねればよい。既存 news スナップショットを再利用する実行（例:
+  # --script-only の後にフラグなしで synthesize へ進む）は fetch しないので、確認は出ない。
+  # そのタイミング制御は ScriptGenerator に任せ、対話そのものはここで on_before_fetch として渡す。
+  generator = ScriptGenerator.new(
+    work_dir: WORK_DIR, episode: episode,
+    on_before_fetch: -> { resolve_pending_fetch!(auto_confirm: args[:auto_confirm]) }
+  )
+
+  if args[:digest_only]
+    ensure_mode_allows!("digest")
+    run_digest(generator)
+    mark_fetch_pending!(generator) if generator.fetched_news?
+    return
+  end
+
+  if args[:script_only]
+    ensure_mode_allows!("synthesize")
+    run_script(generator)
+    mark_fetch_pending!(generator) if generator.fetched_news?
     return
   end
 
@@ -179,7 +186,7 @@ def main
     target_mode = Config.mode
   end
 
-  generator = run_digest(episode)
+  run_digest(generator)
   run_synthesize(episode, generator) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
 
   # publish まで到達するときだけ「公開＝確定」を即座に反映する。到達しないときは、
@@ -267,24 +274,22 @@ def run_restore_fetch
 end
 
 # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
-# 戻り値の ScriptGenerator を呼び出し元が見て、新規収集が起きたか(#fetched_news?)を判断する。
-def run_digest(episode)
-  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode)
+# 呼び出し元が渡した ScriptGenerator を使う（生成時に on_before_fetch を仕込むため、
+# 生成は main 側で行う）。実行後は同じ generator の fetched_news? で新規収集が
+# 起きたかを判断する。
+def run_digest(generator)
   facts_path = generator.digest
 
   warn "news facts: #{facts_path}"
-  generator
 end
 
 # 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。
 # 中身を確認・手直ししたうえで、フラグなしで再実行すれば既存の台本を再利用して
 # 整形〜音声合成〜publish まで続きから進む。
-def run_script(episode)
-  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode)
+def run_script(generator)
   script_path = generator.generate(format: false)
 
   warn "script: #{script_path}"
-  generator
 end
 
 # 台本執筆・tts整形・音声合成・BGM合成までを実行する。pipeline.mode: synthesize の

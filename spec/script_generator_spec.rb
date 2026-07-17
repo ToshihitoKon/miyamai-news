@@ -198,4 +198,28 @@ RSpec.describe ScriptGenerator do
       expect(generator.collect_since_anchor).to eq(now)
     end
   end
+
+  describe "on_before_fetch hook" do
+    # 前回 pending の確定/ロールバック確認は「新規 fetch が実際に走る直前」だけに出したい。
+    # --script-only の後にフラグなしで synthesize へ進むと、収集は既存スナップショットの
+    # 再利用になり fetch しないので、確認が出てはいけない。
+    it "runs the hook once when news is actually fetched" do
+      calls = 0
+      generator = described_class.new(work_dir: work_dir, episode: episode, on_before_fetch: -> { calls += 1 })
+
+      generator.send(:load_or_collect_news)
+
+      expect(calls).to eq(1)
+    end
+
+    it "does not run the hook when an existing news snapshot is reused" do
+      calls = 0
+      generator = described_class.new(work_dir: work_dir, episode: episode, on_before_fetch: -> { calls += 1 })
+      File.write(generator.send(:news_collected_path), "1. Title A\n")
+
+      generator.send(:load_or_collect_news)
+
+      expect(calls).to eq(0)
+    end
+  end
 end

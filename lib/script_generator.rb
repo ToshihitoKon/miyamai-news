@@ -27,8 +27,14 @@ class ScriptGenerator
 
   # @param work_dir [String] 中間ファイルの置き場
   # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
-  def initialize(work_dir:, episode:)
+  # @param on_before_fetch [#call, nil] 新規 RSS 収集が実際に走る直前（since を確定する
+  #   タイミング）に 1 度だけ呼ばれるフック。収集の since は confirmed_at から決まるので、
+  #   前回 pending が残っていれば「確定して since を進めるか／ロールバックして据え置くか」を
+  #   ここで解決する。既存スナップショットを再利用して収集が走らない実行では呼ばれない
+  #   （呼び出し側 miyamai_news.rb が対話ロジックを渡す）。
+  def initialize(work_dir:, episode:, on_before_fetch: nil)
     @work_dir = work_dir
+    @on_before_fetch = on_before_fetch
     # 収集の時刻演算(since・seen_at・iso8601)には時刻精度のある now を使う。
     @now = episode.now
     @slot = episode.slot
@@ -284,6 +290,11 @@ class ScriptGenerator
   # カテゴリ区分は持たない（カテゴリへの分類は selector 段階の AI が行う）。
   # dedup のみ行い、seen_at/priority は選定 AI の判断材料として残す。
   def collect_news
+    # since を確定する直前に前回 pending を解決する（確定して since を進めるか／
+    # ロールバックして据え置くか）。ここは実際に新規収集が走るときにしか通らないので、
+    # 既存スナップショット再利用の実行では確認が出ない。
+    @on_before_fetch&.call
+
     since = collect_since
     items_per_source = fetch_sources_in_parallel(sources, since)
     items = dedup_by_title(items_per_source.flatten)
