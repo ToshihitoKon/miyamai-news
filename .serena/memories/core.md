@@ -4,8 +4,8 @@
 
 ## 構成原則
 - エントリポイントは `miyamai_news.rb`（単一ファイル、`bundler/inline` で依存gemを自動取得）。CLI解析と呼び出し順制御のみを担い、ロジックは持たない。
-- `lib/` 配下の各クラスが工程を1つずつ担当: `episode.rb`(番組コンテキスト) → `script_generator.rb`(RSS収集・AI台本生成) → `voice_synthesizer.rb`(VOICEPEAK音声合成) → `audio_mixer.rb`(BGM合成) → `publisher.rb`(GCS公開)。
-- `lib/internal/` は汎用ユーティリティ（config, feed_parser, http_fetcher, template_renderer, hatena_bookmarks）。
+- `lib/` 配下の各クラスが工程を1つずつ担当: `episode.rb`(番組コンテキスト) → `script_generator.rb`(RSS収集・AI台本生成) → `voice_synthesizer.rb`(VOICEPEAK音声合成) → `audio_mixer.rb`(BGM合成) → `publisher.rb`(GCS公開)。`slot.rb`(番組の時間帯区分)・`feed_cache.rb`(収集済みニュースの重複排除・保持期間管理)も同階層。
+- `lib/internal/` は汎用ユーティリティ（config, feed_parser, http_fetcher, template_renderer, hatena_bookmarks, last_fetch_store）。`last_fetch_store.rb`は収集windowの起点（各pipeline.modeが前回到達した時刻）をwork/last_fetch.jsonに永続化する。
 - プロンプト本文は `templates/*.prompt.erb` に外出し。プロンプト文面の調整はRubyに触れず`templates/`内で完結する設計。
 - 設定は `config.yaml`（git管理外、`config.sample.yaml`からコピーして使う）に集約。RSS収集元定義も含めここに全て入る。
 
