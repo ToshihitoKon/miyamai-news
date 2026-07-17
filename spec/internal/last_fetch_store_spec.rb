@@ -23,22 +23,14 @@ RSpec.describe LastFetchStore do
       expect(store.pending_at).to eq(pending)
     end
 
-    it "saves the overwritten pending_at as rollback_at (nil when there was none)" do
-      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      store.confirm_immediately!(at: confirmed)
+    # 自動的な pending 化は人間の操作ではないので Undo 対象にしない。
+    it "is not restorable (clears the undo buffer)" do
+      store.mark_pending!(at: Time.utc(2026, 7, 15, 9, 0, 0))
+      store.rollback!
 
       store.mark_pending!(at: Time.utc(2026, 7, 16, 9, 0, 0))
 
-      expect(store.rollback_at).to be_nil
-    end
-
-    it "saves the previous pending_at as rollback_at when one already existed" do
-      first_pending = Time.utc(2026, 7, 15, 9, 0, 0)
-      store.mark_pending!(at: first_pending)
-
-      store.mark_pending!(at: Time.utc(2026, 7, 16, 9, 0, 0))
-
-      expect(store.rollback_at).to eq(first_pending)
+      expect(store.restorable?).to be false
     end
 
     it "works from an empty store (no prior confirmed_at)" do
@@ -52,9 +44,8 @@ RSpec.describe LastFetchStore do
   end
 
   describe "#confirm!" do
-    it "promotes pending_at to confirmed_at and saves the old confirmed_at as rollback_at" do
-      old_confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      store.confirm_immediately!(at: old_confirmed)
+    it "promotes pending_at to confirmed_at" do
+      store.confirm_immediately!(at: Time.utc(2026, 7, 14, 9, 0, 0))
       pending = Time.utc(2026, 7, 16, 9, 0, 0)
       store.mark_pending!(at: pending)
 
@@ -62,7 +53,15 @@ RSpec.describe LastFetchStore do
 
       expect(store.confirmed_at).to eq(pending)
       expect(store.pending_at).to be_nil
-      expect(store.rollback_at).to eq(old_confirmed)
+    end
+
+    it "becomes restorable so an accidental confirm can be undone" do
+      store.confirm_immediately!(at: Time.utc(2026, 7, 14, 9, 0, 0))
+      store.mark_pending!(at: Time.utc(2026, 7, 16, 9, 0, 0))
+
+      store.confirm!
+
+      expect(store.restorable?).to be true
     end
 
     it "does nothing when there is no pending_at" do
@@ -72,6 +71,7 @@ RSpec.describe LastFetchStore do
       store.confirm!
 
       expect(store.confirmed_at).to eq(confirmed)
+      expect(store.restorable?).to be false
     end
   end
 
@@ -87,22 +87,40 @@ RSpec.describe LastFetchStore do
       expect(store.pending_at).to be_nil
     end
 
-    # 確認プロンプトを誤って連打して pending を消しても復旧できるように、捨てた
-    # pending_at を rollback_at へ残す。
-    it "saves the discarded pending_at as rollback_at for recovery" do
-      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      pending = Time.utc(2026, 7, 16, 9, 0, 0)
-      store.confirm_immediately!(at: confirmed)
-      store.mark_pending!(at: pending)
+    it "becomes restorable so an accidental rollback can be undone" do
+      store.confirm_immediately!(at: Time.utc(2026, 7, 14, 9, 0, 0))
+      store.mark_pending!(at: Time.utc(2026, 7, 16, 9, 0, 0))
 
       store.rollback!
 
-      expect(store.rollback_at).to eq(pending)
+      expect(store.restorable?).to be true
+    end
+
+    it "does nothing when there is no pending_at" do
+      store.rollback!
+
+      expect(store.restorable?).to be false
     end
   end
 
   describe "#restore!" do
-    it "restores the rolled-back pending_at, undoing an accidental rollback" do
+    # confirm の取り消し: 昇格した confirmed を pending へ戻し、元の confirmed を戻す。
+    it "undoes a confirm, restoring both pending_at and the old confirmed_at" do
+      old_confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
+      pending = Time.utc(2026, 7, 16, 9, 0, 0)
+      store.confirm_immediately!(at: old_confirmed)
+      store.mark_pending!(at: pending)
+      store.confirm!
+
+      store.restore!
+
+      expect(store.pending_at).to eq(pending)
+      expect(store.confirmed_at).to eq(old_confirmed)
+      expect(store.restorable?).to be false
+    end
+
+    # discard の取り消し: 捨てた pending を戻すだけ。confirmed は動かさない。
+    it "undoes a rollback, restoring only the discarded pending_at" do
       confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
       pending = Time.utc(2026, 7, 16, 9, 0, 0)
       store.confirm_immediately!(at: confirmed)
@@ -113,9 +131,10 @@ RSpec.describe LastFetchStore do
 
       expect(store.pending_at).to eq(pending)
       expect(store.confirmed_at).to eq(confirmed)
+      expect(store.restorable?).to be false
     end
 
-    it "does nothing when there is no rolled-back value" do
+    it "does nothing when there is nothing to restore" do
       confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
       store.confirm_immediately!(at: confirmed)
 
@@ -123,19 +142,6 @@ RSpec.describe LastFetchStore do
 
       expect(store.pending_at).to be_nil
       expect(store.confirmed_at).to eq(confirmed)
-    end
-
-    # restore の直後にもう一度 rollback すれば元の状態へ戻せる（Undo/Redo が対称）。
-    it "is reversible: rollback after restore returns to the rolled-back state" do
-      pending = Time.utc(2026, 7, 16, 9, 0, 0)
-      store.mark_pending!(at: pending)
-      store.rollback!
-
-      store.restore!
-      store.rollback!
-
-      expect(store.pending_at).to be_nil
-      expect(store.rollback_at).to eq(pending)
     end
   end
 
@@ -150,13 +156,14 @@ RSpec.describe LastFetchStore do
       expect(store.pending_at).to be_nil
     end
 
-    it "saves the overwritten confirmed_at as rollback_at" do
-      old_confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      store.confirm_immediately!(at: old_confirmed)
+    # publish 時の即時確定は人間の対話操作ではないので Undo 対象にしない。
+    it "is not restorable (clears the undo buffer)" do
+      store.mark_pending!(at: Time.utc(2026, 7, 14, 9, 0, 0))
+      store.rollback!
 
       store.confirm_immediately!(at: Time.utc(2026, 7, 16, 9, 0, 0))
 
-      expect(store.rollback_at).to eq(old_confirmed)
+      expect(store.restorable?).to be false
     end
   end
 
@@ -176,7 +183,19 @@ RSpec.describe LastFetchStore do
 
   describe "#load (migration)" do
     it "returns all-nil defaults when neither last_fetch.json nor the legacy file exists" do
-      expect(store.load).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil)
+      expect(store.load).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil)
+    end
+
+    # last_op 導入前に書かれた新形式ファイルには last_op キーが無い。読み込み時に補う。
+    it "fills in last_op for a pre-last_op new-format file" do
+      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
+      File.write(store.path, JSON.generate("confirmed_at" => confirmed.iso8601, "pending_at" => nil, "rollback_at" => nil))
+
+      data = store.load
+
+      expect(data["confirmed_at"]).to eq(confirmed.iso8601)
+      expect(data).to have_key("last_op")
+      expect(data["last_op"]).to be_nil
     end
 
     it "migrates a legacy mode-keyed last_fetch.json (publish present) into confirmed_at" do
@@ -214,7 +233,7 @@ RSpec.describe LastFetchStore do
     it "leaves a corrupt legacy last_fetch.txt untouched and returns defaults" do
       File.write(store.legacy_path, "not-a-timestamp")
 
-      expect(store.load).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil)
+      expect(store.load).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil)
       expect(File.exist?(store.legacy_path)).to be true
     end
 
@@ -222,7 +241,7 @@ RSpec.describe LastFetchStore do
       FileUtils.mkdir_p(work_dir)
       File.write(store.path, "not-json")
 
-      expect(store.load).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil)
+      expect(store.load).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil)
       expect(File.read(store.path)).to eq("not-json")
     end
   end

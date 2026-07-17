@@ -253,18 +253,17 @@ def run_confirm_fetch
   warn "confirmed fetch window: #{pending}"
 end
 
-# 直前の rollback で捨てた収集windowを pending へ戻す独立コマンド。確認プロンプトを
-# 誤って連打して pending を消してしまったときの復旧に使う。
+# 直前の人間操作（確定・pending破棄）を 1 段巻き戻す独立コマンド。間違って確定した、
+# あるいは確認プロンプトを誤って連打して pending を消したときの復旧に使う。
 def run_restore_fetch
   store = LastFetchStore.new(work_dir: WORK_DIR)
-  discarded = store.rollback_at
-  unless discarded
-    warn "no rolled-back fetch window to restore"
+  unless store.restorable?
+    warn "no fetch window operation to restore"
     return
   end
 
   store.restore!
-  warn "restored fetch window to pending: #{discarded}"
+  warn "restored fetch window to pending: #{store.pending_at}"
 end
 
 # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
