@@ -54,15 +54,18 @@ end
 ARGS = parse_args(ARGV)
 Config.path = File.expand_path(ARGS[:config], __dir__) if ARGS[:config]
 
-# clean系・ui_only は pipeline.mode と無関係の独立コマンドなので検証をスキップする。
-# それ以外は各コンポーネントが実行中に MissingKeyError で落ちて中途半端に失敗するのを
-# 避けるため、起動直後に必要な config が揃っているか一括で検証する。
-unless ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
-  begin
+# clean系・ui_only は pipeline.mode とは無関係だが、実際には Publisher（GCS操作）を
+# 経由するため gcs セクションだけは要求する。それ以外は各コンポーネントが実行中に
+# MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な config が
+# 揃っているか一括で検証する。
+begin
+  if ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
+    Config.validate_gcs!
+  else
     Config.validate_for!(Config.mode)
-  rescue Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
-    abort e.message
   end
+rescue Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
+  abort e.message
 end
 
 require_relative "lib/episode"

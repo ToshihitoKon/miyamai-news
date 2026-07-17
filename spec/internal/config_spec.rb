@@ -72,6 +72,18 @@ RSpec.describe Config do
     end
   end
 
+  describe ".validate_gcs!" do
+    it "passes when gcs is configured" do
+      expect { Config.validate_gcs! }.not_to raise_error
+    end
+
+    it "raises MissingKeyError when gcs is absent" do
+      Config.path = File.expand_path("../fixtures/config_digest.yaml", __dir__)
+
+      expect { Config.validate_gcs! }.to raise_error(Config::MissingKeyError, /gcs/)
+    end
+  end
+
   describe "section accessors" do
     it "exposes each top-level section as a typed struct" do
       expect(Config.gcs.bucket).to eq("your-bucket-name")

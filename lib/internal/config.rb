@@ -71,6 +71,15 @@ module Config
         "missing config sections for pipeline.mode=#{target_mode}:\n" + missing.map { |s| "  - #{s}" }.join("\n")
     end
 
+    # gcs セクション単体の存在を検証する。--clean/--ui-only/--clean-archive は
+    # pipeline.mode に関わらず Publisher（GCS 操作）を使うため、mode 別の
+    # validate_for! では拾えない gcs 単体の欠落をここで見る。
+    def validate_gcs!
+      return if gcs
+
+      raise MissingKeyError, "missing config section: gcs"
+    end
+
     private
 
     # target_mode 自身とそれより手前の全 mode の必須セクションを合算する（加算方式）。
