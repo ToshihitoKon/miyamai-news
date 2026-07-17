@@ -57,19 +57,24 @@ def parse_args(argv)
 end
 
 ARGS = parse_args(ARGV)
-Config.path = File.expand_path(ARGS[:config], __dir__) if ARGS[:config]
 
 # clean系・ui_only は pipeline.mode とは無関係だが、実際には Publisher（GCS操作）を
 # 経由するため gcs セクションだけは要求する。それ以外は各コンポーネントが実行中に
 # MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な config が
-# 揃っているか一括で検証する。
+# 揃っているか一括で検証する。Config.path= は代入した時点で即座に新しいパスから読み直す
+# 設計（lib/internal/config.rb 参照）なので、--config 指定時の読み込みエラーもこのガードで
+# まとめて拾えるよう同じ begin ブロック内に置く。
 begin
+  # cwd 基準で解決する（一般的な CLI の期待動作。__dir__ 基準だとスクリプト位置基準になり、
+  # リポジトリ外のディレクトリから相対パスを指定したときに意図と異なる場所を読んでしまう）。
+  Config.path = File.expand_path(ARGS[:config]) if ARGS[:config]
+
   if ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
     Config.validate_gcs!
   else
     Config.validate_for!(Config.mode)
   end
-rescue Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
+rescue Config::MissingConfigError, Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
   abort e.message
 end
 
