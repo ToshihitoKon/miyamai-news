@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>宮舞モカの技術ニュース</title>
-  <link rel="alternate" type="application/atom+xml" title="宮舞モカの技術ニュース" href="<%= h(feed_url) %>">
+  <title><%= h(og_title) %></title>
+  <link rel="alternate" type="application/atom+xml" title="<%= h(og_title) %>" href="<%= h(feed_url) %>">
 
   <link rel="manifest" href="<%= h(manifest_url) %>">
   <meta name="theme-color" content="#8DA7C2">
@@ -145,7 +145,7 @@
   <main class="content">
     <div class="card">
       <img class="art" id="artwork" src="<%= h(cover_url) %>" alt="宮舞モカ">
-      <h1>宮舞モカの技術ニュース</h1>
+      <h1><%= h(og_title) %></h1>
       <p class="sub" id="nowplaying"><%= h(date_with_slot(current[0], current[1])) %></p>
       <select id="archive" aria-label="アーカイブ選択">
         <%= options %>

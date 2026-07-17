@@ -198,6 +198,44 @@ RSpec.describe Publisher do
     end
   end
 
+  describe ".episode_object_names" do
+    it "expands an mp3 filename to all sibling files that make up one episode" do
+      names = described_class.episode_object_names("miyamai_news_20260714_afternoon.mp3")
+
+      expect(names).to eq([
+        "miyamai_news_20260714_afternoon.mp3",
+        "miyamai_news_20260714_afternoon.used.txt",
+        "miyamai_news_20260714_afternoon.transcript.txt"
+      ])
+    end
+  end
+
+  describe "#render_html and #render_feed" do
+    # 番組名を PROGRAM_NAME の実値と別の文字列に差し替えて描画する。テンプレートが
+    # 定数を参照せずリテラルをハードコードしていると、この値が反映されず検出できる。
+    let(:program_name) { "テスト番組名XYZ" }
+    let(:publisher) { described_class.new(date: Date.new(2026, 7, 14)) }
+    let(:rows) do
+      [["2026-07-14", "miyamai_news_20260714_afternoon.mp3", "回タイトル 2026-07-14", "", "2026-07-14T00:00:00Z"]]
+    end
+
+    before { stub_const("Publisher::PROGRAM_NAME", program_name) }
+
+    it "renders PROGRAM_NAME into index.html's <title>/<link title>/<h1> instead of a hardcoded string" do
+      html = publisher.send(:render_html, rows)
+
+      expect(html).to include("<title>#{program_name}</title>")
+      expect(html).to include(%(title="#{program_name}"))
+      expect(html).to include("<h1>#{program_name}</h1>")
+    end
+
+    it "renders PROGRAM_NAME into feed.xml's <title> instead of a hardcoded string" do
+      xml = publisher.send(:render_feed, rows)
+
+      expect(xml).to include("<title>#{program_name}</title>")
+    end
+  end
+
   describe "#object_exists?" do
     let(:publisher) { described_class.new }
     let(:success_status) { instance_double(Process::Status, success?: true) }

@@ -41,4 +41,16 @@ module Slot
   }.freeze
 
   def ja_label(slot) = JA_LABELS.fetch(slot)
+
+  # ファイル名末尾の "_<slot>.mp3" から slot 名を取り出す正規表現。
+  # JA_LABELS のキーから組み立て、対応 slot が増減しても追従漏れが起きないようにする。
+  FILENAME_PATTERN = /_(#{JA_LABELS.keys.join('|')})\.mp3\z/
+
+  # ファイル名から slot を判定して日本語ラベルにする。1日に複数回ある回を
+  # UI やフィードで見分けるための表示用。slot を持たない旧ファイル名は
+  # 空文字列を返す（後方互換）。
+  def ja_label_from_filename(filename)
+    m = filename.match(FILENAME_PATTERN)
+    m ? ja_label(m[1]) : ""
+  end
 end
