@@ -4,6 +4,7 @@ require "open3"
 require "tempfile"
 require "fileutils"
 require_relative "internal/config"
+require_relative "internal/command_error"
 
 class VoiceSynthesizer
   # ナレーターは宮舞モカで固定。
@@ -146,7 +147,7 @@ class VoiceSynthesizer
 
     status = wait_thr.value
     err = stderr.read
-    raise "VOICEPEAK synthesis failed: #{err[-300..]}" unless status.success?
+    raise "VOICEPEAK synthesis failed: #{Internal::CommandError.tail(err)}" unless status.success?
     raise "VOICEPEAK did not produce an audio file: #{out_path}" unless File.exist?(out_path)
   ensure
     stderr&.close
@@ -243,7 +244,7 @@ class VoiceSynthesizer
       "ffmpeg", "-y", "-f", "concat", "-safe", "0",
       "-i", list.path, "-c:a", "libmp3lame", "-q:a", "4", output
     )
-    raise "ffmpeg concat failed: #{err[-300..]}" unless status.success?
+    raise "ffmpeg concat failed: #{Internal::CommandError.tail(err)}" unless status.success?
   ensure
     list&.unlink
     silence_files&.each_value(&:unlink)
@@ -269,6 +270,6 @@ class VoiceSynthesizer
       "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
       "-t", duration_sec.to_s, out_path
     )
-    raise "silence generation failed: #{err[-300..]}" unless status.success?
+    raise "silence generation failed: #{Internal::CommandError.tail(err)}" unless status.success?
   end
 end

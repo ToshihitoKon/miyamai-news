@@ -2,6 +2,7 @@
 
 require "open3"
 require_relative "internal/config"
+require_relative "internal/command_error"
 
 class AudioMixer
   def initialize(bgm_path:)
@@ -38,7 +39,7 @@ class AudioMixer
       "ffprobe", "-v", "error", "-show_entries", "format=duration",
       "-of", "default=noprint_wrappers=1:nokey=1", path
     )
-    raise "ffprobe failed: #{err[-300..]}" unless status.success?
+    raise "ffprobe failed: #{Internal::CommandError.tail(err)}" unless status.success?
 
     out.strip.to_f
   end
@@ -58,6 +59,6 @@ class AudioMixer
       "-map", "[out]", "-t", total_dur.to_s,
       "-c:a", "libmp3lame", "-q:a", "4", output_path
     )
-    raise "ffmpeg mix failed: #{err[-300..]}" unless status.success?
+    raise "ffmpeg mix failed: #{Internal::CommandError.tail(err)}" unless status.success?
   end
 end
