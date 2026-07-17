@@ -1,8 +1,5 @@
-# 宮舞モカ ニュース番組 生成パイプラインの設定。
-#
-# このファイルはサンプル。実際に使うときは:
-#   cp config.sample.yaml config.yaml
-# としてから、環境に合わせて値を書き換える。config.yaml は git 管理外。
+# spec 用の fixture。config.sample.yaml をもとにした、フルパイプライン相当の値を
+# 全て持つテスト設定。
 
 # このfixtureはフルパイプライン相当の値を全て持つため、明示的に publish にする。
 pipeline:
@@ -19,8 +16,7 @@ gcs:
 
 # 音声・ページに使うアセットのパス。
 assets:
-  # 既定の BGM。miyamai_news.rb に BGM を渡さなかったときに使う。
-  # 絶対パス、または miyamai_news.rb からの相対パスで指定する。
+  # 使用する BGM。絶対パス、または miyamai_news.rb からの相対パスで指定する。
   bgm_path: 古びた魔法書_気まぐれBGM工房.mp3
   # 再生ページ / Slack プレビュー用の横長バナー画像のオブジェクト名。
   # 事前に gs://<bucket>/<cover_image> へ手動アップロードしておく。

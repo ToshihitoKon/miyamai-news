@@ -105,8 +105,8 @@ class ScriptGenerator
   # RSS 収集元の一覧（フラットな配列）。カテゴリ区分は持たない。
   def sources = Config.rss_feed_sources
 
-  # 何時間前までの記事を拾うかの上限。実際の収集 window は、これと「前回 publish からの
-  # 経過時間」の短い方を使う（publish 前に何度作り直しても同じ記事を拾い続けないため）。
+  # 前回この mode に到達した記録（confirmed_at）が無い初回に、何時間前までの記事を
+  # 拾うかの上限。
   def lookback_hours = Config.collect.lookback_hours
 
   # FeedCache が entry を保持する日数。フィードに最後に見えた時刻(last_fetched_at)が
@@ -156,11 +156,6 @@ class ScriptGenerator
     File.read(news_selected_path)
   end
 
-  # ステップ2: ライター。1 回の Claude 呼び出しで script.txt と used.txt を書かせる。
-  # Claude が Write で直接書くので、書き込み先の 2 パスをプロンプトで明示する。
-  # 出力の前置き・思考メモ混入は Claude 側で防ぎきれないので、書かれたファイルを
-  # Ruby が読み直して strip をかけ、上書き保存する。
-  # 再開判定は「両方揃って初めてスキップ」。片方でも欠ければ作り直す。
   # ステップ2.1: ニュース抽出・整理。1 回の AI 呼び出しでニュース内容を抽出して facts.txt に書く。
   def extract_news_facts(selected_news)
     if File.exist?(news_facts_path)
