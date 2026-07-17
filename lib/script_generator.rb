@@ -362,10 +362,12 @@ class ScriptGenerator
 
     if bin == "claude"
       effort = Config.ai_agent.effort
+      # effort 未設定なら --effort 自体を渡さず、claude CLI 側の既定に任せる。
+      effort_args = effort ? ["--effort", effort] : []
       run_command_with_spinner(
         "#{spinner_message} [#{bin}]",
         "AI CLI failed",
-        bin, "-p", "--model", model, "--effort", effort,
+        bin, "-p", "--model", model, *effort_args,
         *claude_extra_args,
         stdin_data: prompt
       )

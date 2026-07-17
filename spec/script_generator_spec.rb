@@ -124,6 +124,26 @@ RSpec.describe ScriptGenerator do
           expect { generator.generate }.to raise_error(SystemExit)
         end
       end
+
+      context "ai_agent.effort が未設定" do
+        it "omits --effort instead of passing nil to Open3.capture3" do
+          allow(Config.ai_agent).to receive(:effort).and_return(nil)
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          success_status = instance_double(Process::Status, success?: true, exitstatus: 0)
+
+          allow(Open3).to receive(:capture3) do |*_cmd, **_opts|
+            File.write(generator.send(:news_selected_path), "## 生成AI\n1. Title A\n   https://example.com/a\n   (meta)\n")
+            ["", "", success_status]
+          end
+
+          generator.send(:select_news, generator.send(:collect_news))
+
+          expect(Open3).to have_received(:capture3).with(
+            "claude", "-p", "--model", "claude-sonnet-5", "--allowedTools", "Write",
+            stdin_data: an_instance_of(String)
+          )
+        end
+      end
     end
   end
 
