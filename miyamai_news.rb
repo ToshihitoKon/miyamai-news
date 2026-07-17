@@ -24,6 +24,7 @@ require "fileutils"
 require "optparse"
 
 require_relative "lib/internal/config"
+require_relative "lib/slot"
 
 def parse_args(argv)
   opts = {}
@@ -38,7 +39,11 @@ def parse_args(argv)
     o.on("--synthesize-only", "音声合成・BGM合成のみ（dist/ に書き出して終了）") { opts[:synthesize_only] = true }
     o.on("--publish-only", "dist/ の該当回を公開のみ") { opts[:publish_only] = true }
     o.on("--date DATE", "対象の日時（例: 2026-07-10）") { |v| opts[:date] = Time.parse(v) }
-    o.on("--slot SLOT", "対象の時間帯（morning/afternoon/evening）") { |v| opts[:slot] = v }
+    o.on("--slot SLOT", "対象の時間帯（#{Slot::JA_LABELS.keys.join('/')}）") do |v|
+      abort "invalid argument: --slot #{v} (must be one of: #{Slot::JA_LABELS.keys.join(', ')})" unless Slot::JA_LABELS.key?(v)
+
+      opts[:slot] = v
+    end
   end
 
   begin
