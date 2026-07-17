@@ -135,8 +135,8 @@ RSS収集・AI選別・facts抽出（ニュース要約、`work/news_facts_<date
 手元で確認したい用途に使える。`--digest-only` は `pipeline.mode` が `synthesize`/
 `publish` のときでも digest の到達点だけを明示的に呼びたい場合に使う。
 
-`--date` / `--slot` を省略すると実行時刻から自動で決まる。1日を 3:00 起点で 8 時間
-ずつ 3 分割し、時間帯 `slot` は morning=3〜11時 / afternoon=11〜19時 / evening=19〜
-翌3時。evening は日付をまたぐため、0〜3時に実行した回は前日の夜（前日 evening）の
-番組として扱う（日付が 1 日戻る）。
+`--date` / `--slot` を省略すると実行時刻から自動で決まる。1日を 5:00 起点で 6 時間
+ずつ 4 分割し、時間帯 `slot` は morning=5〜11時 / afternoon=11〜17時 / evening=17〜
+23時 / midnight=23〜翌5時。midnight は日付をまたぐため、0〜5時に実行した回は前日の
+深夜（前日 midnight）の番組として扱う（日付が 1 日戻る）。
 1日に複数回まわしてもファイル名が衝突せず、別エピソードとして共存する。
