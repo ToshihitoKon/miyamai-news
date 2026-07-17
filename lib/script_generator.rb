@@ -42,7 +42,6 @@ class ScriptGenerator
     @today_ja = episode.today_ja
     @greeting_date_ja = episode.greeting_date_ja
     @slot_ja = episode.slot_ja
-    @last_fetch_store = LastFetchStore.new(work_dir: work_dir)
     @feed_cache = FeedCache.new(
       path: self.class.feed_cache_path(work_dir),
       retention_days:,
@@ -282,7 +281,7 @@ class ScriptGenerator
   end
 
   # last_fetch.json に記録された、確定済みの収集window起点。無い/壊れていれば nil。
-  def last_fetch_time = @last_fetch_store.confirmed_at
+  def last_fetch_time = LastFetchStore.confirmed_at(@work_dir)
 
   # FeedCache から since 以降に「初めて登場した」記事を集め、フラットなテキストにする。
   # 掲載日時ではなく登場時刻(seen_at)で拾うので、昔書かれて今話題化した記事も取れる。

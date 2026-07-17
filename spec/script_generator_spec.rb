@@ -150,7 +150,7 @@ RSpec.describe ScriptGenerator do
   describe "#collect_since" do
     it "uses the confirmed timestamp" do
       at = Time.utc(2026, 7, 14, 9, 0, 0)
-      LastFetchStore.new(work_dir: work_dir).confirm_immediately!(at: at)
+      LastFetchStore.confirm_immediately!(work_dir: work_dir, at: at)
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       expect(generator.send(:collect_since)).to eq(at)

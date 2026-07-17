@@ -150,7 +150,7 @@ def main
     # publish_only は新規 fetch をせず既存成果物を公開するだけなので、収集 window を
     # 新しい時刻に進めてはいけない（fetch していない時刻で確定すると取りこぼす）。
     # pending が残っていれば公開＝確定として昇格させ、無ければ何もしない。
-    confirm_pending_fetch!
+    LastFetchStore.confirm!(work_dir: WORK_DIR)
     return
   end
 
@@ -166,14 +166,14 @@ def main
   if args[:digest_only]
     ensure_mode_allows!("digest")
     run_digest(generator)
-    mark_fetch_pending!(generator) if generator.fetched_news?
+    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor) if generator.fetched_news?
     return
   end
 
   if args[:script_only]
     ensure_mode_allows!("synthesize")
     run_script(generator)
-    mark_fetch_pending!(generator) if generator.fetched_news?
+    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor) if generator.fetched_news?
     return
   end
 
@@ -191,33 +191,22 @@ def main
 
   # publish まで到達するときだけ「公開＝確定」を即座に反映する。到達しないときは、
   # 新規収集が起きていれば pending 化するだけに留める（人間の確認を待つ）。
+  # 収集 window の起点には、実行完了時刻(Time.now)ではなく generator が FeedCache#fetch に
+  # 渡した収集基準時刻(collect_since_anchor)を使う。新規 entry の seen_at はこの時刻で
+  # 記録されるので、次回はここを since に続きから拾える。
   # publish 到達でも、新規 fetch をせず既存 news を再利用しただけなら収集 window を
   # 新しい時刻へ進めてはいけない（進めると前回確定〜今回の間に登場した記事を取りこぼす）。
   # その場合は publish_only と同じく pending が残っていれば昇格するだけに留める。
   if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
     run_publish(episode)
-    generator.fetched_news? ? confirm_fetch_immediately!(generator) : confirm_pending_fetch!
+    if generator.fetched_news?
+      LastFetchStore.confirm_immediately!(work_dir: WORK_DIR, at: generator.collect_since_anchor)
+    else
+      LastFetchStore.confirm!(work_dir: WORK_DIR)
+    end
   elsif generator.fetched_news?
-    mark_fetch_pending!(generator)
+    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor)
   end
-end
-
-# 収集 window の起点には、実行完了時刻(Time.now)ではなく generator が FeedCache#fetch に
-# 渡した収集基準時刻を使う。新規 entry の seen_at はこの時刻で記録されるので、次回はここを
-# since に続きから拾える。Time.now を使うと、実行に時間がかかった場合に seen_at が開始〜
-# 完了の間に刻まれた記事を次回取りこぼす。
-def mark_fetch_pending!(generator)
-  LastFetchStore.new(work_dir: WORK_DIR).mark_pending!(at: generator.collect_since_anchor)
-end
-
-def confirm_fetch_immediately!(generator)
-  LastFetchStore.new(work_dir: WORK_DIR).confirm_immediately!(at: generator.collect_since_anchor)
-end
-
-# publish_only 用。新規 fetch をしていないので新しい時刻では確定せず、pending が
-# 残っていればそれを昇格するだけ（無ければ冪等に何もしない）。
-def confirm_pending_fetch!
-  LastFetchStore.new(work_dir: WORK_DIR).confirm!
 end
 
 # 前回実行で pending_at が残っていれば、確定させるかロールバックするか尋ねる。
@@ -225,12 +214,11 @@ end
 # デフォルト(Enter/N)はロールバック側（安全側）: 確認を怠って収集windowが誤って
 # 進むより、取りこぼしが起きない方を既定にする。
 def resolve_pending_fetch!
-  store = LastFetchStore.new(work_dir: WORK_DIR)
-  pending = store.pending_at
+  pending = LastFetchStore.pending_at(WORK_DIR)
   return unless pending
 
   if ARGS[:auto_confirm]
-    store.confirm!
+    LastFetchStore.confirm!(work_dir: WORK_DIR)
     warn "auto-confirmed pending fetch window: #{pending}"
     return
   end
@@ -238,10 +226,10 @@ def resolve_pending_fetch!
   print "The previous fetch window is unconfirmed (#{pending}). Confirm it? Answering no rolls it back. [y/N]: "
   answer = $stdin.gets&.strip
   if answer&.match?(/\Ay\z/i)
-    store.confirm!
+    LastFetchStore.confirm!(work_dir: WORK_DIR)
     warn "confirmed pending fetch window: #{pending}"
   else
-    store.rollback!
+    LastFetchStore.rollback!(work_dir: WORK_DIR)
     warn "rolled back pending fetch window (kept confirmed_at)"
   end
 end
@@ -249,28 +237,26 @@ end
 # pending中の収集windowを確認なしで即座に確定する独立コマンド。成果物を確認できた
 # タイミングで、次回実行を待たずに使う。
 def run_confirm_fetch
-  store = LastFetchStore.new(work_dir: WORK_DIR)
-  pending = store.pending_at
+  pending = LastFetchStore.pending_at(WORK_DIR)
   unless pending
     warn "no pending fetch window to confirm"
     return
   end
 
-  store.confirm!
+  LastFetchStore.confirm!(work_dir: WORK_DIR)
   warn "confirmed fetch window: #{pending}"
 end
 
 # 直前の人間操作（確定・pending破棄）を 1 段巻き戻す独立コマンド。間違って確定した、
 # あるいは確認プロンプトを誤って連打して pending を消したときの復旧に使う。
 def run_restore_fetch
-  store = LastFetchStore.new(work_dir: WORK_DIR)
-  unless store.restorable?
+  unless LastFetchStore.restorable?(WORK_DIR)
     warn "no fetch window operation to restore"
     return
   end
 
-  store.restore!
-  warn "restored fetch window to pending: #{store.pending_at}"
+  LastFetchStore.restore!(work_dir: WORK_DIR)
+  warn "restored fetch window to pending: #{LastFetchStore.pending_at(WORK_DIR)}"
 end
 
 # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
