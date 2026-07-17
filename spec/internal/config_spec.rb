@@ -70,6 +70,23 @@ RSpec.describe Config do
         expect { Config.path = path }.to raise_error(Config::InvalidConfigError)
       end
     end
+
+    it "raises MissingConfigError when the config file does not exist" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "nonexistent.yaml")
+
+        expect { Config.path = path }.to raise_error(Config::MissingConfigError, /not found/)
+      end
+    end
+
+    it "raises InvalidConfigError (not a raw Psych error) on a YAML syntax error" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "config.yaml")
+        File.write(path, "gcs: [unterminated")
+
+        expect { Config.path = path }.to raise_error(Config::InvalidConfigError)
+      end
+    end
   end
 
   describe ".validate_gcs!" do

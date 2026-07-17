@@ -94,7 +94,7 @@ module Config
 
     def load_app_config
       Internal::Config::AppConfig.new(raw_data)
-    rescue Dry::Struct::Error => e
+    rescue Dry::Struct::Error, Psych::Exception => e
       raise InvalidConfigError, "invalid config: #{e.message}"
     end
 
