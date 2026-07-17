@@ -23,13 +23,22 @@ RSpec.describe LastFetchStore do
       expect(store.pending_at).to eq(pending)
     end
 
-    it "saves the confirmed_at before the update as rollback_at" do
+    it "saves the overwritten pending_at as rollback_at (nil when there was none)" do
       confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
       store.confirm_immediately!(at: confirmed)
 
       store.mark_pending!(at: Time.utc(2026, 7, 16, 9, 0, 0))
 
-      expect(store.load["rollback_at"]).to eq(confirmed.iso8601)
+      expect(store.rollback_at).to be_nil
+    end
+
+    it "saves the previous pending_at as rollback_at when one already existed" do
+      first_pending = Time.utc(2026, 7, 15, 9, 0, 0)
+      store.mark_pending!(at: first_pending)
+
+      store.mark_pending!(at: Time.utc(2026, 7, 16, 9, 0, 0))
+
+      expect(store.rollback_at).to eq(first_pending)
     end
 
     it "works from an empty store (no prior confirmed_at)" do
@@ -43,8 +52,9 @@ RSpec.describe LastFetchStore do
   end
 
   describe "#confirm!" do
-    it "promotes pending_at to confirmed_at and clears pending/rollback" do
-      store.confirm_immediately!(at: Time.utc(2026, 7, 14, 9, 0, 0))
+    it "promotes pending_at to confirmed_at and saves the old confirmed_at as rollback_at" do
+      old_confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
+      store.confirm_immediately!(at: old_confirmed)
       pending = Time.utc(2026, 7, 16, 9, 0, 0)
       store.mark_pending!(at: pending)
 
@@ -52,7 +62,7 @@ RSpec.describe LastFetchStore do
 
       expect(store.confirmed_at).to eq(pending)
       expect(store.pending_at).to be_nil
-      expect(store.load["rollback_at"]).to be_nil
+      expect(store.rollback_at).to eq(old_confirmed)
     end
 
     it "does nothing when there is no pending_at" do
@@ -66,7 +76,7 @@ RSpec.describe LastFetchStore do
   end
 
   describe "#rollback!" do
-    it "keeps confirmed_at unchanged and clears pending/rollback" do
+    it "keeps confirmed_at unchanged and clears pending_at" do
       confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
       store.confirm_immediately!(at: confirmed)
       store.mark_pending!(at: Time.utc(2026, 7, 16, 9, 0, 0))
@@ -75,7 +85,57 @@ RSpec.describe LastFetchStore do
 
       expect(store.confirmed_at).to eq(confirmed)
       expect(store.pending_at).to be_nil
-      expect(store.load["rollback_at"]).to be_nil
+    end
+
+    # 確認プロンプトを誤って連打して pending を消しても復旧できるように、捨てた
+    # pending_at を rollback_at へ残す。
+    it "saves the discarded pending_at as rollback_at for recovery" do
+      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
+      pending = Time.utc(2026, 7, 16, 9, 0, 0)
+      store.confirm_immediately!(at: confirmed)
+      store.mark_pending!(at: pending)
+
+      store.rollback!
+
+      expect(store.rollback_at).to eq(pending)
+    end
+  end
+
+  describe "#restore!" do
+    it "restores the rolled-back pending_at, undoing an accidental rollback" do
+      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
+      pending = Time.utc(2026, 7, 16, 9, 0, 0)
+      store.confirm_immediately!(at: confirmed)
+      store.mark_pending!(at: pending)
+      store.rollback!
+
+      store.restore!
+
+      expect(store.pending_at).to eq(pending)
+      expect(store.confirmed_at).to eq(confirmed)
+    end
+
+    it "does nothing when there is no rolled-back value" do
+      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
+      store.confirm_immediately!(at: confirmed)
+
+      store.restore!
+
+      expect(store.pending_at).to be_nil
+      expect(store.confirmed_at).to eq(confirmed)
+    end
+
+    # restore の直後にもう一度 rollback すれば元の状態へ戻せる（Undo/Redo が対称）。
+    it "is reversible: rollback after restore returns to the rolled-back state" do
+      pending = Time.utc(2026, 7, 16, 9, 0, 0)
+      store.mark_pending!(at: pending)
+      store.rollback!
+
+      store.restore!
+      store.rollback!
+
+      expect(store.pending_at).to be_nil
+      expect(store.rollback_at).to eq(pending)
     end
   end
 
@@ -88,7 +148,15 @@ RSpec.describe LastFetchStore do
 
       expect(store.confirmed_at).to eq(published_at)
       expect(store.pending_at).to be_nil
-      expect(store.load["rollback_at"]).to be_nil
+    end
+
+    it "saves the overwritten confirmed_at as rollback_at" do
+      old_confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
+      store.confirm_immediately!(at: old_confirmed)
+
+      store.confirm_immediately!(at: Time.utc(2026, 7, 16, 9, 0, 0))
+
+      expect(store.rollback_at).to eq(old_confirmed)
     end
   end
 

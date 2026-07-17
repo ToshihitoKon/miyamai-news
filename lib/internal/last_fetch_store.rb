@@ -11,7 +11,9 @@ require "json"
 # なので例外、#confirm_immediately! を使う）。そのため状態は3つ持つ。
 #   confirmed_at: 確定済みの収集window起点。ScriptGenerator が収集の since に使う値。
 #   pending_at:   直近の実行で新規収集が起きたが、まだ確認していない時刻。
-#   rollback_at:  pending_at がセットされる直前の confirmed_at（監査用）。
+#   rollback_at:  直近の破壊的操作で失われた主要な値を退避する 1 段の Undo バッファ。
+#                 rollback! で pending_at を捨てるときもここへ残すので、確認プロンプトを
+#                 誤って連打して pending を消しても、last_fetch.json を見れば復旧できる。
 class LastFetchStore
   def initialize(work_dir:)
     @work_dir = work_dir
@@ -36,33 +38,49 @@ class LastFetchStore
   # 未確認の到達時刻。無い/壊れていれば nil。
   def pending_at = parse_time(load["pending_at"])
 
+  # 直近の rollback! で捨てられた pending_at。無ければ nil。誤って rollback した pending を
+  # 手動復旧するときの参照用。
+  def rollback_at = parse_time(load["rollback_at"])
+
   # 新規収集が発生した実行の完了時に呼ぶ。confirmed_at は動かさず、pending_at を at に
-  # 進め、rollback_at に更新前の confirmed_at を退避する。
+  # 進める。上書きで失う更新前の pending_at を rollback_at へ退避する（通常は nil）。
   def mark_pending!(at:)
     data = load
-    write(data.merge("pending_at" => at.iso8601, "rollback_at" => data["confirmed_at"]))
+    write(data.merge("pending_at" => at.iso8601, "rollback_at" => data["pending_at"]))
   end
 
-  # pending_at を confirmed_at へ昇格し、pending_at/rollback_at をクリアする。
-  # pending_at が無ければ何もしない（冪等）。
+  # pending_at を confirmed_at へ昇格し、pending_at をクリアする。昇格で捨てる更新前の
+  # confirmed_at を rollback_at へ退避する。pending_at が無ければ何もしない（冪等）。
   def confirm!
     data = load
     return unless data["pending_at"]
 
-    write(data.merge("confirmed_at" => data["pending_at"], "pending_at" => nil, "rollback_at" => nil))
+    write(data.merge("confirmed_at" => data["pending_at"], "pending_at" => nil, "rollback_at" => data["confirmed_at"]))
   end
 
-  # pending_at/rollback_at をクリアするだけ。confirmed_at は現状維持のまま変えない
-  # （そもそも rollback_at と同じ値のはずなので、値を書き戻す必要がない）。
+  # pending_at を捨てる。confirmed_at は現状維持のまま変えない。捨てる pending_at を
+  # rollback_at へ退避するので、確認プロンプトを誤って連打しても後から復旧できる。
   def rollback!
     data = load
-    write(data.merge("pending_at" => nil, "rollback_at" => nil))
+    write(data.merge("pending_at" => nil, "rollback_at" => data["pending_at"]))
+  end
+
+  # 直前の rollback! を取り消す。rollback_at を pending_at へ戻す。現在 pending_at が
+  # あればそれを rollback_at へ退避するので、restore を挟んでもう一度 rollback すれば
+  # 元に戻せる（Undo と Redo が対称になる）。rollback_at が無ければ何もしない（冪等）。
+  def restore!
+    data = load
+    return unless data["rollback_at"]
+
+    write(data.merge("pending_at" => data["rollback_at"], "rollback_at" => data["pending_at"]))
   end
 
   # publish 完了時に呼ぶ。pending を経由せず confirmed_at を即座に at へ確定する
-  # （公開自体が確定行為なので対話を挟まない）。
+  # （公開自体が確定行為なので対話を挟まない）。上書きで失う更新前の confirmed_at を
+  # rollback_at へ退避する。
   def confirm_immediately!(at:)
-    write("confirmed_at" => at.iso8601, "pending_at" => nil, "rollback_at" => nil)
+    data = load
+    write(data.merge("confirmed_at" => at.iso8601, "pending_at" => nil, "rollback_at" => data["confirmed_at"]))
   end
 
   private

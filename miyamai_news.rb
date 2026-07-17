@@ -35,6 +35,7 @@ def parse_args(argv)
     o.on("--clean-archive", "permanently delete archived artifacts under archived/") { opts[:clean_archive] = true }
     o.on("--ui-only", "regenerate index.html / manifest.json only") { opts[:ui_only] = true }
     o.on("--confirm-fetch", "confirm the pending fetch window (use after reviewing the artifacts)") { opts[:confirm_fetch] = true }
+    o.on("--restore-fetch", "restore the fetch window discarded by the last rollback (undo an accidental rollback)") { opts[:restore_fetch] = true }
     o.on("--auto-confirm", "auto-confirm the pending fetch window without prompting (for CI)") { opts[:auto_confirm] = true }
     o.on("--digest-only", "generate news selection/summary only, then stop") { opts[:digest_only] = true }
     o.on("--script-only", "generate the script only, then stop") { opts[:script_only] = true }
@@ -61,12 +62,12 @@ end
 ARGS = parse_args(ARGV)
 
 # clean系・ui_only は pipeline.mode とは無関係だが、実際には Publisher（GCS操作）を
-# 経由するため gcs セクションだけは要求する。confirm_fetch は work/last_fetch.json のみを
-# 触り GCS も pipeline.mode も伴わないので検証を全てスキップする。それ以外は各コンポーネント
-# が実行中に MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な
-# config が揃っているか一括で検証する。Config.path= は代入した時点で即座に新しいパスから
-# 読み直す設計（lib/internal/config.rb 参照）なので、--config 指定時の読み込みエラーも
-# このガードでまとめて拾えるよう同じ begin ブロック内に置く。
+# 経由するため gcs セクションだけは要求する。confirm_fetch/restore_fetch は
+# work/last_fetch.json のみを触り GCS も pipeline.mode も伴わないので検証を全てスキップする。
+# それ以外は各コンポーネントが実行中に MissingKeyError で落ちて中途半端に失敗するのを
+# 避けるため、起動直後に必要な config が揃っているか一括で検証する。Config.path= は代入した
+# 時点で即座に新しいパスから読み直す設計（lib/internal/config.rb 参照）なので、--config
+# 指定時の読み込みエラーもこのガードでまとめて拾えるよう同じ begin ブロック内に置く。
 begin
   # cwd 基準で解決する（一般的な CLI の期待動作。__dir__ 基準だとスクリプト位置基準になり、
   # リポジトリ外のディレクトリから相対パスを指定したときに意図と異なる場所を読んでしまう）。
@@ -74,7 +75,7 @@ begin
 
   if ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
     Config.validate_gcs!
-  elsif !ARGS[:confirm_fetch]
+  elsif !ARGS[:confirm_fetch] && !ARGS[:restore_fetch]
     Config.validate_for!(Config.mode)
   end
 rescue Config::MissingConfigError, Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
@@ -131,6 +132,11 @@ def main
     return
   end
 
+  if args[:restore_fetch]
+    run_restore_fetch
+    return
+  end
+
   # 番組コンテキスト（日付・slot）は実行時刻から Episode が導く。--date/--slot の明示
   # 指定があればそれを尊重する（Episode 側で自動判定を上書き）。
   episode = Episode.new(now: args[:date] || Time.now, date: args[:date]&.to_date, slot: args[:slot])
@@ -143,21 +149,24 @@ def main
   if args[:digest_only]
     ensure_mode_allows!("digest")
     generator = run_digest(episode)
-    mark_fetch_pending! if generator.fetched_news?
+    mark_fetch_pending!(generator) if generator.fetched_news?
     return
   end
 
   if args[:script_only]
     ensure_mode_allows!("synthesize")
     generator = run_script(episode)
-    mark_fetch_pending! if generator.fetched_news?
+    mark_fetch_pending!(generator) if generator.fetched_news?
     return
   end
 
   if args[:publish_only]
     ensure_mode_allows!("publish")
     run_publish(episode)
-    confirm_fetch_immediately!
+    # publish_only は新規 fetch をせず既存成果物を公開するだけなので、収集 window を
+    # 新しい時刻に進めてはいけない（fetch していない時刻で確定すると取りこぼす）。
+    # pending が残っていれば公開＝確定として昇格させ、無ければ何もしない。
+    confirm_pending_fetch!
     return
   end
 
@@ -175,20 +184,33 @@ def main
 
   # publish まで到達するときだけ「公開＝確定」を即座に反映する。到達しないときは、
   # 新規収集が起きていれば pending 化するだけに留める（人間の確認を待つ）。
+  # publish 到達でも、新規 fetch をせず既存 news を再利用しただけなら収集 window を
+  # 新しい時刻へ進めてはいけない（進めると前回確定〜今回の間に登場した記事を取りこぼす）。
+  # その場合は publish_only と同じく pending が残っていれば昇格するだけに留める。
   if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
     run_publish(episode)
-    confirm_fetch_immediately!
+    generator.fetched_news? ? confirm_fetch_immediately!(generator) : confirm_pending_fetch!
   elsif generator.fetched_news?
-    mark_fetch_pending!
+    mark_fetch_pending!(generator)
   end
 end
 
-def mark_fetch_pending!
-  LastFetchStore.new(work_dir: WORK_DIR).mark_pending!(at: Time.now)
+# 収集 window の起点には、実行完了時刻(Time.now)ではなく generator が FeedCache#fetch に
+# 渡した収集基準時刻を使う。新規 entry の seen_at はこの時刻で記録されるので、次回はここを
+# since に続きから拾える。Time.now を使うと、実行に時間がかかった場合に seen_at が開始〜
+# 完了の間に刻まれた記事を次回取りこぼす。
+def mark_fetch_pending!(generator)
+  LastFetchStore.new(work_dir: WORK_DIR).mark_pending!(at: generator.collect_since_anchor)
 end
 
-def confirm_fetch_immediately!
-  LastFetchStore.new(work_dir: WORK_DIR).confirm_immediately!(at: Time.now)
+def confirm_fetch_immediately!(generator)
+  LastFetchStore.new(work_dir: WORK_DIR).confirm_immediately!(at: generator.collect_since_anchor)
+end
+
+# publish_only 用。新規 fetch をしていないので新しい時刻では確定せず、pending が
+# 残っていればそれを昇格するだけ（無ければ冪等に何もしない）。
+def confirm_pending_fetch!
+  LastFetchStore.new(work_dir: WORK_DIR).confirm!
 end
 
 # 前回実行で pending_at が残っていれば、確定させるかロールバックするか尋ねる。
@@ -229,6 +251,20 @@ def run_confirm_fetch
 
   store.confirm!
   warn "confirmed fetch window: #{pending}"
+end
+
+# 直前の rollback で捨てた収集windowを pending へ戻す独立コマンド。確認プロンプトを
+# 誤って連打して pending を消してしまったときの復旧に使う。
+def run_restore_fetch
+  store = LastFetchStore.new(work_dir: WORK_DIR)
+  discarded = store.rollback_at
+  unless discarded
+    warn "no rolled-back fetch window to restore"
+    return
+  end
+
+  store.restore!
+  warn "restored fetch window to pending: #{discarded}"
 end
 
 # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。

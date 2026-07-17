@@ -187,4 +187,15 @@ RSpec.describe ScriptGenerator do
       expect(generator.fetched_news?).to be false
     end
   end
+
+  describe "#collect_since_anchor" do
+    # 次回の収集 window 起点として保存すべき時刻。新規 entry の seen_at はこの時刻で
+    # 記録されるので、実行完了時刻ではなく収集基準時刻(episode.now)でなければ、実行に
+    # 時間がかかった場合に seen_at がその間に刻まれた記事を次回取りこぼす。
+    it "returns the collection anchor (episode.now), not the wall clock at completion" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      expect(generator.collect_since_anchor).to eq(now)
+    end
+  end
 end

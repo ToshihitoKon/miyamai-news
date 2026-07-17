@@ -91,6 +91,12 @@ class ScriptGenerator
   # 意味を持つ（呼ぶ前は常に false）。
   def fetched_news? = @fetched_news == true
 
+  # この収集で FeedCache#fetch に渡した基準時刻。新規 entry の seen_at はこの時刻で
+  # 記録されるので、次回の収集 window 起点（confirmed_at）にはこれを使う。実行完了時刻
+  # (Time.now)ではなく開始時刻を使うのは、実行に時間がかかった場合に seen_at が
+  # 開始〜完了の間に刻まれた記事を次回取りこぼさないため。
+  def collect_since_anchor = @now
+
   private
 
   # --- 設定値 ---
