@@ -160,7 +160,7 @@ def main
   # そのタイミング制御は ScriptGenerator に任せ、対話そのものはここで on_before_fetch として渡す。
   generator = ScriptGenerator.new(
     work_dir: WORK_DIR, episode: episode,
-    on_before_fetch: -> { resolve_pending_fetch!(auto_confirm: args[:auto_confirm]) }
+    on_before_fetch: method(:resolve_pending_fetch!)
   )
 
   if args[:digest_only]
@@ -224,12 +224,12 @@ end
 # --auto-confirm 指定時は対話せず自動確定する（CI等の非対話実行向け）。
 # デフォルト(Enter/N)はロールバック側（安全側）: 確認を怠って収集windowが誤って
 # 進むより、取りこぼしが起きない方を既定にする。
-def resolve_pending_fetch!(auto_confirm:)
+def resolve_pending_fetch!
   store = LastFetchStore.new(work_dir: WORK_DIR)
   pending = store.pending_at
   return unless pending
 
-  if auto_confirm
+  if ARGS[:auto_confirm]
     store.confirm!
     warn "auto-confirmed pending fetch window: #{pending}"
     return
