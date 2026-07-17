@@ -1,6 +1,6 @@
 # パイプラインの実行段階。どこまで自動的に進めるかの上限を決める。CLIフラグ
-# (--script-only/--generate-only/--publish-only 等)はこの上限の範囲内でしか
-# 使えず、フラグなし実行はこの上限まで自動的に進む。
+# (--digest-only/--script-only/--synthesize-only/--publish-only 等)はこの上限の
+# 範囲内でしか使えず、フラグなし実行はこの上限まで自動的に進む。
 #   digest:     RSS収集 → AIによるカテゴリ別選別 → facts抽出(ニュース要約)まで。
 #               外部ツール(VOICEPEAK/ffmpeg/gcloud)やGCSバケットに依存しない。
 #   synthesize: digest の続きから音声合成・BGM合成まで。dist/ に mp3 を書き出す。

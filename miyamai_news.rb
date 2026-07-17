@@ -206,7 +206,7 @@ end
 
 def run_publish(episode)
   mp3_path = episode_mp3_path(episode)
-  abort "mp3 not found: #{mp3_path} (run generate first)" unless File.exist?(mp3_path)
+  abort "mp3 not found: #{mp3_path} (run --synthesize-only first)" unless File.exist?(mp3_path)
 
   used_path = episode_used_path(episode)
   used_path = nil unless used_path && File.exist?(used_path)

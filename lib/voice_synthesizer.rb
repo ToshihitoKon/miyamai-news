@@ -37,7 +37,7 @@ class VoiceSynthesizer
 
   # 台本テキストを合成し、生成した mp3 のパスを返す。
   # 同じ回の voice_path が既に存在するなら、VOICEPEAK を一切起動せずそれを再利用する
-  # （--generate-only を使ったブースト値の調整・確認など、音声だけ作り直したい場合に
+  # （--synthesize-only を使ったブースト値の調整・確認など、音声だけ作り直したい場合に
   # 毎回フルで合成し直さずに済む）。
   def synthesize(script_path)
     if File.exist?(voice_path)
