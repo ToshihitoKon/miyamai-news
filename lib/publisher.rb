@@ -6,8 +6,10 @@ require "json"
 require "cgi"
 require "shellwords"
 require "tmpdir"
+require "open3"
 require_relative "internal/config"
 require_relative "internal/template_renderer"
+require_relative "internal/command_error"
 
 class Publisher
   # サイト全体を指す固定の番組名。archives.csv の title 列（回ごとに日付が付く）とは別物。
@@ -73,17 +75,36 @@ class Publisher
   end
 
   # 指定オブジェクトが GCS のバケットに存在するか。
+  # 「オブジェクトが存在しない」（gcloud 自体は正常応答）と「確認に失敗した」
+  # （ネットワーク障害・認証失効・gcloud 不在等）を区別する。後者を false 扱いすると、
+  # archives_exist? 経由で「初回で台帳が無い」と誤認し、既存 archives.csv を新規1行で
+  # 上書きして過去エピソードの一覧を全消失させかねないため、後者は例外にして呼び出し元で
+  # 中断させる。
   def object_exists?(object)
-    system("gcloud", "storage", "ls", "gs://#{@bucket}/#{object}",
-      out: File::NULL, err: File::NULL)
+    _out, err, status = Open3.capture3("gcloud", "storage", "ls", "gs://#{@bucket}/#{object}")
+    return true if status.success?
+    # gcloud storage ls は「オブジェクトが無い」場合もこのメッセージで exit code 1 を
+    # 返す。exit code だけでは他の失敗（認証切れ・ネットワーク障害等）と区別できないため、
+    # メッセージの内容で判定する。
+    return false if err.include?("matched no objects")
+
+    raise "gcloud storage ls failed (not a \"no objects\" result, treating as a transient " \
+      "failure to avoid mistaking it for absence): #{Internal::CommandError.tail(err)}"
+  rescue Errno::ENOENT => e
+    raise "gcloud not found: #{e.message}"
   end
 
   # archived/ プレフィックス配下(update_archives が退避させた保持件数超過分)を
   # まとめて実削除する。publish 時の隔離処理とは独立して、明示的に呼ばれたときだけ動く。
-  # archived/ が空の場合はワイルドカードがマッチせず gcloud が失敗するが、
-  # 「削除するものが無かった」だけなので abort しない。
+  # archived/ が空の場合はワイルドカードがマッチせず gcloud storage rm がエラーになるが、
+  # 「削除するものが無かった」だけなので abort しない。それ以外の失敗
+  # （認証切れ・ネットワーク障害等）は区別して abort する。
   def clean_archive
-    system(["gcloud", "storage", "rm", "--recursive", "gs://#{@bucket}/archived/**"].shelljoin)
+    _out, err, status = Open3.capture3("gcloud", "storage", "rm", "--recursive", "gs://#{@bucket}/archived/**")
+    unless status.success? || err.include?("matched no objects")
+      abort("gcloud storage rm failed: #{Internal::CommandError.tail(err)}")
+    end
+
     puts "done: cleaned gs://#{@bucket}/archived/"
   end
 
@@ -207,6 +228,8 @@ class Publisher
   # 「初回でオブジェクトが存在しない」場合のみ空配列で開始し、
   # ネットワーク障害等の取得失敗では abort する。
   # (取得失敗を空扱いすると、既存台帳を空で上書きして全消失させてしまうため)
+  # archives_exist? 自体がネットワーク障害等では例外を送出する（object_exists? 参照）ので、
+  # ここで rescue せず呼び出し元まで伝播させて publish 全体を中断させる。
   def fetch_existing_archives(local_csv)
     return [] unless archives_exist?
 
