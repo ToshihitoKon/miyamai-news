@@ -45,6 +45,58 @@ RSpec.describe Publisher do
     end
   end
 
+  describe "#upload_content" do
+    let(:publisher) { described_class.new(bucket: "test-bucket") }
+
+    it "passes gcloud a cp invocation with the content-type and the tempfile that holds the content" do
+      captured = nil
+      written = nil
+      allow(publisher).to receive(:system) do |*args, **_opts|
+        captured = args
+        # gcloud に渡す直前の一時ファイルの中身を確認する（cp 先ではなく cp 元）。
+        written = File.read(args[-2])
+        true
+      end
+
+      publisher.send(:upload_content, "feed.xml", "<feed/>", content_type: "application/atom+xml; charset=utf-8")
+
+      expect(captured[0, 3]).to eq(%w[gcloud storage cp])
+      expect(captured).to include("--content-type=application/atom+xml; charset=utf-8")
+      expect(captured.last).to eq("gs://test-bucket/feed.xml")
+      expect(written).to eq("<feed/>")
+    end
+
+    it "adds --cache-control only when given" do
+      with_cc = nil
+      without_cc = nil
+      allow(publisher).to receive(:system) do |*args, **_opts|
+        with_cc.nil? ? (with_cc = args) : (without_cc = args)
+        true
+      end
+
+      publisher.send(:upload_content, "index.html", "<html/>",
+        content_type: "text/html; charset=utf-8", cache_control: "public, max-age=300")
+      publisher.send(:upload_content, "manifest.json", "{}",
+        content_type: "application/manifest+json; charset=utf-8")
+
+      expect(with_cc).to include("--cache-control=public, max-age=300")
+      expect(without_cc.none? { |a| a.start_with?("--cache-control") }).to be true
+    end
+
+    it "removes the tempfile after upload (no leftover)" do
+      tempfile_path = nil
+      allow(publisher).to receive(:system) do |*args, **_opts|
+        tempfile_path = args[-2]
+        true
+      end
+
+      publisher.send(:upload_content, "manifest.json", "{}", content_type: "application/manifest+json")
+
+      expect(tempfile_path).not_to be_nil
+      expect(File.exist?(tempfile_path)).to be false
+    end
+  end
+
   describe "#run with retention_episodes" do
     # spec/fixtures/config.yaml の gcs.retention_episodes: 5 を前提に、
     # 既存 archives.csv へ 5 件の過去回を仕込み、保持件数超過分が

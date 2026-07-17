@@ -4,8 +4,7 @@ require "date"
 require "csv"
 require "json"
 require "cgi"
-require "shellwords"
-require "tmpdir"
+require "tempfile"
 require "open3"
 require_relative "internal/config"
 require_relative "internal/template_renderer"
@@ -63,16 +62,13 @@ class Publisher
   # 新しい回を公開したとの誤解（Atom の <updated> 更新による通知）を避けつつ、
   # 表示だけ即時反映したい場合に使う。
   def republish_ui
-    local_csv = File.join(Dir.tmpdir, "miyamai_archives_#{Process.pid}.csv")
-    rows = fetch_existing_archives(local_csv)
+    rows = fetch_existing_archives
     abort("archives.csv does not exist yet (nothing published)") if rows.empty?
 
     write_index(rows)
     write_manifest
 
     puts "done (UI only): #{public_url('index.html')}"
-  ensure
-    File.delete(local_csv) if local_csv && File.exist?(local_csv)
   end
 
   # 指定オブジェクトが GCS のバケットに存在するか。
@@ -129,14 +125,33 @@ class Publisher
     "#{public_base}/#{@bucket}/#{object}"
   end
 
-  def gcloud_storage(*args)
-    cmd = ["gcloud", "storage", *args].shelljoin
-    system(cmd) || abort("gcloud storage failed: #{cmd}")
+  # 生成した文字列を一時ファイル経由で GCS の object にアップロードする。
+  # index.html / feed.xml / manifest.json / archives.csv の書き出しはすべてこの形。
+  # Tempfile.create のブロックを抜けると一時ファイルは自動削除される。
+  def upload_content(object, content, content_type:, cache_control: nil)
+    Tempfile.create("miyamai") do |f|
+      f.write(content)
+      f.flush
+      args = ["cp", "--content-type=#{content_type}"]
+      args << "--cache-control=#{cache_control}" if cache_control
+      gcloud_storage(*args, f.path, "gs://#{@bucket}/#{object}")
+    end
   end
 
+  # gcloud を配列引数で直接起動する（シェルを介さない。ワイルドカードは gcloud 自身が
+  # 解釈するのでシェル展開は不要で、エスケープの考慮も要らない）。
+  # エラー方針: publish の途中で失敗したら公開物が中途半端になるため abort で即中断する。
+  def gcloud_storage(*args)
+    system("gcloud", "storage", *args) ||
+      abort("gcloud storage failed: #{["gcloud", "storage", *args].join(' ')}")
+  end
+
+  # archived/ への退避専用。gcloud_storage と違い raise する（呼び出し元の
+  # archive_episode_files が rescue して、退避に失敗した回だけスキップし publish は続ける）。
   def gcloud_storage_mv(object)
-    cmd = ["gcloud", "storage", "mv", "gs://#{@bucket}/#{object}", "gs://#{@bucket}/archived/#{object}"].shelljoin
-    raise "gcloud storage mv failed: #{cmd}" unless system(cmd)
+    args = ["mv", "gs://#{@bucket}/#{object}", "gs://#{@bucket}/archived/#{object}"]
+    system("gcloud", "storage", *args) ||
+      raise("gcloud storage mv failed: #{["gcloud", "storage", *args].join(' ')}")
   end
 
   # --- mp3 ---------------------------------------------------------------
@@ -191,9 +206,7 @@ class Publisher
   # (削除はしない。実削除は Publisher#clean_archive で行う)。
 
   def update_archives(filename, used_news = "")
-    local_csv = File.join(Dir.tmpdir, "miyamai_archives_#{Process.pid}.csv")
-
-    rows = fetch_existing_archives(local_csv)
+    rows = fetch_existing_archives
     # 同じファイル名(=同じ日の同じ時間帯)の回があれば差し替える。
     # 1日に朝昼夜と複数回ある場合、date は同じでも filename が異なるので共存する。
     rows.reject! { |r| r[1] == filename }
@@ -207,12 +220,10 @@ class Publisher
     rows = rows.first(retention_episodes)
     expired_rows.each { |r| archive_episode_files(r[1]) }
 
-    CSV.open(local_csv, "w") { |csv| rows.each { |r| csv << r } }
-    gcloud_storage("cp", "--content-type=text/csv", local_csv, "gs://#{@bucket}/archives.csv")
+    csv = CSV.generate { |out| rows.each { |r| out << r } }
+    upload_content("archives.csv", csv, content_type: "text/csv")
 
     rows
-  ensure
-    File.delete(local_csv) if local_csv && File.exist?(local_csv)
   end
 
   # 保持件数を超えた回の実ファイルを archived/ へ退避する。used.txt/transcript.txt は
@@ -225,20 +236,22 @@ class Publisher
     end
   end
 
-  # 既存 archives.csv を取得する。
+  # 既存 archives.csv を取得して行配列で返す。
   # 「初回でオブジェクトが存在しない」場合のみ空配列で開始し、
   # ネットワーク障害等の取得失敗では abort する。
   # (取得失敗を空扱いすると、既存台帳を空で上書きして全消失させてしまうため)
   # archives_exist? 自体がネットワーク障害等では例外を送出する（object_exists? 参照）ので、
   # ここで rescue せず呼び出し元まで伝播させて publish 全体を中断させる。
-  def fetch_existing_archives(local_csv)
+  def fetch_existing_archives
     return [] unless archives_exist?
 
-    ok = system("gcloud", "storage", "cp", "gs://#{@bucket}/archives.csv", local_csv,
-      out: File::NULL, err: File::NULL)
-    abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)") unless ok && File.exist?(local_csv)
+    Tempfile.create("miyamai_archives") do |f|
+      ok = system("gcloud", "storage", "cp", "gs://#{@bucket}/archives.csv", f.path,
+        out: File::NULL, err: File::NULL)
+      abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)") unless ok
 
-    CSV.read(local_csv)
+      CSV.read(f.path)
+    end
   end
 
   def archives_exist?
@@ -248,14 +261,9 @@ class Publisher
   # --- index.html --------------------------------------------------------
 
   def write_index(rows)
-    local_html = File.join(Dir.tmpdir, "miyamai_index_#{Process.pid}.html")
-    File.write(local_html, render_html(rows))
-    gcloud_storage("cp",
-      "--content-type=text/html; charset=utf-8",
-      "--cache-control=public, max-age=300",
-      local_html, "gs://#{@bucket}/index.html")
-  ensure
-    File.delete(local_html) if local_html && File.exist?(local_html)
+    upload_content("index.html", render_html(rows),
+      content_type: "text/html; charset=utf-8",
+      cache_control: "public, max-age=300")
   end
 
   def render_html(rows)
@@ -287,11 +295,8 @@ class Publisher
   # URL リンク化した HTML で入れる。used_news が無い過去分は content を空にする。
 
   def write_feed(rows)
-    local_xml = File.join(Dir.tmpdir, "miyamai_feed_#{Process.pid}.xml")
-    File.write(local_xml, render_feed(rows))
-    gcloud_storage("cp", "--content-type=application/atom+xml; charset=utf-8", local_xml, "gs://#{@bucket}/feed.xml")
-  ensure
-    File.delete(local_xml) if local_xml && File.exist?(local_xml)
+    upload_content("feed.xml", render_feed(rows),
+      content_type: "application/atom+xml; charset=utf-8")
   end
 
   def render_feed(rows)
@@ -344,11 +349,8 @@ class Publisher
   # アイコンは正方形が必要なので、横長の cover_image ではなく icon_image を使う。
 
   def write_manifest
-    local_json = File.join(Dir.tmpdir, "miyamai_manifest_#{Process.pid}.json")
-    File.write(local_json, render_manifest)
-    gcloud_storage("cp", "--content-type=application/manifest+json; charset=utf-8", local_json, "gs://#{@bucket}/manifest.json")
-  ensure
-    File.delete(local_json) if local_json && File.exist?(local_json)
+    upload_content("manifest.json", render_manifest,
+      content_type: "application/manifest+json; charset=utf-8")
   end
 
   def render_manifest
