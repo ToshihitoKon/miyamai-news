@@ -112,6 +112,56 @@ RSpec.describe Publisher do
     end
   end
 
+  describe "#render_feed_entry" do
+    let(:publisher) { described_class.new(date: Date.new(2026, 7, 14)) }
+
+    def content_of(xml)
+      xml[%r{<content type="html">(.*)</content>}m, 1]
+    end
+
+    it "escapes used_news so it survives XML-decode-then-HTML-parse without becoming markup" do
+      used_news = "・<dialog>要素の新機能\n   https://example.com/a\n"
+
+      xml = publisher.send(:render_feed_entry, "2026-07-14", "miyamai_news_20260714_morning.mp3",
+        "宮舞モカの技術ニュース", used_news, "2026-07-14T00:00:00Z")
+      content = content_of(xml)
+
+      # XML デコードしても <dialog> が実タグとして残らないこと
+      # （h() が一段のみだと &lt;dialog&gt; まで戻り、リーダー側で実タグ化してしまう）。
+      xml_decoded = CGI.unescapeHTML(content)
+      expect(xml_decoded).to include("&lt;dialog&gt;")
+      expect(xml_decoded).not_to include("<dialog>")
+    end
+
+    it "preserves line breaks as <br> after both decode steps" do
+      used_news = "1行目\n2行目\n"
+
+      xml = publisher.send(:render_feed_entry, "2026-07-14", "miyamai_news_20260714_morning.mp3",
+        "宮舞モカの技術ニュース", used_news, "2026-07-14T00:00:00Z")
+      xml_decoded = CGI.unescapeHTML(content_of(xml))
+
+      expect(xml_decoded).to include("1行目<br>")
+      expect(xml_decoded).to include("2行目<br>")
+    end
+
+    it "turns URLs into anchor tags after both decode steps" do
+      used_news = "参考: https://example.com/a\n"
+
+      xml = publisher.send(:render_feed_entry, "2026-07-14", "miyamai_news_20260714_morning.mp3",
+        "宮舞モカの技術ニュース", used_news, "2026-07-14T00:00:00Z")
+      xml_decoded = CGI.unescapeHTML(content_of(xml))
+
+      expect(xml_decoded).to include('<a href="https://example.com/a">https://example.com/a</a>')
+    end
+
+    it "leaves content empty when used_news is blank" do
+      xml = publisher.send(:render_feed_entry, "2026-07-14", "miyamai_news_20260714_morning.mp3",
+        "宮舞モカの技術ニュース", "", "2026-07-14T00:00:00Z")
+
+      expect(content_of(xml)).to eq("")
+    end
+  end
+
   describe "#object_exists?" do
     it "delegates to `gcloud storage ls`" do
       publisher = described_class.new

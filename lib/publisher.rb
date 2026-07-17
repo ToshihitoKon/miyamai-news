@@ -297,7 +297,20 @@ class Publisher
       # (全エントリで同じ index.html を id にすると RSS リーダーが区別できない)。
       entry_id: public_url(fname),
       updated: feed_datetime(date, updated_at),
-      content: used_news.strip.empty? ? "" : h(used_news)).chomp
+      # content type="html" の中身は「XMLデコード後にHTMLとして解釈される」仕様なので、
+      # 組み立てた HTML 片(<br>/<a>を含む)をそのまま埋めるとタグとして解釈されてしまう。
+      # h() でもう一段 XML エスケープしてから埋め込む。
+      content: used_news.strip.empty? ? "" : h(used_news_html(used_news))).chomp
+  end
+
+  # used_news(改行区切りのプレーンテキスト)を、content type="html" 向けの HTML に組み立てる。
+  # index.html.erb 側の JS 表示（改行を無視せず、URL をリンク化する）と揃える。
+  # 手順: 本文を先に h() で丸ごとエスケープしてから URL をリンク化し、最後に改行を <br> に
+  # 変える（h() を先にかけないと、生成した <a> タグ自体がエスケープされてしまう）。
+  def used_news_html(used_news)
+    h(used_news)
+      .gsub(%r{https?://[^\s&]+}) { |url| %(<a href="#{url}">#{url}</a>) }
+      .gsub("\n", "<br>\n")
   end
 
   # --- manifest.json (PWA) -----------------------------------------------
