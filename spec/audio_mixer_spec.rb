@@ -50,15 +50,15 @@ RSpec.describe AudioMixer do
     end
 
     context "failure" do
-      it "raises when ffprobe fails" do
+      it "raises with the short stderr reason intact when ffprobe fails" do
         failure_status = instance_double(Process::Status, success?: false)
         allow(Open3).to receive(:capture3).and_return(["", "probe failed", failure_status])
 
         mixer = described_class.new(bgm_path: bgm_path)
-        expect { mixer.mix(voice_path, output_path) }.to raise_error(/ffprobe failed/)
+        expect { mixer.mix(voice_path, output_path) }.to raise_error(/ffprobe failed: probe failed/)
       end
 
-      it "raises when ffmpeg mix fails" do
+      it "raises with the short stderr reason intact when ffmpeg mix fails" do
         allow(Open3).to receive(:capture3) do |*cmd|
           if cmd.first == "ffprobe"
             ["12.5\n", "", success_status]
@@ -68,7 +68,7 @@ RSpec.describe AudioMixer do
         end
 
         mixer = described_class.new(bgm_path: bgm_path)
-        expect { mixer.mix(voice_path, output_path) }.to raise_error(/ffmpeg mix failed/)
+        expect { mixer.mix(voice_path, output_path) }.to raise_error(/ffmpeg mix failed: mix failed/)
       end
 
       it "aborts when the bgm file is missing" do

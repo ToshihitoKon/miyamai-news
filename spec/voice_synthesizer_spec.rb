@@ -68,7 +68,7 @@ RSpec.describe VoiceSynthesizer do
     end
 
     context "failure" do
-      it "retries a failed chunk with backoff and eventually raises after max_retries" do
+      it "retries a failed chunk with backoff and eventually raises with the short stderr reason intact" do
         failure_status = instance_double(Process::Status, success?: false)
         allow(Open3).to receive(:popen3) do |*_cmd|
           [StringIO.new, StringIO.new, StringIO.new("synthesis error"), fake_wait_thr(failure_status)]
@@ -76,7 +76,7 @@ RSpec.describe VoiceSynthesizer do
 
         synth = described_class.new(work_dir: work_dir, episode: episode)
 
-        expect { synth.synthesize(script_path) }.to raise_error(/VOICEPEAK synthesis failed/)
+        expect { synth.synthesize(script_path) }.to raise_error(/VOICEPEAK synthesis failed: synthesis error/)
         expect(Open3).to have_received(:popen3).exactly(synth.send(:max_retries) + 1).times
       end
 
