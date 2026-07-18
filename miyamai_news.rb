@@ -30,16 +30,19 @@ def parse_args(argv)
   opts = {}
   parser = OptionParser.new do |o|
     o.banner = "Usage: ruby miyamai_news.rb [options]"
-    o.on("--config PATH", "設定ファイルのパス（既定: config.yaml）") { |v| opts[:config] = v }
-    o.on("--clean", "work/ の掃除と公開済み dist/ 成果物の削除") { opts[:clean] = true }
-    o.on("--clean-archive", "archived/ 配下の退避済み成果物を完全削除") { opts[:clean_archive] = true }
-    o.on("--ui-only", "index.html / manifest.json のみ再生成") { opts[:ui_only] = true }
-    o.on("--digest-only", "ニュース選別・要約のみ生成して停止") { opts[:digest_only] = true }
-    o.on("--script-only", "台本のみ生成して停止") { opts[:script_only] = true }
-    o.on("--synthesize-only", "音声合成・BGM合成のみ（dist/ に書き出して終了）") { opts[:synthesize_only] = true }
-    o.on("--publish-only", "dist/ の該当回を公開のみ") { opts[:publish_only] = true }
-    o.on("--date DATE", "対象の日時（例: 2026-07-10）") { |v| opts[:date] = Time.parse(v) }
-    o.on("--slot SLOT", "対象の時間帯（#{Slot::JA_LABELS.keys.join('/')}）") do |v|
+    o.on("--config PATH", "path to the config file (default: config.yaml)") { |v| opts[:config] = v }
+    o.on("--clean", "clean work/ and delete published dist/ artifacts") { opts[:clean] = true }
+    o.on("--clean-archive", "permanently delete archived artifacts under archived/") { opts[:clean_archive] = true }
+    o.on("--ui-only", "regenerate index.html / manifest.json only") { opts[:ui_only] = true }
+    o.on("--confirm-fetch", "confirm the pending fetch window (use after reviewing the artifacts)") { opts[:confirm_fetch] = true }
+    o.on("--restore-fetch", "restore the fetch window discarded by the last rollback (undo an accidental rollback)") { opts[:restore_fetch] = true }
+    o.on("--auto-confirm", "auto-confirm the pending fetch window without prompting (for CI)") { opts[:auto_confirm] = true }
+    o.on("--digest-only", "generate news selection/summary only, then stop") { opts[:digest_only] = true }
+    o.on("--script-only", "generate the script only, then stop") { opts[:script_only] = true }
+    o.on("--synthesize-only", "voice/BGM synthesis only (write to dist/ and exit)") { opts[:synthesize_only] = true }
+    o.on("--publish-only", "publish the target episode from dist/ only") { opts[:publish_only] = true }
+    o.on("--date DATE", "target date (e.g. 2026-07-10)") { |v| opts[:date] = Time.parse(v) }
+    o.on("--slot SLOT", "target slot (#{Slot::JA_LABELS.keys.join('/')})") do |v|
       abort "invalid argument: --slot #{v} (must be one of: #{Slot::JA_LABELS.keys.join(', ')})" unless Slot::JA_LABELS.key?(v)
 
       opts[:slot] = v
@@ -59,11 +62,12 @@ end
 ARGS = parse_args(ARGV)
 
 # clean系・ui_only は pipeline.mode とは無関係だが、実際には Publisher（GCS操作）を
-# 経由するため gcs セクションだけは要求する。それ以外は各コンポーネントが実行中に
-# MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な config が
-# 揃っているか一括で検証する。Config.path= は代入した時点で即座に新しいパスから読み直す
-# 設計（lib/internal/config.rb 参照）なので、--config 指定時の読み込みエラーもこのガードで
-# まとめて拾えるよう同じ begin ブロック内に置く。
+# 経由するため gcs セクションだけは要求する。confirm_fetch/restore_fetch は
+# work/last_fetch.json のみを触り GCS も pipeline.mode も伴わないので検証を全てスキップする。
+# それ以外は各コンポーネントが実行中に MissingKeyError で落ちて中途半端に失敗するのを
+# 避けるため、起動直後に必要な config が揃っているか一括で検証する。Config.path= は代入した
+# 時点で即座に新しいパスから読み直す設計（lib/internal/config.rb 参照）なので、--config
+# 指定時の読み込みエラーもこのガードでまとめて拾えるよう同じ begin ブロック内に置く。
 begin
   # cwd 基準で解決する（一般的な CLI の期待動作。__dir__ 基準だとスクリプト位置基準になり、
   # リポジトリ外のディレクトリから相対パスを指定したときに意図と異なる場所を読んでしまう）。
@@ -71,7 +75,7 @@ begin
 
   if ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
     Config.validate_gcs!
-  else
+  elsif !ARGS[:confirm_fetch] && !ARGS[:restore_fetch]
     Config.validate_for!(Config.mode)
   end
 rescue Config::MissingConfigError, Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
@@ -102,7 +106,7 @@ def episode_transcript_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episo
 def ensure_mode_allows!(required_mode)
   return if Config::MODE_ORDER.fetch(Config.mode) >= Config::MODE_ORDER.fetch(required_mode)
 
-  abort "pipeline.mode=#{Config.mode} では #{required_mode} 以上を要求するこのフラグは実行できません"
+  abort "this flag requires pipeline.mode >= #{required_mode}, but pipeline.mode=#{Config.mode}"
 end
 
 def main
@@ -123,6 +127,16 @@ def main
     return
   end
 
+  if args[:confirm_fetch]
+    run_confirm_fetch
+    return
+  end
+
+  if args[:restore_fetch]
+    run_restore_fetch
+    return
+  end
+
   # 番組コンテキスト（日付・slot）は実行時刻から Episode が導く。--date/--slot の明示
   # 指定があればそれを尊重する（Episode 側で自動判定を上書き）。
   episode = Episode.new(now: args[:date] || Time.now, date: args[:date]&.to_date, slot: args[:slot])
@@ -130,30 +144,38 @@ def main
   FileUtils.mkdir_p(WORK_DIR)
   FileUtils.mkdir_p(DIST_DIR)
 
+  if args[:publish_only]
+    ensure_mode_allows!("publish")
+    run_publish(episode)
+    # publish_only は新規 fetch をせず既存成果物を公開するだけなので、収集 window を
+    # 新しい時刻に進めてはいけない（fetch していない時刻で確定すると取りこぼす）。
+    # pending が残っていれば公開＝確定として昇格させ、無ければ何もしない。
+    LastFetchStore.confirm!(work_dir: WORK_DIR)
+    return
+  end
+
+  # 前回 pending の確定/ロールバックは、収集の起点(since)を確定する直前＝新規 fetch が
+  # 実際に走る直前に ScriptGenerator が自分で尋ねる。既存 news スナップショットを再利用する
+  # 実行（例: --script-only の後にフラグなしで synthesize へ進む）は fetch しないので、確認は
+  # 出ない。auto_confirm は CI 等の非対話実行で確認を飛ばして自動確定するかどうか。
+  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode, auto_confirm: args[:auto_confirm] || false)
+
   if args[:digest_only]
     ensure_mode_allows!("digest")
-    run_digest(episode)
-    record_reached!("digest")
+    run_digest(generator)
+    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor) if generator.fetched_news?
     return
   end
 
   if args[:script_only]
     ensure_mode_allows!("synthesize")
-    run_script(episode)
-    return
-  end
-
-  if args[:publish_only]
-    ensure_mode_allows!("publish")
-    run_publish(episode)
-    record_reached!("publish")
+    run_script(generator)
+    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor) if generator.fetched_news?
     return
   end
 
   # フラグなしは pipeline.mode の上限まで、--synthesize-only は synthesize までを上限に、
-  # run_digest→run_synthesize→run_publish を順に呼ぶだけ。到達した最大 mode を最後に
-  # 一度だけ記録する（工程の途中で記録すると、スクリプト全体が完了する前に収集 window
-  # が進んでしまう）。
+  # run_digest→run_synthesize→run_publish を順に呼ぶだけ。
   if args[:synthesize_only]
     ensure_mode_allows!("synthesize")
     target_mode = "synthesize"
@@ -161,30 +183,68 @@ def main
     target_mode = Config.mode
   end
 
-  run_digest(episode)
-  run_synthesize(episode) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
-  run_publish(episode) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
+  run_digest(generator)
+  run_synthesize(episode, generator) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
 
-  record_reached!(target_mode)
+  # publish まで到達するときだけ「公開＝確定」を即座に反映する。到達しないときは、
+  # 新規収集が起きていれば pending 化するだけに留める（人間の確認を待つ）。
+  # 収集 window の起点には、実行完了時刻(Time.now)ではなく generator が FeedCache#fetch に
+  # 渡した収集基準時刻(collect_since_anchor)を使う。新規 entry の seen_at はこの時刻で
+  # 記録されるので、次回はここを since に続きから拾える。
+  # publish 到達でも、新規 fetch をせず既存 news を再利用しただけなら収集 window を
+  # 新しい時刻へ進めてはいけない（進めると前回確定〜今回の間に登場した記事を取りこぼす）。
+  # その場合は publish_only と同じく pending が残っていれば昇格するだけに留める。
+  if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
+    run_publish(episode)
+    if generator.fetched_news?
+      LastFetchStore.confirm_immediately!(work_dir: WORK_DIR, at: generator.collect_since_anchor)
+    else
+      LastFetchStore.confirm!(work_dir: WORK_DIR)
+    end
+  elsif generator.fetched_news?
+    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor)
+  end
 end
 
-def record_reached!(mode)
-  LastFetchStore.new(work_dir: WORK_DIR).record_reached!(mode: mode, at: Time.now)
+# pending中の収集windowを確認なしで即座に確定する独立コマンド。成果物を確認できた
+# タイミングで、次回実行を待たずに使う。
+def run_confirm_fetch
+  pending = LastFetchStore.pending_at(WORK_DIR)
+  unless pending
+    warn "no pending fetch window to confirm"
+    return
+  end
+
+  LastFetchStore.confirm!(work_dir: WORK_DIR)
+  warn "confirmed fetch window: #{pending}"
+end
+
+# 直前の人間操作（確定・pending破棄）を 1 段巻き戻す独立コマンド。間違って確定した、
+# あるいは確認プロンプトを誤って連打して pending を消したときの復旧に使う。
+def run_restore_fetch
+  unless LastFetchStore.restorable?(WORK_DIR)
+    warn "no fetch window operation to restore"
+    return
+  end
+
+  LastFetchStore.restore!(work_dir: WORK_DIR)
+  warn "restored fetch window to pending: #{LastFetchStore.pending_at(WORK_DIR)}"
 end
 
 # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
-def run_digest(episode)
-  facts_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).digest
+# 呼び出し元が渡した ScriptGenerator を使う。実行後は同じ generator の fetched_news? で
+# 新規収集が起きたかを判断する。
+def run_digest(generator)
+  facts_path = generator.digest
 
   warn "news facts: #{facts_path}"
 end
 
 # 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。
 # 中身を確認・手直ししたうえで、フラグなしで再実行すれば既存の台本を再利用して
-# 整形〜音声合成〜publish まで続きから進む。run_digest とは別系統（writer執筆まで
-# 進めるが tts 整形・音声合成はしない）なので、収集 window の記録は行わない。
-def run_script(episode)
-  script_path = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode).generate(format: false)
+# 整形〜音声合成〜publish まで続きから進む。
+def run_script(generator)
+  script_path = generator.generate(format: false)
 
   warn "script: #{script_path}"
 end
@@ -192,8 +252,9 @@ end
 # 台本執筆・tts整形・音声合成・BGM合成までを実行する。pipeline.mode: synthesize の
 # 到達点。ScriptGenerator#generate は内部で digest 相当の工程を呼ぶが、run_digest が
 # 作った中間ファイルがあれば再利用するだけなので、run_digest の後に呼んでも
-# AI を二重に呼ばない。
-def run_synthesize(episode)
+# AI を二重に呼ばない。generator は run_digest が返したインスタンスを引き継ぎ、
+# 収集が起きたかどうかの判定（fetched_news?）を最初の呼び出し時点のまま保つ。
+def run_synthesize(episode, generator)
   # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
   # index.html にクレジット表記を固定しているため（templates/index.html.erb 参照）、
   # 差し替え可能にはしていない。
@@ -202,7 +263,6 @@ def run_synthesize(episode)
   used_news_output = episode_used_path(episode)
   transcript_output = episode_transcript_path(episode)
 
-  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode)
   tts_script_path = generator.generate
   voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, episode: episode).synthesize(tts_script_path)
   AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)

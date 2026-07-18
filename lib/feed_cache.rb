@@ -50,8 +50,8 @@ class FeedCache
   end
 
   # 1 ソース分のフィード（単一 or 複数 URL）を取得・パースし、seen_at を更新したうえで
-  # seen_at >= since の entry を返す。返す各 entry は
-  # { link:, title:, date:, seen_at:, extra: }。
+  # seen_at > since の entry を返す（since は前回収集済みの起点なので排他的下限）。返す各
+  # entry は { link:, title:, date:, seen_at:, extra: }。
   #
   # 複数スレッドから同時に呼んでよい（ScriptGenerator がソースごとに並列で呼ぶ）。
   # 取得・パースはロック外で並列に走り、キャッシュの読み書きだけ Mutex で直列化する。
@@ -61,7 +61,7 @@ class FeedCache
   #
   # @param urls [String, Array<String>] 1 ソース分のフィード URL（複数可）
   # @param now [Time] seen_at として記録する現在時刻
-  # @param since [Time] これ以降に初登場した entry だけを返す下限
+  # @param since [Time] 前回収集済みの起点。これより後(排他的)に初登場した entry だけを返す
   # @param extra_extractor [#call, nil] フィード本文から link => 追加メタデータ の対応を
   #   作る呼び出し可能オブジェクト。ソース種別固有の情報（はてブのブックマーク数等）を
   #   FeedCache に持ち込まずに載せるための注入口。渡さなければ extra は常に nil。
@@ -161,17 +161,20 @@ class FeedCache
     end
   end
 
-  # 今回このソースで登場した entry のうち、seen_at >= since のものを返す。
+  # 今回このソースで登場した entry のうち、seen_at > since のものを返す。
   # キャッシュ全体ではなく今回の entries に絞るのは、fetch がソース単位で呼ばれるため。
   # 他ソースの entry を混ぜないよう、今回取得した link のものだけを対象にする。
   # seen_at は初登場時刻なので、キャッシュに既にある entry はその値を採る。
+  # since は「前回収集済みの起点」なので排他的下限にする（>=ではなく>）。前回の収集で
+  # since ちょうどに初登場した記事は収集済みなので、次回は seen_at == since を除外しないと
+  # confirmed_at と seen_at が同一実行由来で一致したとき（毎回起こる）に二重紹介される。
   def select_since_for(cache, entries, since)
     # 複数 URL を持つソース（はてブ hotentry/entrylist）は同じ link が両方に載るので、
     # link で重複除去してから返す。
     entries.uniq { |e| e[:link] }.filter_map do |entry|
       meta = cache[entry[:link]] or next
       seen_at = Time.iso8601(meta["seen_at"])
-      next if seen_at < since
+      next if seen_at <= since
 
       { link: entry[:link], title: meta["title"], date: meta["date"],
         seen_at: meta["seen_at"], extra: meta_extra(meta) }

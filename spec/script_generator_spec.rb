@@ -148,18 +148,90 @@ RSpec.describe ScriptGenerator do
   end
 
   describe "#collect_since" do
-    it "uses the recorded timestamp for the current pipeline.mode" do
+    it "uses the confirmed timestamp" do
       at = Time.utc(2026, 7, 14, 9, 0, 0)
-      LastFetchStore.new(work_dir: work_dir).record_reached!(mode: Config.mode, at: at)
+      LastFetchStore.confirm_immediately!(work_dir: work_dir, at: at)
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       expect(generator.send(:collect_since)).to eq(at)
     end
 
-    it "falls back to lookback_hours when nothing has been recorded yet" do
+    it "falls back to lookback_hours when nothing has been confirmed yet" do
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       expect(generator.send(:collect_since)).to eq(now - generator.send(:lookback_hours) * 3600)
+    end
+  end
+
+  describe "#fetched_news?" do
+    it "is true after collecting news for the first time" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      generator.send(:load_or_collect_news)
+
+      expect(generator.fetched_news?).to be true
+    end
+
+    it "is false when an existing news snapshot is reused" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+      File.write(generator.send(:news_collected_path), "1. Title A\n")
+
+      generator.send(:load_or_collect_news)
+
+      expect(generator.fetched_news?).to be false
+    end
+
+    it "is false before any collection has run" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      expect(generator.fetched_news?).to be false
+    end
+
+    # digest→synthesize は同一インスタンスで load_or_collect_news を 2 回通り、2 回目は
+    # スナップショット再利用になる。それで false に戻ると「新規収集したのに confirmed_at を
+    # 進めない」取り違えが起きるので、一度収集したら true を保つ。
+    it "stays true on a subsequent reuse within the same instance" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      generator.send(:load_or_collect_news) # 新規収集
+      generator.send(:load_or_collect_news) # スナップショット再利用
+
+      expect(generator.fetched_news?).to be true
+    end
+  end
+
+  describe "#collect_since_anchor" do
+    # 次回の収集 window 起点として保存すべき時刻。新規 entry の seen_at はこの時刻で
+    # 記録されるので、実行完了時刻ではなく収集基準時刻(episode.now)でなければ、実行に
+    # 時間がかかった場合に seen_at がその間に刻まれた記事を次回取りこぼす。
+    it "returns the collection anchor (episode.now), not the wall clock at completion" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      expect(generator.collect_since_anchor).to eq(now)
+    end
+  end
+
+  describe "pending fetch resolution timing" do
+    # 前回 pending の確定/ロールバック確認は「新規 fetch が実際に走る直前」だけに出したい。
+    # --script-only の後にフラグなしで synthesize へ進むと、収集は既存スナップショットの
+    # 再利用になり fetch しないので、確認が出てはいけない。解決自体は LastFetchStore に委ねる。
+    it "resolves pending exactly once when news is actually fetched" do
+      allow(LastFetchStore).to receive(:resolve_pending!)
+      generator = described_class.new(work_dir: work_dir, episode: episode, auto_confirm: true)
+
+      generator.send(:load_or_collect_news)
+
+      expect(LastFetchStore).to have_received(:resolve_pending!).with(work_dir: work_dir, auto_confirm: true).once
+    end
+
+    it "does not resolve pending when an existing news snapshot is reused" do
+      allow(LastFetchStore).to receive(:resolve_pending!)
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+      File.write(generator.send(:news_collected_path), "1. Title A\n")
+
+      generator.send(:load_or_collect_news)
+
+      expect(LastFetchStore).not_to have_received(:resolve_pending!)
     end
   end
 end
