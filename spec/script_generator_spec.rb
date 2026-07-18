@@ -199,27 +199,27 @@ RSpec.describe ScriptGenerator do
     end
   end
 
-  describe "on_before_fetch hook" do
+  describe "pending fetch resolution timing" do
     # 前回 pending の確定/ロールバック確認は「新規 fetch が実際に走る直前」だけに出したい。
     # --script-only の後にフラグなしで synthesize へ進むと、収集は既存スナップショットの
-    # 再利用になり fetch しないので、確認が出てはいけない。
-    it "runs the hook once when news is actually fetched" do
-      calls = 0
-      generator = described_class.new(work_dir: work_dir, episode: episode, on_before_fetch: -> { calls += 1 })
+    # 再利用になり fetch しないので、確認が出てはいけない。解決自体は LastFetchStore に委ねる。
+    it "resolves pending exactly once when news is actually fetched" do
+      allow(LastFetchStore).to receive(:resolve_pending!)
+      generator = described_class.new(work_dir: work_dir, episode: episode, auto_confirm: true)
 
       generator.send(:load_or_collect_news)
 
-      expect(calls).to eq(1)
+      expect(LastFetchStore).to have_received(:resolve_pending!).with(work_dir: work_dir, auto_confirm: true).once
     end
 
-    it "does not run the hook when an existing news snapshot is reused" do
-      calls = 0
-      generator = described_class.new(work_dir: work_dir, episode: episode, on_before_fetch: -> { calls += 1 })
+    it "does not resolve pending when an existing news snapshot is reused" do
+      allow(LastFetchStore).to receive(:resolve_pending!)
+      generator = described_class.new(work_dir: work_dir, episode: episode)
       File.write(generator.send(:news_collected_path), "1. Title A\n")
 
       generator.send(:load_or_collect_news)
 
-      expect(calls).to eq(0)
+      expect(LastFetchStore).not_to have_received(:resolve_pending!)
     end
   end
 end

@@ -3,8 +3,9 @@
 require "time"
 require "json"
 
-# 収集 window の起点を work/last_fetch.json に永続化する。ScriptGenerator の
-# 収集ロジックとは無関係な、状態遷移と読み書きだけに責務を絞ったモジュール。
+# 収集 window の起点を work/last_fetch.json に永続化し、その状態遷移を担うモジュール。
+# 併せて、前回 pending の確定/ロールバックを人間に尋ねる .resolve_pending! も持つ
+# （状態を握っている当のモジュールが対話込みの解決まで面倒を見る方が凝集度が高い）。
 #
 # 状態はすべて work/last_fetch.json 側にあり、保持すべきインスタンス状態は無い
 # （work_dir だけが引数）。そのため状態を持つオブジェクトにはせず、work_dir を受け取る
@@ -102,6 +103,31 @@ module LastFetchStore
   # Undo バッファはクリアする。
   def confirm_immediately!(work_dir:, at:)
     write(work_dir, load(work_dir).merge("confirmed_at" => at.iso8601, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil))
+  end
+
+  # 前回実行で pending_at が残っていれば、確定させるかロールバックするか尋ねて解決する。
+  # 新規収集の since は confirmed_at から決まるので、収集が走る直前に呼ぶ（呼ぶタイミングは
+  # ScriptGenerator が握る）。auto_confirm 時は対話せず自動確定する（CI等の非対話実行向け）。
+  # デフォルト(Enter/N)はロールバック側（安全側）: 確認を怠って収集windowが誤って進むより、
+  # 取りこぼしが起きない方を既定にする。pending が無ければ何もしない。
+  def resolve_pending!(work_dir:, auto_confirm: false)
+    pending = pending_at(work_dir)
+    return unless pending
+
+    if auto_confirm
+      confirm!(work_dir: work_dir)
+      warn "auto-confirmed pending fetch window: #{pending}"
+      return
+    end
+
+    print "The previous fetch window is unconfirmed (#{pending}). Confirm it? Answering no rolls it back. [y/N]: "
+    if $stdin.gets&.strip&.match?(/\Ay\z/i)
+      confirm!(work_dir: work_dir)
+      warn "confirmed pending fetch window: #{pending}"
+    else
+      rollback!(work_dir: work_dir)
+      warn "rolled back pending fetch window (kept confirmed_at)"
+    end
   end
 
   def write(work_dir, data)

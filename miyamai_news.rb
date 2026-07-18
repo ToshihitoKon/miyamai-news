@@ -155,13 +155,10 @@ def main
   end
 
   # 前回 pending の確定/ロールバックは、収集の起点(since)を確定する直前＝新規 fetch が
-  # 実際に走る直前にだけ尋ねればよい。既存 news スナップショットを再利用する実行（例:
-  # --script-only の後にフラグなしで synthesize へ進む）は fetch しないので、確認は出ない。
-  # そのタイミング制御は ScriptGenerator に任せ、対話そのものはここで on_before_fetch として渡す。
-  generator = ScriptGenerator.new(
-    work_dir: WORK_DIR, episode: episode,
-    on_before_fetch: method(:resolve_pending_fetch!)
-  )
+  # 実際に走る直前に ScriptGenerator が自分で尋ねる。既存 news スナップショットを再利用する
+  # 実行（例: --script-only の後にフラグなしで synthesize へ進む）は fetch しないので、確認は
+  # 出ない。auto_confirm は CI 等の非対話実行で確認を飛ばして自動確定するかどうか。
+  generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode, auto_confirm: args[:auto_confirm] || false)
 
   if args[:digest_only]
     ensure_mode_allows!("digest")
@@ -209,31 +206,6 @@ def main
   end
 end
 
-# 前回実行で pending_at が残っていれば、確定させるかロールバックするか尋ねる。
-# --auto-confirm 指定時は対話せず自動確定する（CI等の非対話実行向け）。
-# デフォルト(Enter/N)はロールバック側（安全側）: 確認を怠って収集windowが誤って
-# 進むより、取りこぼしが起きない方を既定にする。
-def resolve_pending_fetch!
-  pending = LastFetchStore.pending_at(WORK_DIR)
-  return unless pending
-
-  if ARGS[:auto_confirm]
-    LastFetchStore.confirm!(work_dir: WORK_DIR)
-    warn "auto-confirmed pending fetch window: #{pending}"
-    return
-  end
-
-  print "The previous fetch window is unconfirmed (#{pending}). Confirm it? Answering no rolls it back. [y/N]: "
-  answer = $stdin.gets&.strip
-  if answer&.match?(/\Ay\z/i)
-    LastFetchStore.confirm!(work_dir: WORK_DIR)
-    warn "confirmed pending fetch window: #{pending}"
-  else
-    LastFetchStore.rollback!(work_dir: WORK_DIR)
-    warn "rolled back pending fetch window (kept confirmed_at)"
-  end
-end
-
 # pending中の収集windowを確認なしで即座に確定する独立コマンド。成果物を確認できた
 # タイミングで、次回実行を待たずに使う。
 def run_confirm_fetch
@@ -260,9 +232,8 @@ def run_restore_fetch
 end
 
 # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
-# 呼び出し元が渡した ScriptGenerator を使う（生成時に on_before_fetch を仕込むため、
-# 生成は main 側で行う）。実行後は同じ generator の fetched_news? で新規収集が
-# 起きたかを判断する。
+# 呼び出し元が渡した ScriptGenerator を使う。実行後は同じ generator の fetched_news? で
+# 新規収集が起きたかを判断する。
 def run_digest(generator)
   facts_path = generator.digest
 

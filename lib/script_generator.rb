@@ -27,14 +27,12 @@ class ScriptGenerator
 
   # @param work_dir [String] 中間ファイルの置き場
   # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
-  # @param on_before_fetch [#call, nil] 新規 RSS 収集が実際に走る直前（since を確定する
-  #   タイミング）に 1 度だけ呼ばれるフック。収集の since は confirmed_at から決まるので、
-  #   前回 pending が残っていれば「確定して since を進めるか／ロールバックして据え置くか」を
-  #   ここで解決する。既存スナップショットを再利用して収集が走らない実行では呼ばれない
-  #   （呼び出し側 miyamai_news.rb が対話ロジックを渡す）。
-  def initialize(work_dir:, episode:, on_before_fetch: nil)
+  # @param auto_confirm [Boolean] 前回の未確認収集window(pending)を、対話せず自動確定するか。
+  #   収集の since を確定する直前(#collect_news)に前回 pending を解決するが、その際 true なら
+  #   確認プロンプトを出さず自動確定する（CI等の非対話実行向け）。既定は対話（false）。
+  def initialize(work_dir:, episode:, auto_confirm: false)
     @work_dir = work_dir
-    @on_before_fetch = on_before_fetch
+    @auto_confirm = auto_confirm
     # 収集の時刻演算(since・seen_at・iso8601)には時刻精度のある now を使う。
     @now = episode.now
     @slot = episode.slot
@@ -291,8 +289,9 @@ class ScriptGenerator
   def collect_news
     # since を確定する直前に前回 pending を解決する（確定して since を進めるか／
     # ロールバックして据え置くか）。ここは実際に新規収集が走るときにしか通らないので、
-    # 既存スナップショット再利用の実行では確認が出ない。
-    @on_before_fetch&.call
+    # 既存スナップショット再利用の実行では確認が出ない。対話込みの解決は LastFetchStore に任せ、
+    # ここは「収集の直前」というタイミングを与えるだけ。
+    LastFetchStore.resolve_pending!(work_dir: @work_dir, auto_confirm: @auto_confirm)
 
     since = collect_since
     items_per_source = fetch_sources_in_parallel(sources, since)

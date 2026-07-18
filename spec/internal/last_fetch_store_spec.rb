@@ -166,6 +166,54 @@ RSpec.describe LastFetchStore do
     end
   end
 
+  describe ".resolve_pending!" do
+    let(:confirmed) { Time.utc(2026, 7, 14, 9, 0, 0) }
+    let(:pending) { Time.utc(2026, 7, 16, 9, 0, 0) }
+
+    before do
+      described_class.confirm_immediately!(work_dir: work_dir, at: confirmed)
+      described_class.mark_pending!(work_dir: work_dir, at: pending)
+      # 対話の出力はテストログに混ぜない。
+      allow(described_class).to receive(:warn)
+      allow(described_class).to receive(:print)
+    end
+
+    it "auto-confirms without prompting when auto_confirm is true" do
+      expect($stdin).not_to receive(:gets)
+
+      described_class.resolve_pending!(work_dir: work_dir, auto_confirm: true)
+
+      expect(described_class.confirmed_at(work_dir)).to eq(pending)
+      expect(described_class.pending_at(work_dir)).to be_nil
+    end
+
+    it "confirms when the user answers yes" do
+      allow($stdin).to receive(:gets).and_return("y\n")
+
+      described_class.resolve_pending!(work_dir: work_dir)
+
+      expect(described_class.confirmed_at(work_dir)).to eq(pending)
+    end
+
+    it "rolls back when the user answers no (the safe default)" do
+      allow($stdin).to receive(:gets).and_return("\n")
+
+      described_class.resolve_pending!(work_dir: work_dir)
+
+      expect(described_class.confirmed_at(work_dir)).to eq(confirmed)
+      expect(described_class.pending_at(work_dir)).to be_nil
+    end
+
+    it "does nothing when there is no pending" do
+      described_class.confirm!(work_dir: work_dir) # pending を消しておく
+      expect($stdin).not_to receive(:gets)
+
+      described_class.resolve_pending!(work_dir: work_dir)
+
+      expect(described_class.confirmed_at(work_dir)).to eq(pending)
+    end
+  end
+
   describe ".confirmed_at / .pending_at" do
     it "returns nil when the store is empty" do
       expect(described_class.confirmed_at(work_dir)).to be_nil
