@@ -186,6 +186,18 @@ RSpec.describe ScriptGenerator do
 
       expect(generator.fetched_news?).to be false
     end
+
+    # digest→synthesize は同一インスタンスで load_or_collect_news を 2 回通り、2 回目は
+    # スナップショット再利用になる。それで false に戻ると「新規収集したのに confirmed_at を
+    # 進めない」取り違えが起きるので、一度収集したら true を保つ。
+    it "stays true on a subsequent reuse within the same instance" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      generator.send(:load_or_collect_news) # 新規収集
+      generator.send(:load_or_collect_news) # スナップショット再利用
+
+      expect(generator.fetched_news?).to be true
+    end
   end
 
   describe "#collect_since_anchor" do

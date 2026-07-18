@@ -33,6 +33,9 @@ class ScriptGenerator
   def initialize(work_dir:, episode:, auto_confirm: false)
     @work_dir = work_dir
     @auto_confirm = auto_confirm
+    # この実行で新規 RSS 収集が起きたか。#digest/#generate 内で新規収集したら true になり、
+    # 以後リセットしない（load_or_collect_news 参照）。
+    @fetched_news = false
     # 収集の時刻演算(since・seen_at・iso8601)には時刻精度のある now を使う。
     @now = episode.now
     @slot = episode.slot
@@ -88,10 +91,10 @@ class ScriptGenerator
   # 番組で実際に触れたニュース一覧（used_news）のパス。成果物として書き出す用。
   def used_news_file = used_news_path
 
-  # この実行で実際に新規のRSS収集（FeedCache#fetch）が発生したか。既存の
+  # この実行で一度でも新規のRSS収集（FeedCache#fetch）が発生したか。既存の
   # news_collected_path を再利用しただけなら false。呼び出し側（miyamai_news.rb）が
-  # 収集windowを pending 化すべきかどうかの判断に使う。#digest/#generate 実行後にのみ
-  # 意味を持つ（呼ぶ前は常に false）。
+  # 収集windowを pending 化すべきかどうかの判断に使う。digest→synthesize と同一インスタンスで
+  # 複数回工程を呼んでも、一度収集が起きていれば true を保つ（呼ぶ前は false）。
   def fetched_news? = @fetched_news == true
 
   # この収集で FeedCache#fetch に渡した基準時刻。新規 entry の seen_at はこの時刻で
@@ -256,9 +259,11 @@ class ScriptGenerator
   #
   # その回に集まった entry 集合を news_*.txt にスナップショットとして残し、あれば再利用
   # する（台本を作り直すとき収集入力を固定するため）。無ければ FeedCache から集めて作る。
+  #
+  # @fetched_news はここで false にリセットしない。digest→synthesize と進むと同一インスタンスで
+  # 2 回呼ばれ、2 回目はスナップショット再利用（新規収集なし）になるが、それで false に
+  # 戻すと「この実行で新規収集が起きたか」を取り違える。一度でも新規収集したら true を保つ。
   def load_or_collect_news
-    @fetched_news = false
-
     if File.exist?(news_collected_path)
       warn "reuse: #{news_collected_path}"
       return File.read(news_collected_path)
