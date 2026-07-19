@@ -29,15 +29,11 @@ module LastFetchStore
 
   def path(work_dir) = File.join(work_dir, "last_fetch.json")
 
-  # 旧形式(単一 ISO8601 時刻、mode 非依存)の記録ファイル。存在すれば読み込み時に
-  # 自動移行する。
-  def legacy_path(work_dir) = File.join(work_dir, "last_fetch.txt")
-
   # confirmed_at/pending_at/rollback_at/last_op の4キーを保証して返す（無ければ nil）。
   def load(work_dir)
-    return migrate!(work_dir) if File.exist?(path(work_dir))
+    return read_data(work_dir) if File.exist?(path(work_dir))
 
-    migrate_legacy(work_dir) || default_data
+    default_data
   end
 
   # 確定済みの収集window起点。無い/壊れていれば nil。
@@ -142,46 +138,16 @@ module LastFetchStore
   end
   private_class_method :parse_time
 
-  # last_fetch.json（存在する前提で呼ぶ）を新形式(confirmed_at/pending_at/rollback_at/
-  # last_op)で返す。旧 mode 別キー形式が残っていれば自動移行してから返す。パース不能な
-  # 壊れたファイルは移行せず残し、空扱いで返す（安全側にフォールバックする）。
-  def migrate!(work_dir)
-    data = JSON.parse(File.read(path(work_dir)))
-    # last_op 導入前の新形式にも欠けているキーを default で補って返す。
-    return default_data.merge(data) if new_format?(data)
-
-    migrated = default_data.merge("confirmed_at" => most_advanced(data))
-    write(work_dir, migrated)
-    migrated
+  # last_fetch.json（存在する前提で呼ぶ）を読み、last_op 導入前に書かれたファイルに
+  # 欠けているキーを default で補って返す。パース不能な壊れたファイルは空扱いで返す
+  # （安全側にフォールバックする）。
+  def read_data(work_dir)
+    default_data.merge(JSON.parse(File.read(path(work_dir))))
   rescue JSON::ParserError
     default_data
   end
-  private_class_method :migrate!
+  private_class_method :read_data
 
   def default_data = { "confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil }
   private_class_method :default_data
-
-  def new_format?(data) = %w[confirmed_at pending_at rollback_at last_op].any? { |k| data.key?(k) }
-  private_class_method :new_format?
-
-  # 旧 mode 別キー形式（digest/synthesize/publish）から、最も進んだ値を採る。
-  # 収集window の起点は遅い方が安全（記事の取りこぼしを避けられる）。
-  def most_advanced(data)
-    %w[publish synthesize digest].each { |mode| return data[mode] if data[mode] }
-    nil
-  end
-  private_class_method :most_advanced
-
-  def migrate_legacy(work_dir)
-    return nil unless File.exist?(legacy_path(work_dir))
-
-    at = Time.iso8601(File.read(legacy_path(work_dir)).strip)
-    data = default_data.merge("confirmed_at" => at.iso8601)
-    write(work_dir, data)
-    File.delete(legacy_path(work_dir))
-    data
-  rescue ArgumentError
-    nil # 壊れた旧ファイルは移行せず残す（呼び出し側で安全側にフォールバックする）
-  end
-  private_class_method :migrate_legacy
 end
