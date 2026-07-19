@@ -1,23 +1,13 @@
-# パイプラインの実行段階。どこまで自動的に進めるかの上限を決める。CLIフラグ
-# (--digest-only/--script-only/--synthesize-only/--publish-only 等)はこの上限の
-# 範囲内でしか使えず、フラグなし実行はこの上限まで自動的に進む。
-#   digest:     RSS収集 → AIによるカテゴリ別選別 → facts抽出(ニュース要約)まで。
-#               外部ツール(VOICEPEAK/ffmpeg/gcloud)やGCSバケットに依存しない。
-#   synthesize: digest の続きから音声合成・BGM合成まで。dist/ に mp3 を書き出す。
-#               GCS publish はしない。
-#   publish:    synthesize の続きから GCS への publish まで（フルパイプライン）。
-# 未指定時は digest（外部ツール・GCS依存が無く最も手軽に試せるため）。
-# 既存のフルパイプライン運用を続ける場合は publish を明示すること。
+# パイプラインの実行段階。どこまで自動的に進めるかの上限を決める。
 pipeline:
-  mode: digest
+  mode: digest # RSS収集, AIによるカテゴリ別選別, facts抽出(ニュース要約)
+  # mode: synthesize # digest + 音声合成・BGM合成。dist/ に mp3 を書き出す。
+  # mode: publish    # synthesize + GCS への publish
 
 gcs:
   bucket: your-bucket-name
   public_base: https://storage.googleapis.com
-  # archives.csv で保持するエピソード数の上限。publish のたびに、この件数を
-  # 超えた古い回を archives.csv/feed.xml の一覧から外し、GCS 上の実ファイル
-  # (mp3/used.txt/transcript.txt) は archived/ プレフィックス配下へ退避する
-  # (削除はしない。実削除は --clean-archive で行う)。
+  # publish で保持・公開する話数。
   retention_episodes: 5
 
 assets:
@@ -31,16 +21,14 @@ assets:
 # VOICEPEAK(音声合成)まわり。
 voicepeak:
   bin: /Applications/voicepeak.app/Contents/MacOS/voicepeak
-  # 各チャンク合成後に空ける秒数。連続起動によるクラッシュ避け。
+  # 各チャンク合成後に空ける秒数。
   interval_sec: 1
-  # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数。
+  # 合成失敗時のリトライ回数と指数バックオフの初期待機秒数。
   max_retries: 4
   retry_base_sec: 2
   # 1チャンク合成に許す最大秒数。超えたら kill してリトライへ回す。
   timeout_sec: 10
-  # チャンク（文）を結合する際に間に挟む無音の秒数。話題転換のない通常の
-  # 文区切りに使う。句点で区切った文がそのままつながると間延びなく聞こえて
-  # しまうため、一呼吸おけるよう無音を挟む。
+  # チャンク（文）を結合する際に間に挟む無音の秒数。
   chunk_gap_sec: 0.4
   # 台本中の [interval:mid] タグ（個々のニュース記事の切り替え）で挟む無音の秒数。
   mid_pause_sec: 1.0
@@ -49,37 +37,33 @@ voicepeak:
 
 # 台本生成・整形に使う AI CLI の設定。
 ai_agent:
-  bin: claude
-  model: claude-opus-4-8
-  # claude 固有の引数。bin が claude 以外なら無視される。
-  effort: xhigh
+  bin: agy
+  model: 'Gemini 3.5 Flash (High)'
   # ロールごとの使用モデル（未指定時は上記 model が使われます）
-  selector_model: claude-sonnet-5
-  extractor_model: claude-opus-4-8
-  writer_model: claude-sonnet-5
-  formatter_model: claude-sonnet-5
+  selector_model: 'Gemini 3.5 Flash (High)'
+  extractor_model: 'Gemini 3.5 Flash (High)'
+  writer_model: 'Gemini 3.5 Flash (High)'
+  formatter_model: 'Gemini 3.5 Flash (High)'
 
-# Antigravity CLI (agy) を使う場合の設定例。
+# Claude Code CLI (claude) を使う場合の設定例。
 # ai_agent:
-#   bin: agy
-#   model: 'Gemini 3.5 Flash (High)'
-#   selector_model: 'Gemini 3.5 Flash (High)'
-#   extractor_model: 'Gemini 3.5 Flash (High)'
-#   writer_model: 'Gemini 3.5 Flash (High)'
-#   formatter_model: 'Gemini 3.5 Flash (High)'
+#   bin: claude
+#   model: claude-opus-4-8
+#   # effort は claude 固有の引数。bin が claude 以外なら無視される。
+#   effort: xhigh
+#   selector_model: claude-sonnet-5
+#   extractor_model: claude-opus-4-8
+#   writer_model: claude-sonnet-5
+#   formatter_model: claude-sonnet-5
 
-# 番組の編成方針。カテゴリは RSS 収集とは切り離された「AI への選定方針の提示」でしかない
-# （収集はカテゴリを問わずフラットに行う）。
+# 番組構成設定。
 program_details:
-  # 番組全体で紹介するニュースの合計本数の目安（メイン＋補欠の合計）。カテゴリ単位の
-  # 最低保証は設けない（話題が少ない日にカテゴリを無理に埋めさせないため。実際の配分は
-  # ニュースの充実度を見て selector・extractor 段階の AI に判断させる）。
+  # 番組全体で紹介するニュースの合計本数の目安（メイン＋補欠の合計）。
   total_news_count: 8
   # カテゴリごとの表示名と選定方針。
-  #   label: selector/extractor プロンプトで使う日本語の表示名
-  #   description: このカテゴリで何を優先し、何を除外するかの自由記述。
-  #     selector・extractor 両方のプロンプトに同じ値を注入する。
   categories:
+    # - label: カテゴリの日本語名
+    #   description: ニュースのカテゴリ分類プロンプト。
     - label: "生成AI"
       description: >-
         LLM・生成AIモデルそのものに関する話題（新モデル発表、AIサービスのリリース
@@ -87,139 +71,37 @@ program_details:
         であってもこのカテゴリに分類する（例: コーディングエージェントの内部動作を
         分析した論文）。AIエージェント・AIコーディングツールのカテゴリは、製品・
         ツール自体の動き（リリース・新機能・話題のツール）に限定する。
-    - label: "AIエージェント・AIコーディングツール（Claude Code、Devin、Cursor など）"
-      description: >-
-        Claude Code・Devin・Cursor・Antigravity など、AIエージェントやAIコーディング
-        支援ツール自体のリリース・新機能・話題に関する話題。研究論文・研究成果は
-        対象を問わず生成AIカテゴリに分類するため、ここには含めない。リリースノート系の
-        情報源は、バグ修正や軽微な変更は除外し、注目に値する新機能・大きな変更だけを
-        選ぶこと。同一ツールが短期間に複数バージョンを公開している場合は、それらを
-        別々の話題に分けず、まとめて1つの話題として扱う前提で候補に残すこと。
-        企業・自治体・プロジェクトがこれらのツールを導入・活用した事例は、
-        ツール自体の話題ではなく利用者側の業界動向にあたるため、「その他エンジニア向け
-        トピック」に分類する。
-    - label: "セキュリティ"
-      description: >-
-        セキュリティの話題。個別製品に閉じた脆弱性情報は除外し、Linux・OpenSSH・
-        OpenSSL・systemd・コンテナ・CI/CD など、開発環境やインフラに広く関わるものを
-        優先すること。Windows・Chrome など特定製品の月例パッチ・通常のセキュリティ
-        アップデートは、話題性が乏しいため除外する。ただし Heartbleed・Log4Shell・
-        Spectre のように広く通称が付き社会的に話題となった脆弱性は、広くエンジニアや
-        ユーザーに知られており日常生活や業務に関係する製品であれば優先して扱う。
-    - label: "その他エンジニア向けトピック"
-      description: >-
-        上記のいずれにも当てはまらない、エンジニア向けの技術トピック全般
-        （プログラミング言語、フレームワーク、開発ツール、業界動向など）。企業・自治体・
-        プロジェクトがAIエージェント・AIコーディングツールを導入・活用した事例
-        （ツール自体のリリースではなく、利用者側の取り組みが主題のもの）もここに含む。
-        ただし「とある企業がAIエージェント・AIコーディングツールを導入して業務効率化に
-        成功した」という枠組みだけの事例は、技術的な中身がなくリスナーが反応しづらいため
-        除外する。次のいずれかに当てはまる場合のみ例外的に扱う: (1) 広くエンジニアに
-        身近な技術・製品を扱っている、または技術的な新規性・独自性がある（例: AIを使って
-        Linuxカーネルの主要機能をRustで再現するOSSプロジェクト）、(2) Linux Foundationの
-        ような業界全体に影響力を持つ主体の動きである。
 
 # RSS 収集まわり。
 collect:
-  # 前回 publish 記録が無い初回に、何時間前までさかのぼって収集するかの上限。
+  # 何時間前までのニュースを取得するか。last_fetched_at から現在時刻の短い方が採用される。
   lookback_hours: 24
-  # フィードキャッシュ(feed_cache.json)が entry を保持する日数。
-  # フィードに最後に見えた時刻(last_fetched_at)からこの日数を過ぎても再登場しなかった
-  # entry だけをキャッシュから破棄する（フィードにまだ載っている entry は何日前に
-  # 初登場したかに関わらず保持し続け、再登場による二重紹介を防ぐ）。
+  # フィードキャッシュが entry を保持する日数。
   retention_days: 30
   # フィード取得の並列数。
   fetch_threads: 5
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
   fetch_max_retries: 3
   fetch_retry_base_sec: 2
-  # 各フィードの最終 fetch からこの分数以内は、再取得せず前回キャッシュから返す。
-  # 短時間の再実行で全フィードを取り直さずに済み、一部フィードが一時的に落ちていても
-  # 先へ進める。0 でスキップ無効（毎回必ず fetch）。
+  # 前回 fetch のキャッシュを使い回す時間。
   fetch_skip_minutes: 5
 
-# 収集元定義（フラット配列）。カテゴリ区分は持たない。番組編成上のカテゴリは
-# program_details.categories 側で一元管理し、記事がどのカテゴリに属するかは
-# selector が候補一覧全体を見て判断する。以下のコメント区切りは、ソースの傾向を
-# 人間が把握するための目印であり、コード・プロンプトからは一切参照されない。
-# 各ソースのキー:
-#   name: 表示名（収集したニュース一覧の source に入る）
-#   url: フィードURL。1 ソース = 1 URL = 1 キャッシュファイル。
-#   priority: "high" は公式ブログ・公式リリースノートなど一次情報源の優先度を上げる。
-#     "low" は、まとめ系・コミュニティ系など玉石混交で流量が多いソース向けに
-#     優先度を下げる。未指定は標準優先度。
+# 収集元定義。
 rss_feed_sources:
-  # --- 生成AI ---
+  # - name:     表示名
+  #   url:      フィードURL
+  #   priority (high|low|<empty>): 情報源の優先度。未指定だと中間。
+  #     運用例:
+  #       high: 公式ブログ・公式リリースノートなどの一次情報源
+  #       low: まとめ系・コミュニティ系などで流量が多いソース
   - name: "Hacker News (AI)"
     url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
-  - name: "arXiv cs.AI"
-    url: "http://export.arxiv.org/rss/cs.AI"
-    priority: high
-  - name: "OpenAI Blog"
-    url: "https://openai.com/news/rss.xml"
-    priority: high
-
-  # --- AIエージェント・AIコーディングツール ---
-  # Devin(Cognition) は公式 RSS がないため HN のキーワード検索で拾う。
-  - name: "Hacker News (agents)"
-    url: "https://hnrss.org/newest?q=%22Claude%20Code%22%20OR%20%22coding%20agent%22%20OR%20Devin%20OR%20Cursor%20OR%20Antigravity&points=30"
-  - name: "Claude Code Releases"
-    url: "https://github.com/anthropics/claude-code/releases.atom"
-    priority: high
-  - name: "Cursor Changelog"
-    url: "https://cursor.com/changelog/rss.xml"
-    priority: high
-  - name: "Google AI Blog"
-    url: "https://blog.google/innovation-and-ai/technology/ai/rss/"
-    priority: high
-  - name: "Simon Willison's Weblog"
-    url: "https://simonwillison.net/atom/everything/"
-
-  # --- セキュリティ ---
-  - name: "JPCERT/CC"
-    url: "https://www.jpcert.or.jp/rss/jpcert.rdf"
-    priority: high
-  - name: "JVN"
-    url: "https://jvn.jp/rss/jvn.rdf"
-    priority: high
-
-  # --- その他エンジニア向けトピック ---
-  - name: "Publickey"
-    url: "https://www.publickey1.jp/atom.xml"
-    priority: high
-  - name: "Hacker News (frontpage)"
-    url: "https://hnrss.org/frontpage?points=100"
-  - name: "Lobsters"
-    url: "https://lobste.rs/rss"
-  - name: "gihyo.jp"
-    url: "https://gihyo.jp/feed/rss2"
-  - name: "InfoQ Japan"
-    url: "https://www.infoq.com/jp/feed/"
-  - name: "DevelopersIO"
-    url: "https://dev.classmethod.jp/feed/"
-  # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
-  # はてブはホットエントリと新着を別ソースとして読む（RSS は各30件が上限で、オフセット
-  # 等のパラメータは効かないため件数を稼ぐ）。同じ記事が両方に載っても収集後の
-  # dedup_by_title が除くので、独立した2ソースにして問題ない。
-  - name: "はてブ テクノロジー(hotentry)"
-    url: "https://b.hatena.ne.jp/hotentry/it.rss"
-    priority: low
-  - name: "はてブ テクノロジー(entrylist)"
-    url: "https://b.hatena.ne.jp/entrylist/it.rss"
-    priority: low
-  - name: "Qiita 人気記事"
-    url: "https://qiita.com/popular-items/feed.atom"
-    priority: low
-  - name: "Zenn 新着"
-    url: "https://zenn.dev/feed"
-    priority: low
 
 # BGM 合成(ミキシング)まわり。
 mixer:
-  # BGM の音量。ffmpeg の volume フィルタにそのまま渡す倍率(voice_boost_dbとは独立)。
+  # BGM の音量。ffmpeg の volume フィルタにそのまま渡す倍率。
   bgm_volume: 0.23
-  # ナレーション音声に足すゲイン(dB)。VOICEPEAKの出力音量が小さめなため底上げする。
-  # 上げすぎるとピークが天井に張り付きクリップするため、実際の音声で確認しながら調整する。
+  # ナレーション音声に足すゲイン(dB)。
   voice_boost_db: 6
   # BGM 開始からナレーション開始までの秒数。
   intro_sec: 3
