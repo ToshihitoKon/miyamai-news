@@ -78,7 +78,96 @@
       color: #2b3440;
       font-size: 13px;
     }
-    audio { width: 100%; }
+    /* controls を外した audio は音源エンジンとしてのみ残す（不可視） */
+    audio { display: none; }
+
+    /* カスタムプレーヤー: 上段シークバー / 下段コントロールの2段構成 */
+    /* padding 込みで幅を収めるためプレーヤー配下だけ border-box にする
+       (グローバルには適用せず既存レイアウトへの影響を避ける) */
+    .player, .player * { box-sizing: border-box; }
+    .player {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--moca);
+      background: #f5f8fb;
+    }
+    /* シークバー行。下側にだけ少し余白を足す(上は .player の gap があるため詰める) */
+    .player .rowtop { padding: 0 2px 6px; }
+    .player .rowbot { display: flex; align-items: center; gap: 10px; }
+    .pbtn {
+      flex: none;
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 11px;
+      background: var(--moca);
+      color: #fff;
+      cursor: pointer;
+      padding: 0;
+    }
+    .pbtn svg { width: 16px; height: 16px; display: block; }
+    .pbtn.ghost { background: transparent; color: var(--moca-deep); width: 30px; height: 30px; }
+    .pbtn.ghost:hover { background: #e6eef6; }
+    .time {
+      flex: none;
+      font-size: 11px;
+      color: #7a8896;
+      font-variant-numeric: tabular-nums;
+    }
+    .spacer { flex: 1; }
+    input[type=range].seek {
+      width: 100%;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      /* 再生済み部分を --pct まで塗る。残りは #d6e0eb の背景色 */
+      background: linear-gradient(var(--moca), var(--moca)) no-repeat;
+      background-size: var(--pct, 0%) 100%;
+      background-color: #d6e0eb;
+      cursor: pointer;
+      margin: 0;
+    }
+    input[type=range].seek::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: var(--moca-deep);
+      border: 2px solid #fff;
+      box-shadow: 0 1px 3px rgba(95, 125, 158, .5);
+    }
+    input[type=range].seek::-moz-range-thumb {
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: var(--moca-deep);
+      border: 2px solid #fff;
+    }
+    /* モードトグル: テキストラベル。将来 Font Awesome 等へ差し替えやすいよう最小限 */
+    .modebtn {
+      flex: none;
+      border: 1px solid var(--moca);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--moca-deep);
+      font-size: 11px;
+      font-weight: 600;
+      font-family: inherit;
+      padding: 5px 10px;
+      cursor: pointer;
+      min-width: 62px;
+      text-align: center;
+    }
+    .modebtn:hover { background: #eaf1f8; }
     .news {
       margin-top: 20px;
       border-top: 1px solid #e2e8f0;
@@ -150,7 +239,19 @@
       <select id="archive" aria-label="アーカイブ選択">
         <%= options %>
       </select>
-      <audio id="player" controls src="<%= h(current_url) %>"></audio>
+      <audio id="player" preload="metadata" src="<%= h(current_url) %>"></audio>
+      <div class="player">
+        <div class="rowtop">
+          <input type="range" class="seek" id="seek" min="0" max="100" value="0" step="any" aria-label="シーク位置">
+        </div>
+        <div class="rowbot">
+          <button type="button" class="pbtn play" id="playpause" aria-label="再生／一時停止"></button>
+          <span class="time" id="time">0:00 / 0:00</span>
+          <span class="spacer"></span>
+          <button type="button" class="pbtn ghost" id="mute" aria-label="ミュート"></button>
+          <button type="button" class="modebtn" id="playmode" aria-label="再生モード切り替え"></button>
+        </div>
+      </div>
       <div class="news">
         <h2>この回で紹介したニュース</h2>
         <pre id="newslist">読み込み中…</pre>
@@ -179,6 +280,26 @@
     const artwork = document.getElementById('artwork');
     const transcript = document.getElementById('transcript');
     const transcripttext = document.getElementById('transcripttext');
+    const playmode = document.getElementById('playmode');
+    const seek = document.getElementById('seek');
+    const timeLabel = document.getElementById('time');
+    const playpause = document.getElementById('playpause');
+    const mute = document.getElementById('mute');
+
+    // カスタムプレーヤーの再生/一時停止・音量アイコン(ネイティブ controls を廃したため自前描画)
+    const ICON = {
+      play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+      pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>',
+      volume: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zm13 2a4 4 0 00-2-3.46v6.92A4 4 0 0016 12z"/></svg>',
+      muted: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zm18.3-.7l-1.4-1.4L17 10.8 14.2 8l-1.4 1.4L15.6 12l-2.8 2.8 1.4 1.4L17 13.4l2.9 2.9 1.4-1.4L18.4 12z"/></svg>',
+    };
+
+    const fmtTime = (sec) => {
+      if (!isFinite(sec)) sec = 0;
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${String(s).padStart(2, '0')}`;
+    };
 
     const escapeHtml = (s) => s
       .replaceAll('&', '&amp;')
@@ -242,9 +363,16 @@
       }
     });
 
-    sel.addEventListener('change', () => {
+    // select の指定 index の回に切り替え、プレーヤーと付随表示を更新する。
+    // select 操作(change)と連続再生の自動遷移で共通に使う。
+    const switchToArchive = (index) => {
+      sel.selectedIndex = index;
       player.src = sel.value;
-      now.textContent = sel.options[sel.selectedIndex].textContent;
+      now.textContent = sel.options[index].textContent;
+      // src 差し替えで duration が変わる。実値は loadedmetadata で確定するので暫定リセット
+      seek.value = 0;
+      seek.style.setProperty('--pct', '0%');
+      timeLabel.textContent = '0:00 / 0:00';
       loadNews(sel.value);
       if (transcript.open) {
         transcript.dataset.loadedFor = player.src;
@@ -252,7 +380,62 @@
       } else {
         delete transcript.dataset.loadedFor;
       }
+    };
+
+    sel.addEventListener('change', () => switchToArchive(sel.selectedIndex));
+
+    // 再生モード。ボタンを押すたびに一曲→連続→リピートの順で循環する。
+    // - single  : 1曲終わったら停止(既定)
+    // - sequential: 1曲終わったら1つ古い回(select上で次の index)へ進む。
+    //              最古(末尾)まで到達したら停止する。
+    // - repeat   : 同じ回を繰り返す(単曲リピート)。
+    // ラベルはここに集約。将来アイコン化する場合もこの配列を変えればよい。
+    const MODES = [
+      { key: 'single', label: '一曲' },
+      { key: 'sequential', label: '連続' },
+      { key: 'repeat', label: 'リピート' },
+    ];
+    let modeIndex = 0;
+
+    const applyPlaymode = () => {
+      const mode = MODES[modeIndex];
+      player.loop = mode.key === 'repeat';
+      playmode.textContent = mode.label;
+    };
+
+    // ネイティブ controls を廃したので、再生状態・シーク・音量表示を自前で描画する。
+    const renderPlay = () => { playpause.innerHTML = player.paused ? ICON.play : ICON.pause; };
+
+    const renderMute = () => {
+      mute.innerHTML = player.muted ? ICON.muted : ICON.volume;
+      mute.setAttribute('aria-label', player.muted ? 'ミュート解除' : 'ミュート');
+    };
+
+    const renderTime = () => {
+      const pct = player.duration ? (player.currentTime / player.duration) * 100 : 0;
+      seek.value = pct;
+      seek.style.setProperty('--pct', pct + '%');
+      timeLabel.textContent = `${fmtTime(player.currentTime)} / ${fmtTime(player.duration)}`;
+    };
+
+    playmode.addEventListener('click', () => {
+      modeIndex = (modeIndex + 1) % MODES.length;
+      applyPlaymode();
     });
+
+    // 曲終端。連続再生時のみ1つ古い回へ自動で進める。
+    // repeat は audio.loop に任せるため ended が発火せず、ここには来ない。
+    player.addEventListener('ended', () => {
+      if (MODES[modeIndex].key !== 'sequential') return;
+      const next = sel.selectedIndex + 1; // select は最新が先頭・降順なので +1 が1つ古い回
+      if (next >= sel.options.length) return; // 最古まで到達したら停止
+      switchToArchive(next);
+      // src 差し替え直後の play。メタデータ読み込み後に自動再生される。
+      // 自動再生ポリシー等での reject は握り潰す(連続再生はユーザー操作起点なので通常起きない)。
+      player.play().catch(() => {});
+    });
+
+    applyPlaymode();
 
     const togglePlay = () => {
       if (player.paused) {
@@ -262,7 +445,26 @@
       }
     };
 
+    // 再生トグルは3経路(再生ボタン・アートワーク・Space)が同じ togglePlay を共有し、
+    // play/pause イベント経由で renderPlay がアイコンを同期する。
+    playpause.addEventListener('click', togglePlay);
     artwork.addEventListener('click', togglePlay);
+    player.addEventListener('play', renderPlay);
+    player.addEventListener('pause', renderPlay);
+    player.addEventListener('timeupdate', renderTime);
+    player.addEventListener('loadedmetadata', renderTime); // src 切替後に duration を反映
+    player.addEventListener('volumechange', renderMute);
+
+    seek.addEventListener('input', () => {
+      if (!isFinite(player.duration)) return; // メタデータ未ロード時のシークは無効
+      player.currentTime = (seek.value / 100) * player.duration;
+      renderTime();
+    });
+
+    mute.addEventListener('click', () => {
+      player.muted = !player.muted;
+      renderMute();
+    });
 
     document.addEventListener('keydown', (e) => {
       if (e.code !== 'Space') return;
@@ -274,6 +476,9 @@
       togglePlay();
     });
 
+    renderPlay();
+    renderMute();
+    renderTime();
     loadNews(player.src);
     applyRelativeLabels();
     setInterval(applyRelativeLabels, 60000);
