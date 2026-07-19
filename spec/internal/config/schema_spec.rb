@@ -22,28 +22,29 @@ RSpec.describe Internal::Config do
   end
 
   describe Internal::Config::RssFeedSource do
-    it "raises when both url and urls are given" do
-      expect do
-        described_class.new(name: "dup", url: "https://a", urls: ["https://b"])
-      end.to raise_error(Dry::Struct::Error, /url または urls/)
+    it "requires url" do
+      expect { described_class.new(name: "none") }.to raise_error(Dry::Struct::Error, /url/)
     end
 
-    it "raises when neither url nor urls are given" do
-      expect { described_class.new(name: "none") }.to raise_error(Dry::Struct::Error, /url または urls/)
-    end
-
-    it "accepts url alone" do
+    it "accepts name and url" do
       expect(described_class.new(name: "single", url: "https://a").url).to eq("https://a")
-    end
-
-    it "accepts urls alone" do
-      expect(described_class.new(name: "multi", urls: ["https://a", "https://b"]).urls).to eq(["https://a", "https://b"])
     end
 
     it "rejects a priority value outside the allowed enum" do
       expect do
         described_class.new(name: "x", url: "https://a", priority: "medium")
       end.to raise_error(Dry::Struct::Error, /priority/)
+    end
+  end
+
+  describe Internal::Config::Collect do
+    it "defaults fetch_skip_minutes to 5 when absent" do
+      collect = described_class.new(
+        lookback_hours: 24, retention_days: 30, fetch_threads: 5,
+        fetch_max_retries: 3, fetch_retry_base_sec: 2
+      )
+
+      expect(collect.fetch_skip_minutes).to eq(5)
     end
   end
 

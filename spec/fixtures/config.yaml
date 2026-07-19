@@ -117,7 +117,7 @@ collect:
 # 人間が把握するための目印であり、コード・プロンプトからは一切参照されない。
 # 各ソースのキー:
 #   name: 表示名（収集したニュース一覧の source に入る）
-#   url / urls: フィードURL。複数フィードを1ソース扱いしたい場合は urls（配列）を使う
+#   url: フィードURL。1 ソース = 1 URL = 1 キャッシュファイル。
 #   priority: "high" は公式ブログ・公式リリースノートなど一次情報源の優先度を上げる。
 #     "low" は、まとめ系・コミュニティ系など玉石混交で流量が多いソース向けに
 #     優先度を下げる。未指定は標準優先度。
@@ -171,12 +171,14 @@ rss_feed_sources:
   - name: "DevelopersIO"
     url: "https://dev.classmethod.jp/feed/"
   # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
-  # はてブはホットエントリと新着の両フィードを読む（RSS は各30件が上限で、オフセット
-  # 等のパラメータは効かない）。
-  - name: "はてブ テクノロジー"
-    urls:
-      - "https://b.hatena.ne.jp/hotentry/it.rss"
-      - "https://b.hatena.ne.jp/entrylist/it.rss"
+  # はてブはホットエントリと新着を別ソースとして読む（RSS は各30件が上限で、オフセット
+  # 等のパラメータは効かないため件数を稼ぐ）。同じ記事が両方に載っても収集後の
+  # dedup_by_title が除くので、独立した2ソースにして問題ない。
+  - name: "はてブ テクノロジー(hotentry)"
+    url: "https://b.hatena.ne.jp/hotentry/it.rss"
+    priority: low
+  - name: "はてブ テクノロジー(entrylist)"
+    url: "https://b.hatena.ne.jp/entrylist/it.rss"
     priority: low
   - name: "Qiita 人気記事"
     url: "https://qiita.com/popular-items/feed.atom"

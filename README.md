@@ -147,6 +147,25 @@ pending化も起きない。
 `--publish-only`・pipeline.mode到達がpublishまで進む実行は、「公開する」こと自体が
 確定行為と一体なので、pendingを経由せず即座に確定する（対話なし、従来通り）。
 
+### フィードキャッシュ
+
+各フィードの取得結果は `work/feed_cache/<hash>.json` に URL ごと1ファイルで保持する
+（記事の初登場時刻 seen_at の履歴。`--clean` の対象外で回をまたいで残る）。同じフィードを
+最後に取得してから `config.yaml` の `collect.fetch_skip_minutes`（既定5分）以内に再実行
+した場合は、HTTP を叩かずキャッシュから前回と同じ結果を返す。短時間の再実行で全フィードを
+取り直さずに済み、一部フィードが一時的に落ちていても先へ進める。`0` にするとスキップを無効化
+して毎回必ず取得する。
+
+旧・単一ファイル形式のキャッシュ `work/feed_cache.json` は、URL 別形式への移行後も
+seen_at の継承元として残している（消すと移行直後に過去記事が新着扱いになり二重紹介が
+起きる）。安全に削除できるようになったかは次で確認する（判定のみ。削除はしない）:
+
+```sh
+ruby scripts/check_legacy_feed_cache.rb
+```
+
+`Safe to delete` と出たら `rm work/feed_cache.json` してよい。
+
 対象の回を明示する場合:
 
 ```sh

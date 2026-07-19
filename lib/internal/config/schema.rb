@@ -75,24 +75,20 @@ module Internal
       attribute :fetch_threads, Types::Strict::Integer
       attribute :fetch_max_retries, Types::Strict::Integer
       attribute :fetch_retry_base_sec, Types::Coercible::Float
+      # 各フィードの最終 fetch からこの分数以内は、再取得せず前回キャッシュから返す。
+      # 0 でスキップ無効（常に fetch）。
+      attribute? :fetch_skip_minutes, Types::Strict::Integer.default(5)
     end
 
+    # 1 ソース = 1 フィード URL = 1 キャッシュファイルの 1:1 対応を保つ。同じ記事が
+    # 複数フィードから流れてくる重複は FeedCache の関心事ではなく、収集後の
+    # dedup_by_title が扱う（CLAUDE.md 参照）。
     class RssFeedSource < Base
       Priority = Types::Strict::String.enum("high", "low")
 
       attribute :name, Types::Strict::String
-      attribute? :url, Types::Strict::String
-      attribute? :urls, Types::Strict::Array.of(Types::Strict::String)
+      attribute :url, Types::Strict::String
       attribute? :priority, Priority
-
-      # url/urls はどちらか一方のみを指定する（複数フィードを1ソースとして扱いたい
-      # 場合は urls を使う）。両方 or どちらも無しは構築後にエラーにする。
-      def initialize(*)
-        super
-        return if url.nil? ^ urls.nil?
-
-        raise Dry::Struct::Error, "rss_feed_sources: #{name} は url または urls のどちらか一方のみを指定する"
-      end
     end
 
     class Mixer < Base

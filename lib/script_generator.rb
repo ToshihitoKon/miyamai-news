@@ -14,8 +14,12 @@ class ScriptGenerator
   # 始めの挨拶。前置き除去の目印にも使う。
   OPENING_GREETING = "宮舞モカです。"
 
-  # フィードの seen_at 履歴を保持する単一ファイル（date/slot 非依存、clean 非対象）。
-  def self.feed_cache_path(work_dir) = File.join(work_dir, "feed_cache.json")
+  # フィードの seen_at 履歴を URL ごとに保持するディレクトリ（date/slot 非依存、clean 非対象）。
+  def self.feed_cache_dir(work_dir) = File.join(work_dir, "feed_cache")
+
+  # 旧・単一ファイル形式のキャッシュ。URL 別ファイルへの移行期に seen_at の継承元として
+  # 読むだけで、書き換えはしない（scripts/check_legacy_feed_cache.rb で削除可否を判定できる）。
+  def self.legacy_feed_cache_path(work_dir) = File.join(work_dir, "feed_cache.json")
 
   # work/ に作る回ごとの中間ファイルの glob パターン（clean 対象のみ）。
   def self.work_globs(work_dir)
@@ -39,8 +43,10 @@ class ScriptGenerator
     @greeting_date_ja = episode.greeting_date_ja
     @slot_ja = episode.slot_ja
     @feed_cache = FeedCache.new(
-      path: self.class.feed_cache_path(work_dir),
+      dir: self.class.feed_cache_dir(work_dir),
+      legacy_path: self.class.legacy_feed_cache_path(work_dir),
       retention_days:,
+      skip_window_sec: fetch_skip_minutes * 60,
       max_retries: fetch_max_retries,
       retry_base_sec: fetch_retry_base_sec
     )
@@ -114,6 +120,9 @@ class ScriptGenerator
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
   def fetch_max_retries = Config.collect.fetch_max_retries
   def fetch_retry_base_sec = Config.collect.fetch_retry_base_sec
+
+  # 各フィードの最終 fetch からこの分数以内は再取得をスキップする。
+  def fetch_skip_minutes = Config.collect.fetch_skip_minutes
 
   def news_collected_path = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.txt")
   def news_selected_path  = File.join(@work_dir, "news_selected_#{@date_tag}_#{@slot}.txt")
@@ -293,7 +302,8 @@ class ScriptGenerator
         Thread.current.report_on_exception = false
         while (job = queue.pop)
           src, i = job
-          warn "collecting: #{src.name}"
+          # 進捗ログ（fetched/skipped: <url>）は FeedCache が出す。並列実行で行が混ざらない
+          # よう 1 行完結にしてあるので、ここではソース単位の見出しを別途出さない。
           items_per_source[i] = collect_source(src, since)
         end
       end
@@ -311,7 +321,7 @@ class ScriptGenerator
   # HatenaBookmarks は全ソースに無条件で適用する（はてブ以外には hatena:bookmarkcount
   # が無いので何も付与せず素通りする）。
   def collect_source(src, since)
-    items = @feed_cache.fetch(src.urls || src.url, now: @now, since: since,
+    items = @feed_cache.fetch(src.url, now: @now, since: since,
       extra_extractor: Internal::HatenaBookmarks)
 
     items.map do |item|
