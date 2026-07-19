@@ -82,6 +82,9 @@
     audio { display: none; }
 
     /* カスタムプレーヤー: 上段シークバー / 下段コントロールの2段構成 */
+    /* padding 込みで幅を収めるためプレーヤー配下だけ border-box にする
+       (グローバルには適用せず既存レイアウトへの影響を避ける) */
+    .player, .player * { box-sizing: border-box; }
     .player {
       display: flex;
       flex-direction: column;
@@ -92,8 +95,8 @@
       border: 1px solid var(--moca);
       background: #f5f8fb;
     }
-    /* シークバー行。上下に余白を足して詰まって見えないようにする */
-    .player .rowtop { padding: 6px 2px 8px; }
+    /* シークバー行。下側にだけ少し余白を足す(上は .player の gap があるため詰める) */
+    .player .rowtop { padding: 0 2px 6px; }
     .player .rowbot { display: flex; align-items: center; gap: 10px; }
     .pbtn {
       flex: none;
