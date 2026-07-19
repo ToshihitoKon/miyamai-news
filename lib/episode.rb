@@ -4,27 +4,20 @@ require "time"
 require "date"
 require_relative "slot"
 
-# 1回の番組（エピソード）のコンテキストを表す値オブジェクト。
-# 「実行時刻から番組の日付・slot を導く」計算をここ 1 箇所に集約し、
-# ScriptGenerator と Publisher が同じ値を共有できるようにする。
+# 1回の番組（エピソード）のコンテキストを表す値オブジェクト。「実行時刻から番組の
+# 日付・slot を導く」計算を1箇所に集約し、ScriptGenerator と Publisher が同じ値を
+# 共有できるようにする。
 #
-# now と date は 0:00-4:59 の実行でズレる（前日 midnight 扱いのため date が 1 日戻る）。
-#   - now:  収集の基準時刻。何時までの記事を拾うか・いつ収集したかの時刻演算に使う。
-#   - date: 番組の日付。ファイル名・表示・アーカイブの日付に使う。
+#   now:  収集基準時刻（Time）。時刻精度が必要な収集ロジックに使う。
+#   date: 番組日付（Date）。深夜シフト済み。ファイル名・表示・アーカイブに使う。
+#   slot: 時間帯 slot（morning/afternoon/evening/midnight）。
+#
+# now と date は 0:00-4:59 の実行でズレる（Slot.broadcast_date が前日 midnight 扱いに
+# して date を1日戻すため）。
 class Episode
-  # 収集基準時刻（Time）。時刻精度が必要な収集ロジックはこちらを使う。
-  attr_reader :now
-  # 番組日付（Date）。深夜シフト済み。
-  attr_reader :date
-  # 時間帯 slot（morning/afternoon/evening/midnight）。
-  attr_reader :slot
+  attr_reader :now, :date, :slot
 
-  # 実行時刻から番組コンテキストを組み立てる。
-  # date/slot を明示指定した場合はユーザー指定を尊重し、自動判定を上書きする。
-  #
-  # @param now [Time] 実行時刻（収集基準時刻）
-  # @param date [Date, nil] 番組日付の明示指定。nil なら now から broadcast_date で決める
-  # @param slot [String, nil] slot の明示指定。nil なら now の hour から決める
+  # date/slot を明示指定した場合は自動判定より優先する。
   def initialize(now: Time.now, date: nil, slot: nil)
     @now = now
     @date = date || Slot.broadcast_date(now)

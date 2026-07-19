@@ -3,27 +3,18 @@
 require "time"
 require "json"
 
-# 収集 window の起点を work/last_fetch.json に永続化し、その状態遷移を担うモジュール。
-# 併せて、前回 pending の確定/ロールバックを人間に尋ねる .resolve_pending! も持つ
-# （状態を握っている当のモジュールが対話込みの解決まで面倒を見る方が凝集度が高い）。
+# 収集 window の起点を work/last_fetch.json に永続化するモジュール。前回 pending の
+# 確定/ロールバックを人間に尋ねる .resolve_pending! も持つ（状態を握る当のモジュールが
+# 対話込みの解決まで面倒を見た方が凝集度が高い）。状態はすべて JSON 側にあり、
+# インスタンス状態は持たない（work_dir を渡すだけのモジュール関数の集まり）。
 #
-# 状態はすべて work/last_fetch.json 側にあり、保持すべきインスタンス状態は無い
-# （work_dir だけが引数）。そのため状態を持つオブジェクトにはせず、work_dir を受け取る
-# モジュール関数の集まりにしている。
+# JSON の4キー: confirmed_at(確定済みの収集window起点。次回 since に使う) /
+# pending_at(直近実行の未確認の到達時刻) / rollback_at(直前の confirm!/rollback! で
+# 失われた値を退避する1段の Undo バッファ) / last_op(rollback_at が confirm/discard
+# どちらの Undo 用かを示す)。
 #
-# 収集 window は「実行が完了したら即確定」ではなく、人間が成果物（facts/台本/mp3）を
-# 確認して次に進んでよいと判断した時点で確定する（publish だけは公開自体が確定行為
-# なので例外、.confirm_immediately! を使う）。そのため状態を持つ。
-#   confirmed_at: 確定済みの収集window起点。ScriptGenerator が収集の since に使う値。
-#   pending_at:   直近の実行で新規収集が起きたが、まだ確認していない時刻。
-#   rollback_at:  直近の confirm!/rollback! で失われた値を退避する 1 段の Undo バッファ。
-#   last_op:      その rollback_at が「どの操作の Undo 用か」。"confirm" か "discard"。
-#
-# .restore! は人間の意思決定（.confirm!=確定 / .rollback!=pending破棄）を 1 段だけ巻き戻す。
-# confirm と discard は復元後の状態が違う（confirm の取り消しは confirmed_at も戻すが、
-# discard の取り消しは pending_at だけ戻す）ため、どちらを巻き戻すかを last_op で見分ける。
-# 自動的な .mark_pending!/.confirm_immediately! は人間の操作ではないので Undo 対象にせず、
-# last_op をクリアする。
+# 収集 window の確定ルール・resolve_pending! の既定動作は CLAUDE.md
+# 「LastFetchStore / 収集window」を参照。
 module LastFetchStore
   module_function
 
@@ -64,9 +55,8 @@ module LastFetchStore
     ))
   end
 
-  # pending_at を捨てる。confirmed_at は現状維持のまま変えない。.restore! で巻き戻せるよう、
-  # 捨てる pending_at を rollback_at へ退避し last_op を discard にする。確認プロンプトを
-  # 誤って連打して pending を消しても後から復旧できる。pending_at が無ければ何もしない。
+  # pending_at を捨てる（confirmed_at は変えない）。誤って rollback しても .restore! で
+  # 復旧できるよう、捨てた値を rollback_at に退避する。pending_at が無ければ何もしない。
   def rollback!(work_dir:)
     data = load(work_dir)
     return unless data["pending_at"]
@@ -74,13 +64,8 @@ module LastFetchStore
     write(work_dir, data.merge("pending_at" => nil, "rollback_at" => data["pending_at"], "last_op" => "discard"))
   end
 
-  # 直前の人間操作（confirm! / rollback!）を 1 段だけ巻き戻す。復元後の状態は操作ごとに
-  # 違うので last_op で見分ける。
-  #   confirm の取り消し: 昇格した confirmed_at を pending_at へ戻し、退避してあった元の
-  #                       confirmed_at（rollback_at）を confirmed_at へ戻す。
-  #   discard の取り消し: 捨てた pending_at（rollback_at）を pending_at へ戻す。
-  # 巻き戻したら Undo バッファはクリアする（1 段のみ、Redo はしない）。巻き戻せる状態が
-  # 無ければ何もしない（冪等）。
+  # 直前の人間操作（confirm!/rollback!）を1段だけ巻き戻す。last_op で分岐し、
+  # 巻き戻したら Undo バッファをクリアする（Redo はしない、冪等）。
   def restore!(work_dir:)
     data = load(work_dir)
     case data["last_op"]
@@ -95,17 +80,14 @@ module LastFetchStore
   end
 
   # publish 完了時に呼ぶ。pending を経由せず confirmed_at を即座に at へ確定する
-  # （公開自体が確定行為なので対話を挟まない）。人間の操作ではない（Undo 対象にしない）ので
-  # Undo バッファはクリアする。
+  # （公開自体が確定行為のため）。
   def confirm_immediately!(work_dir:, at:)
     write(work_dir, load(work_dir).merge("confirmed_at" => at.iso8601, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil))
   end
 
-  # 前回実行で pending_at が残っていれば、確定させるかロールバックするか尋ねて解決する。
-  # 新規収集の since は confirmed_at から決まるので、収集が走る直前に呼ぶ（呼ぶタイミングは
-  # ScriptGenerator が握る）。auto_confirm 時は対話せず自動確定する（CI等の非対話実行向け）。
-  # デフォルト(Enter/N)はロールバック側（安全側）: 確認を怠って収集windowが誤って進むより、
-  # 取りこぼしが起きない方を既定にする。pending が無ければ何もしない。
+  # 前回 pending が残っていれば確定/ロールバックを尋ねて解決する（無ければ何もしない）。
+  # auto_confirm 時は対話せず自動確定する。既定(Enter/N)はロールバック側
+  # （安全側の既定。理由は CLAUDE.md 参照）。
   def resolve_pending!(work_dir:, auto_confirm: false)
     pending = pending_at(work_dir)
     return unless pending

@@ -27,10 +27,8 @@ class Publisher
     @title  = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
   end
 
-  # 1回のエピソードを構成するファイルの拡張子。mp3 のファイル名からの
-  # 置換規則(拡張子違いの同名ファイル)を1箇所にまとめ、run/archive_episode_files
-  # など複数箇所での置換ロジックの重複・食い違いを防ぐ。新しい付随ファイルが
-  # 増えたときはここに追加すればよい。
+  # 1回のエピソードを構成するファイルの拡張子。mp3 のファイル名からの置換規則を
+  # 1箇所にまとめる。
   EPISODE_FILE_EXTENSIONS = [".mp3", ".used.txt", ".transcript.txt"].freeze
 
   # mp3 のファイル名から、同じ回に属する全ファイル名(mp3 自身を含む)を返す。
@@ -57,10 +55,9 @@ class Publisher
     puts "done: #{public_url('index.html')}"
   end
 
-  # 既存 archives.csv を読み込んで index.html / manifest.json だけを再生成する。
-  # mp3・used.txt・archives.csv・feed.xml には一切触れない。UI 文言だけを直したときに、
-  # 新しい回を公開したとの誤解（Atom の <updated> 更新による通知）を避けつつ、
-  # 表示だけ即時反映したい場合に使う。
+  # 既存 archives.csv から index.html/manifest.json だけを再生成する。
+  # mp3/used.txt/archives.csv/feed.xml には一切触れない（feed.xml の更新原則の例外。
+  # CLAUDE.md 参照）。
   def republish_ui
     rows = fetch_existing_archives
     abort("archives.csv does not exist yet (nothing published)") if rows.empty?
@@ -71,18 +68,13 @@ class Publisher
     puts "done (UI only): #{public_url('index.html')}"
   end
 
-  # 指定オブジェクトが GCS のバケットに存在するか。
-  # 「オブジェクトが存在しない」（gcloud 自体は正常応答）と「確認に失敗した」
-  # （ネットワーク障害・認証失効・gcloud 不在等）を区別する。後者を false 扱いすると、
-  # archives_exist? 経由で「初回で台帳が無い」と誤認し、既存 archives.csv を新規1行で
-  # 上書きして過去エピソードの一覧を全消失させかねないため、後者は例外にして呼び出し元で
-  # 中断させる。
+  # 指定オブジェクトが GCS に存在するか。「存在しない」と「確認に失敗した」を
+  # 区別する（誤って false 扱いすると台帳を全消失させかねないため。CLAUDE.md 参照）。
   def object_exists?(object)
     _out, err, status = Open3.capture3("gcloud", "storage", "ls", "gs://#{@bucket}/#{object}")
     return true if status.success?
-    # gcloud storage ls は「オブジェクトが無い」場合もこのメッセージで exit code 1 を
-    # 返す。exit code だけでは他の失敗（認証切れ・ネットワーク障害等）と区別できないため、
-    # メッセージの内容で判定する。
+    # gcloud storage ls は「オブジェクトが無い」場合もこの exit code 1 を返すため、
+    # メッセージ内容で判定する。
     return false if err.include?("matched no objects")
 
     raise "gcloud storage ls failed (not a \"no objects\" result, treating as a transient " \
@@ -91,11 +83,8 @@ class Publisher
     raise "gcloud not found: #{e.message}"
   end
 
-  # archived/ プレフィックス配下(update_archives が退避させた保持件数超過分)を
-  # まとめて実削除する。publish 時の隔離処理とは独立して、明示的に呼ばれたときだけ動く。
-  # archived/ が空の場合はワイルドカードがマッチせず gcloud storage rm がエラーになるが、
-  # 「削除するものが無かった」だけなので abort しない。それ以外の失敗
-  # （認証切れ・ネットワーク障害等）は区別して abort する。
+  # archived/ プレフィックス配下を実削除する。publish 時の隔離とは独立して、
+  # 明示的に呼ばれたときだけ動く。空なら gcloud のエラーを「削除対象なし」として無視する。
   def clean_archive
     _out, err, status = Open3.capture3("gcloud", "storage", "rm", "--recursive", "gs://#{@bucket}/archived/**")
     unless status.success? || err.include?("matched no objects")
@@ -113,12 +102,11 @@ class Publisher
   # archives.csv で保持するエピソード数の上限。超えた古い回は archived/ へ退避する。
   def retention_episodes = Config.gcs.retention_episodes
 
-  # 横長バナー画像。Slack のリンクプレビューと再生ページの両方で使う。
-  # GCS への事前アップロードが前提（README 参照）。
+  # 横長バナー画像（Slack のリンクプレビュー・再生ページ用。事前アップロード前提。
+  # CLAUDE.md 参照）。
   def cover_image = Config.assets.cover_image
 
-  # PWA(ホーム画面追加)用の正方形アイコン。manifest.json から参照する。
-  # cover_image と同じく GCS への事前アップロードが前提（README 参照）。
+  # PWA 用の正方形アイコン（manifest.json 用。事前アップロード前提）。
   def icon_image = Config.assets.icon_image
 
   def public_url(object)
@@ -138,9 +126,8 @@ class Publisher
     end
   end
 
-  # gcloud を配列引数で直接起動する（シェルを介さない。ワイルドカードは gcloud 自身が
-  # 解釈するのでシェル展開は不要で、エスケープの考慮も要らない）。
-  # エラー方針: publish の途中で失敗したら公開物が中途半端になるため abort で即中断する。
+  # gcloud を配列引数で直接起動する（シェルを介さない）。publish 途中の失敗は
+  # 公開物を中途半端にしないよう即 abort する。
   def gcloud_storage(*args)
     system("gcloud", "storage", *args) ||
       abort("gcloud storage failed: #{["gcloud", "storage", *args].join(' ')}")
@@ -194,25 +181,17 @@ class Publisher
   end
 
   # --- archives.csv ------------------------------------------------------
-  # 列: date(YYYY-MM-DD), filename, title, used_news, updated_at(RFC3339 UTC)
-  # used_news はその回で紹介したニュース一覧の全文(Atom フィードの content 用)。
-  # updated_at は生成時刻。当日分を作り直すたびに更新され、Atom の <updated> に
-  # 使う。これにより同じ日に再生成しても更新が進み、RSS リーダーが検知できる。
-  # 4列目を持たない過去の行は used_news 空、5列目を持たない過去の行は
-  # updated_at 空(date の 00:00:00Z にフォールバック)として扱う。
-  # 同一 filename は上書き。1日に複数回(朝昼夜)ある場合は date が同じでも
-  # filename が異なる行として共存する。降順(新しい順)で保持。
-  # retention_episodes を超えた古い回は台帳から外し、実ファイルは archived/ へ退避する
-  # (削除はしない。実削除は Publisher#clean_archive で行う)。
+  # 列: date, filename, title, used_news, updated_at(RFC3339 UTC)。降順(新しい順)で
+  # 保持し、同一 filename は上書きする。4列目/5列目を持たない過去の行は
+  # used_news 空/updated_at 空(date の 00:00:00Z にフォールバック)として扱う。
+  # retention_episodes を超えた古い回は台帳から外し archived/ へ退避する
+  # （実削除はしない。CLAUDE.md 参照）。
 
   def update_archives(filename, used_news = "")
     rows = fetch_existing_archives
-    # 同じファイル名(=同じ日の同じ時間帯)の回があれば差し替える。
-    # 1日に朝昼夜と複数回ある場合、date は同じでも filename が異なるので共存する。
     rows.reject! { |r| r[1] == filename }
     rows << [date_for(filename), filename, @title, used_news, now_rfc3339]
-    # 日付(YYYY-MM-DD)を第1キー、生成時刻を第2キーに新しい順で並べる。
-    # 同一日に複数回ある場合、生成時刻で slot の前後を安定させる。
+    # 日付を第1キー、生成時刻を第2キーに新しい順で並べる。
     rows.sort_by! { |r| [r[0], r[4].to_s] }
     rows.reverse!
 
@@ -236,12 +215,8 @@ class Publisher
     end
   end
 
-  # 既存 archives.csv を取得して行配列で返す。
-  # 「初回でオブジェクトが存在しない」場合のみ空配列で開始し、
-  # ネットワーク障害等の取得失敗では abort する。
-  # (取得失敗を空扱いすると、既存台帳を空で上書きして全消失させてしまうため)
-  # archives_exist? 自体がネットワーク障害等では例外を送出する（object_exists? 参照）ので、
-  # ここで rescue せず呼び出し元まで伝播させて publish 全体を中断させる。
+  # 既存 archives.csv を取得して行配列で返す。オブジェクトが無い場合のみ空配列で
+  # 開始し、取得失敗（ネットワーク障害等）は abort する（object_exists? 参照）。
   def fetch_existing_archives
     return [] unless archives_exist?
 
@@ -269,7 +244,7 @@ class Publisher
   def render_html(rows)
     abort("no archives to render") if rows.empty?
 
-    current = rows.first # 降順なので先頭が最新
+    current = rows.first # 最新（降順）
     options = rows.map do |date, fname, _title, _used_news, updated_at|
       label = date_with_slot(date, fname)
       selected = fname == current[1] ? " selected" : ""
@@ -290,9 +265,8 @@ class Publisher
   end
 
   # --- feed.xml (Atom) ---------------------------------------------------
-  # archives.csv の全エピソードを新しい順のエントリにした Atom フィード。
-  # 各エントリの content には、その回で紹介したニュース一覧(used_news)を
-  # URL リンク化した HTML で入れる。used_news が無い過去分は content を空にする。
+  # archives.csv の全エピソードを新しい順のエントリにした Atom フィード。content には
+  # used_news を URL リンク化した HTML を入れる（無い過去分は空）。
 
   def write_feed(rows)
     upload_content("feed.xml", render_feed(rows),
@@ -310,7 +284,7 @@ class Publisher
       program_name: PROGRAM_NAME,
       feed_url: public_url("feed.xml"),
       page_url: public_url("index.html"),
-      updated: feed_datetime(rows.first[0], rows.first[4]), # 降順なので先頭が最新
+      updated: feed_datetime(rows.first[0], rows.first[4]), # 最新（降順）
       entries:)
   end
 
@@ -323,20 +297,18 @@ class Publisher
       title:,
       # link は読者のクリック先なので再生ページ(index.html)にする。
       entry_url: public_url("index.html"),
-      # id はエントリの一意識別子なので、回ごとに一意な mp3 URL のままにする
-      # (全エントリで同じ index.html を id にすると RSS リーダーが区別できない)。
+      # id はエントリの一意識別子。回ごとに一意な mp3 URL のままにする
+      # （全エントリを同じ index.html にすると RSS リーダーが新着を区別できない）。
       entry_id: public_url(fname),
       updated: feed_datetime(date, updated_at),
-      # content type="html" の中身は「XMLデコード後にHTMLとして解釈される」仕様なので、
-      # 組み立てた HTML 片(<br>/<a>を含む)をそのまま埋めるとタグとして解釈されてしまう。
-      # h() でもう一段 XML エスケープしてから埋め込む。
+      # content type="html" はXMLデコード後にHTMLとして解釈されるため、組み立てた
+      # HTML 片をそのまま埋めるとタグとして解釈される。h() でもう一段エスケープする。
       content: used_news.strip.empty? ? "" : h(used_news_html(used_news))).chomp
   end
 
-  # used_news(改行区切りのプレーンテキスト)を、content type="html" 向けの HTML に組み立てる。
-  # index.html.erb 側の JS 表示（改行を無視せず、URL をリンク化する）と揃える。
-  # 手順: 本文を先に h() で丸ごとエスケープしてから URL をリンク化し、最後に改行を <br> に
-  # 変える（h() を先にかけないと、生成した <a> タグ自体がエスケープされてしまう）。
+  # used_news を content type="html" 向けの HTML に組み立てる。h() で丸ごとエスケープ
+  # してから URL をリンク化し、最後に改行を <br> に変える（順序が逆だと生成した
+  # <a> タグ自体がエスケープされてしまう）。
   def used_news_html(used_news)
     h(used_news)
       .gsub(%r{https?://[^\s&]+}) { |url| %(<a href="#{url}">#{url}</a>) }
@@ -344,9 +316,8 @@ class Publisher
   end
 
   # --- manifest.json (PWA) -----------------------------------------------
-  # ホーム画面追加(PWA)用の Web App Manifest。name は PROGRAM_NAME 固定で
-  # エピソードごとには変わらないが、index/feed と同じく毎回書き出す。
-  # アイコンは正方形が必要なので、横長の cover_image ではなく icon_image を使う。
+  # ホーム画面追加(PWA)用の Web App Manifest。アイコンは正方形が必要なので
+  # cover_image ではなく icon_image を使う。
 
   def write_manifest
     upload_content("manifest.json", render_manifest,
@@ -357,37 +328,30 @@ class Publisher
     TemplateRenderer.render("manifest.json", self, icon_url: public_url(icon_image))
   end
 
-  # Atom の <updated> 用 RFC3339 日時を返す。
-  # updated_at(生成時刻)があればそれを使う。持たない過去行は date の
-  # 00:00:00 UTC にフォールバックする。
-  # date の組み立てで Date#to_time を使わないのは、ローカルタイム扱いになり
-  # UTC 変換で日付がずれるため。日付文字列をそのまま UTC 午前0時として組む。
+  # Atom の <updated> 用 RFC3339 日時。updated_at があればそれを使い、無い過去行は
+  # date の 00:00:00 UTC にフォールバックする（Date#to_time はローカルタイム扱いに
+  # なりずれるため、文字列から直接組み立てる）。
   def feed_datetime(date_str, updated_at = nil)
     return updated_at if updated_at && !updated_at.to_s.strip.empty?
 
     "#{Date.parse(date_str).strftime('%Y-%m-%d')}T00:00:00Z"
   end
 
-  # 現在時刻を UTC の RFC3339 秒精度で返す(例: 2026-07-10T05:11:23Z)。
   def now_rfc3339
     Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
   end
 
-  # ファイル名末尾の slot(_morning/_afternoon/_evening/_midnight)を日本語ラベルにする。
-  # 1日に複数回ある回を UI やフィードで見分けるための表示用。
-  # slot を持たない旧ファイル名は空文字を返す(後方互換)。
+  # ファイル名の slot を日本語ラベルにする（表示用）。slot が無い旧ファイル名は
+  # 空文字を返す（後方互換）。
   def slot_label(filename) = Slot.ja_label_from_filename(filename)
 
-  # "YYYY-MM-DD" に slot ラベルを添えた表示用の日付。slot が無ければ日付のみ。
   def date_with_slot(date, filename)
     label = slot_label(filename)
     label.empty? ? date : "#{date}（#{label}）"
   end
 
-  # ファイル名(miyamai_news_YYYYMMDD[_slot].mp3)の日付部分を archives.csv 用の
-  # "YYYY-MM-DD" にする。GCS のオブジェクト名と同じくファイル名を正とすることで、
-  # 過去分を日付指定なしで再アップロードしても date 列が今日にずれない。
-  # ファイル名から日付が読めないときだけ @date にフォールバックする。
+  # ファイル名の日付部分を archives.csv 用の "YYYY-MM-DD" にする（GCS オブジェクト名と
+  # 同じくファイル名を正とする）。読めないときだけ @date にフォールバックする。
   def date_for(filename)
     m = filename.match(/(\d{4})(\d{2})(\d{2})/)
     m ? "#{m[1]}-#{m[2]}-#{m[3]}" : @date.to_s
