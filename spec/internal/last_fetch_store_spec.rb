@@ -40,6 +40,14 @@ RSpec.describe LastFetchStore do
       expect(described_class.confirmed_at(work_dir)).to be_nil
       expect(described_class.pending_at(work_dir)).to eq(pending)
     end
+
+    it "records the episode_key of the pending window" do
+      described_class.mark_pending!(
+        work_dir: work_dir, at: Time.utc(2026, 7, 16, 9, 0, 0), episode_key: "20260716_evening"
+      )
+
+      expect(described_class.pending_episode(work_dir)).to eq("20260716_evening")
+    end
   end
 
   describe ".confirm!" do
@@ -71,6 +79,19 @@ RSpec.describe LastFetchStore do
 
       expect(described_class.confirmed_at(work_dir)).to eq(confirmed)
       expect(described_class.restorable?(work_dir)).to be false
+    end
+
+    it "returns the pending episode_key and clears it on confirm" do
+      described_class.mark_pending!(
+        work_dir: work_dir, at: Time.utc(2026, 7, 16, 9, 0, 0), episode_key: "20260716_evening"
+      )
+
+      expect(described_class.confirm!(work_dir: work_dir)).to eq("20260716_evening")
+      expect(described_class.pending_episode(work_dir)).to be_nil
+    end
+
+    it "returns nil when there is no pending_at" do
+      expect(described_class.confirm!(work_dir: work_dir)).to be_nil
     end
   end
 
@@ -230,7 +251,7 @@ RSpec.describe LastFetchStore do
 
   describe ".load" do
     it "returns all-nil defaults when last_fetch.json does not exist" do
-      expect(described_class.load(work_dir)).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil)
+      expect(described_class.load(work_dir)).to eq("confirmed_at" => nil, "pending_at" => nil, "pending_episode" => nil, "rollback_at" => nil, "last_op" => nil)
     end
 
     # last_op 導入前に書かれた新形式ファイルには last_op キーが無い。読み込み時に補う。
@@ -249,7 +270,7 @@ RSpec.describe LastFetchStore do
       FileUtils.mkdir_p(work_dir)
       File.write(described_class.path(work_dir), "not-json")
 
-      expect(described_class.load(work_dir)).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil)
+      expect(described_class.load(work_dir)).to eq("confirmed_at" => nil, "pending_at" => nil, "pending_episode" => nil, "rollback_at" => nil, "last_op" => nil)
       expect(File.read(described_class.path(work_dir))).to eq("not-json")
     end
   end

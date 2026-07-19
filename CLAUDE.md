@@ -191,6 +191,49 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   ニュースが揃わないまま後段の AI 呼び出しに進み、不完全な情報を元にトークンを
   浪費するのを防ぐため。
 
+### UsedNewsHistory（紹介済みニュース履歴）
+
+- なぜ必要か: `last_fetched_at` を跨いで別ソースが同じ話題を配信すると、FeedCache の
+  `seen_at` が振り直されて「新着」扱いになり、直前の回で紹介したニュースが次の回でも
+  selector に選ばれてしまう（回またぎの二重紹介）。`dedup_by_title` は同一実行内しか
+  効かない。そこで直近 N 回（`collect.used_news_history_episodes`、既定4）の紹介済み
+  ニュースを `work/used_news_history/<episode_key>.txt` に貯め、selector プロンプトの
+  `<recently_used>` として渡し、AI に link 一致・話題一致で避けさせる（Ruby 側の機械
+  reject ではなくプロンプトベース）。
+- 要約を持たせる理由: 別ソース・別 URL でも「同じ話題」を AI が判断できるよう、used_news
+  自体に 1〜2 文の短い要約をタイトル直下に載せる。副次的に再生ページ・feed の「この回で
+  紹介したニュース」欄にも要約が出る。Publisher / index.html は used_news を構造として解釈せず、
+  テキストを整形表示するだけなので（`used_news_html` / `linkify`）、要約を足してもこれらの
+  コード変更は不要。`strip_used_preamble` は先頭の `■` 起点なので、要約を `・タイトル` 配下に
+  置く限り影響しない。
+- used_news を書く工程は 2 つある。extractor が facts と一緒に**暫定版**を書き
+  （`templates/extractor.prompt.erb`。digest mode の到達点でも履歴の元データを残すため。
+  候補として facts 化した全ニュースが対象）、writer 到達時に**同じパス**へ**確定版**
+  （`templates/writer.prompt.erb`。台本で実際に紹介したもの）を上書きする。confirm 時に存在
+  する方が履歴に入る。これにより digest mode 運用でも履歴が溜まる（used_news が全く無い
+  digest なら記録するものが無く、`record!` は `File.exist?` ガードでスキップする）。暫定 used は
+  履歴用の副産物なので、extractor が書き損ねても digest は止めない（`finalize_optional_used_news`
+  は無ければ何もしない。確定 used を書く writer 側の `rewrite_file` は従来どおり必須で abort する）。
+- 履歴は機械パースしない: 用途は selector プロンプトへの丸ごと埋め込みなので、used_news の
+  テキストをそのまま置く。ただし link 行はプロンプトのノイズにしかならないので履歴コピー
+  からは正規表現で除去する（公開用 `dist/*.used.txt` には link を残す）。
+- 保存場所と clean 非対象: `work/used_news_history/` は feed_cache/・last_fetch.json と同じ
+  回をまたぐ永続状態。`ScriptGenerator.work_globs` のホワイトリスト（`news_*.txt` 等）に
+  載らないので `clean` で消えない。中間ファイル `news_used_*.txt` は `news_*.txt` グロブで
+  clean 消去されるため、履歴は必ず別ディレクトリへコピーする。
+- 1 回の単位とソート: `<date_tag>_<slot>`（episode_key）。同一 key への再記録は上書き（冪等）。
+  FIFO は `(date_tag, Slot.sort_key(slot))` で新しい順に判定する（mtime 非依存）。`midnight`
+  は `broadcast_date` で前日回に寄るため、同一 date_tag 内では日内の最後になる。
+- 追記タイミングと不変条件: 収集 window の **confirm 時のみ**追記する（rollback された回は
+  読者に届いていないので履歴に残さない）。selector は「前回まで」の履歴を読むので、自回の
+  追記は selector より必ず後（confirm 時）でなければ自回を過去回として弾いてしまう。confirm
+  経路を統一するため、pending 化時に episode_key を `last_fetch.json` の `pending_episode` へ
+  保存し、confirm 時にそれを引いて追記対象の回を特定する（`LastFetchStore#confirm!` /
+  `#resolve_pending!` は確定した episode_key を返す）。新規 fetch を伴う publish は pending を
+  経由しないので、その回の episode_key は `episode` から直接渡す。rollback! では
+  pending_episode をクリアし、`restore!` では復元しない割り切り（復元したい場合は work/ に
+  残る used ファイルから手動追記する）。
+
 ### Config
 
 - `ai_agent.effort` は現状 `bin == "claude"` のときだけ

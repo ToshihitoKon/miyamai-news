@@ -46,6 +46,15 @@ RSpec.describe Internal::Config do
 
       expect(collect.fetch_skip_minutes).to eq(5)
     end
+
+    it "defaults used_news_history_episodes to 4 when absent" do
+      collect = described_class.new(
+        lookback_hours: 24, retention_days: 30, fetch_threads: 5,
+        fetch_max_retries: 3, fetch_retry_base_sec: 2
+      )
+
+      expect(collect.used_news_history_episodes).to eq(4)
+    end
   end
 
   describe Internal::Config::Category do

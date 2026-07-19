@@ -5,6 +5,7 @@ require "fileutils"
 require "tmpdir"
 require "episode"
 require "internal/last_fetch_store"
+require "internal/used_news_history"
 require "script_generator"
 
 RSpec.describe ScriptGenerator do
@@ -65,6 +66,8 @@ RSpec.describe ScriptGenerator do
             File.write(generator.send(:news_selected_path), "## 生成AI\n1. Title A\n   https://example.com/a\n   (meta)\n")
           when 2
             File.write(generator.send(:news_facts_path), "## Title A\n概要です。\n")
+            # extractor は facts と一緒に暫定 used_news も書く。
+            File.write(generator.send(:used_news_path), "■ 生成AI\n・Title A\n   要約です。\n   https://example.com/a\n   (2026-07-14 / SourceA)\n")
           end
           ["", "", success_status]
         end
@@ -74,8 +77,57 @@ RSpec.describe ScriptGenerator do
         expect(call_count).to eq(2)
         expect(facts_path).to eq(generator.send(:news_facts_path))
         expect(File.read(facts_path)).to include("概要です")
+        # digest mode でも暫定 used_news が残る（履歴の元データ）。台本は作らない。
+        expect(File.read(generator.send(:used_news_path))).to include("Title A")
         expect(File.exist?(generator.send(:script_path))).to be false
       end
+    end
+  end
+
+  describe "selector プロンプトへの紹介済みニュース履歴の反映" do
+    # selector（1回目の AI 呼び出し）に渡した stdin を捕捉して返す。
+    def capture_selector_stdin(generator)
+      success = instance_double(Process::Status, success?: true, exitstatus: 0)
+      selector_stdin = nil
+      call = 0
+      allow(Open3).to receive(:capture3) do |*_cmd, **opts|
+        call += 1
+        if call == 1
+          selector_stdin = opts[:stdin_data]
+          File.write(generator.send(:news_selected_path), "## 生成AI\n1. Title A\n   https://example.com/a\n   (meta)\n")
+        elsif call == 2
+          File.write(generator.send(:news_facts_path), "## Title A\n概要です。\n")
+        end
+        ["", "", success]
+      end
+      generator.digest
+      selector_stdin
+    end
+
+    def record_history(episode_key, body)
+      path = File.join(work_dir, "news_used_#{episode_key}.txt")
+      File.write(path, body)
+      UsedNewsHistory.record!(work_dir: work_dir, episode_key: episode_key, used_news_path: path, keep_episodes: 4)
+    end
+
+    it "includes the recently used section when history exists" do
+      record_history("20260713_evening", "■ 生成AI\n・過去の話題\n   要約テキストです。\n   https://example.com/old\n   (2026-07-13 / OldSource)\n")
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      stdin = capture_selector_stdin(generator)
+
+      expect(stdin).to include("<recently_used>")
+      expect(stdin).to include("過去の話題")
+      # 履歴からは link を落としている。
+      expect(stdin).not_to include("https://example.com/old")
+    end
+
+    it "omits the section when there is no history" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      stdin = capture_selector_stdin(generator)
+
+      expect(stdin).not_to include("<recently_used>")
     end
   end
 
