@@ -79,6 +79,22 @@
       font-size: 13px;
     }
     audio { width: 100%; }
+    .playmode {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding: 7px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--moca);
+      background: #f5f8fb;
+      color: var(--moca-deep);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .playmode:hover { background: #eaf1f8; }
     .news {
       margin-top: 20px;
       border-top: 1px solid #e2e8f0;
@@ -151,6 +167,7 @@
         <%= options %>
       </select>
       <audio id="player" controls src="<%= h(current_url) %>"></audio>
+      <button type="button" id="playmode" class="playmode" aria-label="再生モード切り替え"></button>
       <div class="news">
         <h2>この回で紹介したニュース</h2>
         <pre id="newslist">読み込み中…</pre>
@@ -179,6 +196,7 @@
     const artwork = document.getElementById('artwork');
     const transcript = document.getElementById('transcript');
     const transcripttext = document.getElementById('transcripttext');
+    const playmode = document.getElementById('playmode');
 
     const escapeHtml = (s) => s
       .replaceAll('&', '&amp;')
@@ -242,9 +260,12 @@
       }
     });
 
-    sel.addEventListener('change', () => {
+    // select の指定 index の回に切り替え、プレーヤーと付随表示を更新する。
+    // select 操作(change)と連続再生の自動遷移で共通に使う。
+    const switchToArchive = (index) => {
+      sel.selectedIndex = index;
       player.src = sel.value;
-      now.textContent = sel.options[sel.selectedIndex].textContent;
+      now.textContent = sel.options[index].textContent;
       loadNews(sel.value);
       if (transcript.open) {
         transcript.dataset.loadedFor = player.src;
@@ -252,7 +273,44 @@
       } else {
         delete transcript.dataset.loadedFor;
       }
+    };
+
+    sel.addEventListener('change', () => switchToArchive(sel.selectedIndex));
+
+    // 再生モード。ボタンを押すたびに一曲→連続→リピートの順で循環する。
+    // - single  : 1曲終わったら停止(既定)
+    // - sequential: 1曲終わったら1つ古い回(select上で次の index)へ進む。
+    //              最古(末尾)まで到達したら停止する。
+    // - repeat   : 同じ回を繰り返す(単曲リピート)。
+    const MODES = [
+      { key: 'single', icon: '▶️', label: '一曲' },
+      { key: 'sequential', icon: '⏭️', label: '連続' },
+      { key: 'repeat', icon: '🔂', label: 'リピート' },
+    ];
+    let modeIndex = 0;
+
+    const applyPlaymode = () => {
+      const mode = MODES[modeIndex];
+      player.loop = mode.key === 'repeat';
+      playmode.textContent = `${mode.icon} ${mode.label}`;
+    };
+
+    playmode.addEventListener('click', () => {
+      modeIndex = (modeIndex + 1) % MODES.length;
+      applyPlaymode();
     });
+
+    // 曲終端。連続再生時のみ1つ古い回へ自動で進める。
+    // repeat は audio.loop に任せるため ended が発火せず、ここには来ない。
+    player.addEventListener('ended', () => {
+      if (MODES[modeIndex].key !== 'sequential') return;
+      const next = sel.selectedIndex + 1; // select は最新が先頭・降順なので +1 が1つ古い回
+      if (next >= sel.options.length) return; // 最古まで到達したら停止
+      switchToArchive(next);
+      player.play();
+    });
+
+    applyPlaymode();
 
     const togglePlay = () => {
       if (player.paused) {
