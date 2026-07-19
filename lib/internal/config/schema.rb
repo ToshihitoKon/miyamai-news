@@ -78,6 +78,9 @@ module Internal
       # 各フィードの最終 fetch からこの分数以内は、再取得せず前回キャッシュから返す。
       # 0 でスキップ無効（常に fetch）。
       attribute? :fetch_skip_minutes, Types::Strict::Integer.default(5)
+      # 直近この回数分の紹介済みニュースを selector に渡し、回またぎの重複紹介を避ける
+      # （詳細は CLAUDE.md 参照）。
+      attribute? :used_news_history_episodes, Types::Strict::Integer.default(4)
     end
 
     # 1 ソース = 1 フィード URL = 1 キャッシュファイルの 1:1 対応を保つ。同じ記事が

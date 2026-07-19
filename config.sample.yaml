@@ -85,6 +85,8 @@ collect:
   fetch_retry_base_sec: 2
   # 前回 fetch のキャッシュを使い回す時間。
   fetch_skip_minutes: 5
+  # 直近何回分の紹介済みニュースを selector に渡して、回またぎの重複紹介を避けるか。
+  used_news_history_episodes: 4
 
 # 収集元定義。
 rss_feed_sources:

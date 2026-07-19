@@ -40,6 +40,15 @@ module Slot
 
   def ja_label(slot) = JA_LABELS.fetch(slot)
 
+  # 1 日の中での slot の時系列順（JA_LABELS のキー順＝DAY_START_HOUR 起点の時間帯順）。
+  # 同一 date_tag 内で複数回のエピソードを並べるためのソートキーに使う。midnight は
+  # broadcast_date が前日回に寄せるので、この順で日内の最後になる。
+  ORDER = JA_LABELS.keys.freeze
+
+  # slot を日内の並び順（0 始まり）に変換する。(date_tag, sort_key(slot)) でエピソードの
+  # 時系列順が一意に決まる。未知の slot は fetch で例外にして早期に気づけるようにする。
+  def sort_key(slot) = ORDER.index(slot) || raise(KeyError, "unknown slot: #{slot}")
+
   # JA_LABELS のキーから組み立てるので、対応 slot が増減しても追従漏れが起きない。
   FILENAME_PATTERN = /_(#{JA_LABELS.keys.join('|')})\.mp3\z/
 

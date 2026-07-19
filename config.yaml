@@ -73,6 +73,7 @@ collect:
   fetch_max_retries: 3
   fetch_retry_base_sec: 2
   fetch_skip_minutes: 5
+  used_news_history_episodes: 4
 
 rss_feed_sources:
   # --- 生成AI ---

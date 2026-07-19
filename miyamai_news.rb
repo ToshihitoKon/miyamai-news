@@ -84,6 +84,7 @@ end
 
 require_relative "lib/episode"
 require_relative "lib/internal/last_fetch_store"
+require_relative "lib/internal/used_news_history"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"
 require_relative "lib/audio_mixer"
@@ -150,7 +151,7 @@ def main
     # publish_only は新規 fetch をせず既存成果物を公開するだけなので、収集 window を
     # 新しい時刻に進めてはいけない（fetch していない時刻で確定すると取りこぼす）。
     # pending が残っていれば公開＝確定として昇格させ、無ければ何もしない。
-    LastFetchStore.confirm!(work_dir: WORK_DIR)
+    record_used_news_history(LastFetchStore.confirm!(work_dir: WORK_DIR))
     return
   end
 
@@ -163,14 +164,14 @@ def main
   if args[:digest_only]
     ensure_mode_allows!("digest")
     run_digest(generator)
-    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor) if generator.fetched_news?
+    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor, episode_key: generator.episode_key) if generator.fetched_news?
     return
   end
 
   if args[:script_only]
     ensure_mode_allows!("synthesize")
     run_script(generator)
-    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor) if generator.fetched_news?
+    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor, episode_key: generator.episode_key) if generator.fetched_news?
     return
   end
 
@@ -198,11 +199,15 @@ def main
     run_publish(episode)
     if generator.fetched_news?
       LastFetchStore.confirm_immediately!(work_dir: WORK_DIR, at: generator.collect_since_anchor)
+      # 公開＝確定した今回の回を紹介済みニュース履歴へ追記する（confirm_immediately! は
+      # pending を経由しないので episode_key を返さない。今回の episode から直接渡す）。
+      record_used_news_history(generator.episode_key)
     else
-      LastFetchStore.confirm!(work_dir: WORK_DIR)
+      # 既存 news の再利用でも、pending が残っていれば昇格した回を履歴へ追記する。
+      record_used_news_history(LastFetchStore.confirm!(work_dir: WORK_DIR))
     end
   elsif generator.fetched_news?
-    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor)
+    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor, episode_key: generator.episode_key)
   end
 end
 
@@ -215,8 +220,22 @@ def run_confirm_fetch
     return
   end
 
-  LastFetchStore.confirm!(work_dir: WORK_DIR)
+  record_used_news_history(LastFetchStore.confirm!(work_dir: WORK_DIR))
   warn "confirmed fetch window: #{pending}"
+end
+
+# episode_key の回の used_news を紹介済みニュース履歴へ追記する（収集window の confirm 時に
+# 呼ぶ）。ScriptGenerator インスタンスを持たない経路（publish_only / confirm_fetch）でも
+# episode_key さえあれば同じ命名規則で used ファイルを引ける。episode_key が nil（confirm
+# していない）なら何もしない。詳細は CLAUDE.md 参照。
+def record_used_news_history(episode_key)
+  return unless episode_key
+
+  UsedNewsHistory.record!(
+    work_dir: WORK_DIR, episode_key: episode_key,
+    used_news_path: ScriptGenerator.used_news_path(WORK_DIR, episode_key),
+    keep_episodes: Config.collect.used_news_history_episodes
+  )
 end
 
 # 直前の人間操作（確定・pending破棄）を 1 段巻き戻す独立コマンド。間違って確定した、

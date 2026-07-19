@@ -9,6 +9,7 @@ require_relative "internal/template_renderer"
 require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
 require_relative "internal/last_fetch_store"
+require_relative "internal/used_news_history"
 
 class ScriptGenerator
   # 始めの挨拶。前置き除去の目印にも使う。
@@ -26,6 +27,11 @@ class ScriptGenerator
     %w[news_*.txt script_*.txt tts_script_*.txt]
       .map { |pat| File.join(work_dir, pat) }
   end
+
+  # episode_key（"<date_tag>_<slot>"）から used_news 中間ファイルのパスを組み立てる。
+  # 紹介済みニュース履歴の追記が、ScriptGenerator インスタンスを持たない confirm 経路
+  # からも同じ命名でこのファイルを引けるようにする。
+  def self.used_news_path(work_dir, episode_key) = File.join(work_dir, "news_used_#{episode_key}.txt")
 
   # @param work_dir [String] 中間ファイルの置き場
   # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
@@ -92,6 +98,22 @@ class ScriptGenerator
   # （実行完了時刻ではなく開始時刻。詳細は CLAUDE.md 参照）。
   def collect_since_anchor = @now
 
+  # この回を一意に指すキー（"<date_tag>_<slot>"）。中間ファイル名・収集window の
+  # pending_episode・紹介済みニュース履歴で同じ回を指すのに使う。
+  def episode_key = "#{@date_tag}_#{@slot}"
+
+  # episode_key の回の used_news を紹介済みニュース履歴へ追記する（収集window の confirm
+  # 時に呼ぶ）。episode_key が nil（confirm していない）なら何もしない。詳細は CLAUDE.md 参照。
+  def record_used_news_history!(episode_key)
+    return unless episode_key
+
+    UsedNewsHistory.record!(
+      work_dir: @work_dir, episode_key: episode_key,
+      used_news_path: self.class.used_news_path(@work_dir, episode_key),
+      keep_episodes: used_news_history_episodes
+    )
+  end
+
   private
 
   # --- 設定値 ---
@@ -124,12 +146,17 @@ class ScriptGenerator
   # 各フィードの最終 fetch からこの分数以内は再取得をスキップする。
   def fetch_skip_minutes = Config.collect.fetch_skip_minutes
 
+  # 直近この回数分の紹介済みニュースを selector に渡す（回またぎの重複紹介を避ける）。
+  def used_news_history_episodes = Config.collect.used_news_history_episodes
+
   def news_collected_path = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.txt")
   def news_selected_path  = File.join(@work_dir, "news_selected_#{@date_tag}_#{@slot}.txt")
   def news_facts_path  = File.join(@work_dir, "news_facts_#{@date_tag}_#{@slot}.txt")
   def script_path      = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
   def tts_script_path  = File.join(@work_dir, "tts_script_#{@date_tag}_#{@slot}.txt")
-  def used_news_path   = File.join(@work_dir, "news_used_#{@date_tag}_#{@slot}.txt")
+  # used_news のファイル名規則はクラスメソッドに集約する（confirm 経路が episode_key
+  # からパスを再構成できるようにするため。詳細は CLAUDE.md 参照）。
+  def used_news_path   = self.class.used_news_path(@work_dir, episode_key)
 
   # digest（収集→選定→facts抽出）を実行し、facts抽出で使った選定済みニュースの
   # テキストを返す。generate はこの戻り値を使って続きのライター工程に渡す。
@@ -169,6 +196,19 @@ class ScriptGenerator
 
     rewrite_file(news_facts_path) { |text| strip_facts_preamble(text) }
     warn "news facts: #{news_facts_path}"
+
+    # extractor には facts と一緒に暫定 used_news も書かせる（digest mode でも紹介済み
+    # ニュース履歴の元データを残すため。詳細は CLAUDE.md 参照）。writer 到達時は同じパスへ
+    # 確定版が上書きされる。履歴用の副産物なので、書かれていなくても digest は止めない。
+    finalize_optional_used_news
+  end
+
+  # extractor が書いた暫定 used_news があれば後処理して整える。無ければ何もしない。
+  def finalize_optional_used_news
+    return unless File.exist?(used_news_path)
+
+    File.write(used_news_path, strip_used_preamble(File.read(used_news_path)))
+    warn "used news (provisional): #{used_news_path}"
   end
 
   # ライター。1 回の AI 呼び出しで script.txt と used.txt を書かせる。既に抽出された
@@ -262,7 +302,10 @@ class ScriptGenerator
   # 件数の絞り込みは行わない（選定ステップの AI に全候補を渡す）。
   def collect_news
     # since を確定する直前に前回 pending を解決する（呼ぶタイミングはここが握る）。
-    LastFetchStore.resolve_pending!(work_dir: @work_dir, auto_confirm: @auto_confirm)
+    # confirm された回は、この回の selector が参照できるよう紹介済みニュース履歴へ追記する
+    # （追記対象は「前回確定した回」であって実行中の回ではないので自回は弾かない）。
+    confirmed_episode = LastFetchStore.resolve_pending!(work_dir: @work_dir, auto_confirm: @auto_confirm)
+    record_used_news_history!(confirmed_episode)
 
     since = collect_since
     items_per_source = fetch_sources_in_parallel(sources, since)
@@ -400,23 +443,27 @@ class ScriptGenerator
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
   # ニュース選定用タスク。全候補・カテゴリの分類観点・合計目安件数・選定結果の
-  # 書き込み先パスを渡す。
+  # 書き込み先パスに加え、直近の紹介済みニュース（回またぎの重複回避用）を渡す。
   def selector_prompt(collected_news)
     TemplateRenderer.render("selector.prompt", self,
       collected_news:,
       today_ja: @today_ja,
       category_details:,
       total_news_count:,
+      recently_used: UsedNewsHistory.render_for_prompt(@work_dir, used_news_history_episodes),
       news_selected_path: File.expand_path(news_selected_path))
   end
 
+  # facts に加え、紹介済みニュース履歴の元になる暫定 used_news の書き込み先も渡す
+  # （digest mode でも履歴を残すため。writer 到達時は同じパスへ確定版が上書きされる）。
   def extractor_prompt(selected_news)
     TemplateRenderer.render("extractor.prompt", self,
       selected_news:,
       today_ja: @today_ja,
       category_details:,
       total_news_count:,
-      news_facts_path: File.expand_path(news_facts_path))
+      news_facts_path: File.expand_path(news_facts_path),
+      used_news_path: File.expand_path(used_news_path))
   end
 
   # ライター用タスク。facts と選定済みニュースを差し込み、台本(script)と used の
