@@ -9,7 +9,6 @@ class AudioMixer
     @bgm_path = bgm_path
   end
 
-  # ナレーション mp3 に BGM を当てて output_path に書き出す。
   def mix(voice_path, output_path)
     abort "BGM not found: #{@bgm_path}" unless File.exist?(@bgm_path)
 
@@ -30,9 +29,11 @@ class AudioMixer
   def bgm_volume = Config.mixer.bgm_volume
   # VOICEPEAK の出力音量が小さめなため底上げするゲイン(dB)。未指定時は0(無調整)。
   def voice_boost_db = Config.mixer.voice_boost_db
-  def intro_sec = Config.mixer.intro_sec   # BGM 開始からナレーション開始まで
-  def tail_sec = Config.mixer.tail_sec     # ナレーション終了からフェードアウト開始まで
-  def fade_sec = Config.mixer.fade_sec     # フェードアウトにかける秒数
+  # ミックスのタイムライン: [intro_sec: BGM単独] → [ナレーション] →
+  # [tail_sec: BGM単独] → [fade_sec: フェードアウト]
+  def intro_sec = Config.mixer.intro_sec
+  def tail_sec = Config.mixer.tail_sec
+  def fade_sec = Config.mixer.fade_sec
 
   def probe_duration(path)
     out, err, status = Open3.capture3(

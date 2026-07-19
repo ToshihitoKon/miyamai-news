@@ -7,24 +7,18 @@ require_relative "internal/config"
 require_relative "internal/command_error"
 
 class VoiceSynthesizer
-  # ナレーターは宮舞モカで固定。
   NARRATOR = "Miyamai Moca"
 
   # VOICEPEAK の 1 回あたり合成できる文字数の上限。
   MAX_CHARS = 140
 
-  # tts_script 中に埋め込まれた話題転換マーカー。format 段階（format.prompt.erb）で
-  # 挿入され、ここで検出・除去したうえで直前チャンクの後に長めの無音を挟む。
+  # tts_script 中の話題転換マーカー（format.prompt.erb が挿入）。TEXT_WITH_FOLLOWING_TAG
+  # は本文を「テキスト片, 直後のタグ名(無ければnil)」の組として非貪欲に繰り返し切り出す。
   INTERVAL_TAG = /\[interval:(mid|long)\]/
-
-  # 本文を「直後にタグが無ければ末尾まで、あればタグの手前まで」の非貪欲マッチで
-  # 繰り返し切り出す。各マッチは [そのテキスト片, 直後のタグ名(無ければnil)] という
-  # 組になるため、split の交互配列のように「奇数番目がテキストで偶数番目がタグ」
-  # といった順序の暗黙知に頼らずに済む。
   TEXT_WITH_FOLLOWING_TAG = /(.*?)(?:#{INTERVAL_TAG}|\z)/m
 
-  # このクラスが work/ に作る回ごとの中間ファイル/ディレクトリの glob パターン。
-  # clean が消してよいものを列挙する（wav_* はチャンク wav を入れるディレクトリ）。
+  # work/ に作る回ごとの中間ファイル/ディレクトリの glob パターン（clean 対象のみ。
+  # wav_* はチャンク wav を入れるディレクトリ）。
   def self.work_globs(work_dir)
     %w[wav_* voice_*.mp3].map { |pat| File.join(work_dir, pat) }
   end
@@ -36,10 +30,8 @@ class VoiceSynthesizer
     @date_tag = episode.date_tag
   end
 
-  # 台本テキストを合成し、生成した mp3 のパスを返す。
-  # 同じ回の voice_path が既に存在するなら、VOICEPEAK を一切起動せずそれを再利用する
-  # （--synthesize-only を使ったブースト値の調整・確認など、音声だけ作り直したい場合に
-  # 毎回フルで合成し直さずに済む）。
+  # 台本テキストを合成し、生成した mp3 のパスを返す。既に voice_path があれば
+  # VOICEPEAK を起動せず再利用する。
   def synthesize(script_path)
     if File.exist?(voice_path)
       warn "voice: #{voice_path} (skip synthesis, already exists)"
@@ -67,8 +59,6 @@ class VoiceSynthesizer
 
       warn "  [#{i + 1}/#{chunks.size}] #{chunk[:text][0, 30]}"
       synthesize_chunk(chunk[:text], path)
-      # VOICEPEAK は本来 GUI アプリで、間髪入れず連続起動すると初期化中に
-      # クラッシュする。次の起動まで少し間隔を空けて安定させる。
       sleep interval_sec
       path
     end
@@ -89,30 +79,22 @@ class VoiceSynthesizer
   # 各チャンク合成後に空ける秒数。VOICEPEAK の連続起動によるクラッシュ避け。
   def interval_sec = Config.voicepeak.interval_sec
 
-  # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数。
-  # VOICEPEAK はまれに初期化タイミングでクラッシュするため、待機を倍々に
-  # 伸ばしながら数回やり直せば大抵は成功する。
+  # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数（VOICEPEAK は
+  # まれに初期化時にクラッシュするため）。
   def max_retries = Config.voicepeak.max_retries
   def retry_base_sec = Config.voicepeak.retry_base_sec
 
-  # 1チャンクの合成に許す最大秒数。VOICEPEAK はまれに異常終了後もプロセスが
-  # 応答を返さずハングすることがあり、放置すると永久にブロックしてしまう。
-  # この時間を超えたら kill してリトライへ回す。
+  # 1チャンクの合成に許す最大秒数。VOICEPEAK は異常終了後にハングし応答しなく
+  # なることがあり、超過したら kill してリトライへ回す。
   def timeout_sec = Config.voicepeak.timeout_sec
 
-  # チャンク（文）を結合する際に間に挟む無音の秒数。話題転換のない通常の
-  # 文区切り（:short）に使う。句点区切りのチャンクをそのままつなげると間延びが
-  # なく聞き取りにくいため、一呼吸おける無音を挟む。
+  # チャンク結合時に挟む無音の秒数（:short=通常の文区切り / :mid=[interval:mid]
+  # 個々のニュースの切り替え / :long=[interval:long] カテゴリ・トピックの転換）。
   def chunk_gap_sec = Config.voicepeak.chunk_gap_sec
-
-  # [interval:mid] タグ（個々のニュース記事の切り替え）で挟む無音の秒数。
   def mid_pause_sec = Config.voicepeak.mid_pause_sec
-
-  # [interval:long] タグ（カテゴリ／トピックの転換）で挟む無音の秒数。
   def long_pause_sec = Config.voicepeak.long_pause_sec
 
-  # 1チャンク（140文字以内のテキスト）を WAV に合成する。
-  # 失敗時は指数バックオフ（retry_base_sec * 2**n）で max_retries 回まで再試行する。
+  # 1チャンクを WAV に合成する。失敗時は指数バックオフで max_retries 回まで再試行する。
   def synthesize_chunk(text, out_path)
     attempt = 0
     begin
@@ -128,9 +110,8 @@ class VoiceSynthesizer
     end
   end
 
-  # VOICEPEAK を 1 回起動して WAV を生成する。失敗・タイムアウト時は RuntimeError を投げる。
-  # timeout_sec を超えても終了しなければハングとみなし、プロセスグループごと
-  # kill してから RuntimeError を投げる（呼び出し元のリトライで再試行される）。
+  # VOICEPEAK を1回起動してWAVを生成する。timeout_sec 超過はハングとみなし
+  # プロセスグループごと kill して RuntimeError を投げる（呼び出し元がリトライする）。
   def run_voicepeak(text, out_path)
     # 新しいプロセスグループで起動し、ハング時に子孫ごとまとめて kill できるようにする。
     stdin, stdout, stderr, wait_thr = Open3.popen3(
@@ -165,7 +146,6 @@ class VoiceSynthesizer
   # プロセスグループを TERM → （残っていれば）KILL の順で終了させる。
   def kill_process_group(pgid)
     Process.kill("TERM", -pgid)
-    # TERM で落ちる猶予を与えてから、まだ生きていれば強制終了する。
     sleep 0.5
     Process.kill("KILL", -pgid)
   rescue Errno::ESRCH
@@ -173,16 +153,12 @@ class VoiceSynthesizer
   end
 
   # 台本を合成単位のチャンクに分割する。戻り値は { text:, pause: } の配列。
-  # pause は、そのチャンクの直後に挟む無音の種類（:short/:mid/:long）を表す。
-  #
-  # まず INTERVAL_TAG（話題転換マーカー）を本文から先に抜き出しておく。「。」分割・
-  # MAX_CHARS 分割より後にタグ検出を行うと、分割処理がタグ文字列の途中を横切って
-  # タグを壊してしまう恐れがあるため、この順序を守る。
+  # INTERVAL_TAG は「。」分割・MAX_CHARS 分割より先に抜き出す（後にすると分割が
+  # タグ文字列を横切って壊す恐れがあるため）。
   def split_chunks(script)
     normalized = script.gsub(/\r\n?/, "\n")
 
-    # 各要素が [そのテキスト片, 直後のタグ(あれば:mid/:long)] の組になる。
-    # 末尾には空文字列＋タグなしの組が必ず1つ余分に付くため取り除く。
+    # 末尾に空文字列＋タグなしの組が必ず1つ余分に付くため取り除く。
     text_and_pause = normalized.scan(TEXT_WITH_FOLLOWING_TAG)
       .map { |text, tag| [text, tag&.to_sym] }
     text_and_pause.pop if text_and_pause.last == ["", nil]
@@ -193,9 +169,8 @@ class VoiceSynthesizer
         .map(&:strip)
         .reject(&:empty?)
         .flat_map { |sentence| split_long_sentence(sentence) }
-      # タグの直後に文が続かない場合（連続するタグなど）、この pause は
-      # どのチャンクにも乗らず捨てられる。先に出たタグを優先する扱いでよく、
-      # 頻度も低いと見込まれるため、直前チャンクへの引き継ぎまでは行わない。
+      # タグ直後に文が続かない場合、この pause はどのチャンクにも乗らず捨てられる
+      # （低頻度の許容済みエッジケース）。
       next if sentences.empty?
 
       sentences.each_with_index do |sentence, i|
@@ -214,7 +189,6 @@ class VoiceSynthesizer
     chunks = []
     buffer = +""
     sentence.split(/(?<=、)/).each do |part|
-      # 読点区切りでも1つが長すぎる場合は文字数で刻む。
       if part.length > MAX_CHARS
         chunks << buffer unless buffer.empty?
         buffer = +""
@@ -233,9 +207,8 @@ class VoiceSynthesizer
   end
 
   # 複数の WAV を ffmpeg の concat demuxer で1本に連結し、mp3 にエンコードする。
-  # pauses は wav_paths と同じ長さの配列で、各チャンクの直後に挟む無音の種類
-  # （:short/:mid/:long）を表す（末尾要素は無視する。最後のチャンクの後には
-  # 何も挟まない）。
+  # pauses は wav_paths と同じ長さの配列で、各チャンク直後の無音種類を表す
+  # （末尾要素は無視。最後のチャンクの後には何も挟まない）。
   def concat_to_mp3(wav_paths, pauses, output)
     silence_files = generate_silence_set
 
@@ -259,9 +232,8 @@ class VoiceSynthesizer
     silence_files&.each_value(&:unlink)
   end
 
-  # :short/:mid/:long 用の無音 WAV を tempfile として作り、{ kind => Tempfile } を
-  # 返す。秒数が0以下の種類は無音を挟まない扱いとし、キー自体を持たない
-  # （concat_to_mp3 側は Hash#[] が nil を返すことでスキップする）。
+  # :short/:mid/:long 用の無音 WAV を作る。秒数が0以下の種類はキー自体を持たない
+  # （concat_to_mp3 側は Hash#[] の nil でスキップする）。
   def generate_silence_set
     { short: chunk_gap_sec, mid: mid_pause_sec, long: long_pause_sec }.filter_map do |kind, sec|
       next unless sec.positive?
@@ -273,7 +245,6 @@ class VoiceSynthesizer
     end.to_h
   end
 
-  # 無音の WAV ファイルを生成する。
   def generate_silence(out_path, duration_sec)
     _out, err, status = Open3.capture3(
       "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",

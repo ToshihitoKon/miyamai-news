@@ -27,9 +27,11 @@ module Internal
       attribute :icon_image, Types::Strict::String
     end
 
+    # *_sec 系(interval_sec/retry_base_sec/timeout_sec/chunk_gap_sec/mid_pause_sec/
+    # long_pause_sec)は Coercible::Float。YAML に "1" のような整数表記のままでも
+    # 通せるようにするため。
     class Voicepeak < Base
       attribute :bin, Types::Strict::String
-      # YAMLで秒数を整数(1, 10等)で書けるようにCoercible::Floatを使う。
       attribute :interval_sec, Types::Coercible::Float
       attribute :max_retries, Types::Strict::Integer
       attribute :retry_base_sec, Types::Coercible::Float
@@ -42,8 +44,8 @@ module Internal
     class AiAgent < Base
       attribute :bin, Types::Strict::String
       attribute :model, Types::Strict::String
-      # run_ai_cli が bin == "claude" のときだけ参照する。他の bin では
-      # 書かれていても無視されるため任意属性にする。
+      # 現状 bin == "claude" のときだけ run_ai_cli が参照する。将来 effort に対応する
+      # 別の AI CLI が増えたときのために任意属性にしている。
       attribute? :effort, Types::Strict::String
       attribute? :selector_model, Types::Strict::String
       attribute? :extractor_model, Types::Strict::String
@@ -83,9 +85,8 @@ module Internal
       attribute? :urls, Types::Strict::Array.of(Types::Strict::String)
       attribute? :priority, Priority
 
-      # url/urls はどちらか一方のみを持つ（複数フィードを1ソース扱いしたい場合は
-      # urls を使う）。型のSumでは「キーの有無の排他」を表現できないため、
-      # 構築後に検証する。
+      # url/urls はどちらか一方のみを指定する（複数フィードを1ソースとして扱いたい
+      # 場合は urls を使う）。両方 or どちらも無しは構築後にエラーにする。
       def initialize(*)
         super
         return if url.nil? ^ urls.nil?
@@ -103,9 +104,7 @@ module Internal
     end
 
     # config.yaml 全体を表す構造体。mode によってセクションの要否が変わるため、
-    # 全セクションを任意属性にして常に構築を成功させ、mode別の必須チェックは
-    # Config.validate_for! が構築後に行う（セクションの要否は運用ルールであり、
-    # 型システムの責務ではないため）。
+    # 全セクションを任意属性にする（必須判定は Config.validate_for! が行う）。
     class AppConfig < Base
       attribute(:pipeline, Pipeline.default { Pipeline.new({}) })
       attribute? :gcs, Gcs

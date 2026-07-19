@@ -29,7 +29,6 @@ require_relative "internal/feed_parser"
 # extra はソース種別ごとの追加メタデータ（はてブのブックマーク数など）。FeedCache は
 # 中身を解釈せず透過的に保持するだけで、意味づけは呼び出し側の関心事。
 class FeedCache
-  # フィードが取得できなかったことを表す。呼び出し側で実行の中断に使う。
   class FetchError < StandardError; end
 
   # @param path [String] キャッシュファイルのパス
@@ -40,34 +39,24 @@ class FeedCache
     @path = path
     @retention_days = retention_days
     @fetcher = Internal::HttpFetcher.new(max_retries: max_retries, retry_base_sec: retry_base_sec)
-    # キャッシュファイルがまだ無い初回起動か。初回は全 entry の seen_at を「今」にすると
-    # 掲載が古い記事まで新着扱いになってしまうので、掲載日時(date)を seen_at の初期値に
-    # 使う（bootstrap）。生成時点で 1 度だけ判定する（並列 fetch でぶれないため）。
+    # キャッシュファイルがまだ無い初回起動か（bootstrap時のseen_at初期値に使う。
+    # 詳細はCLAUDE.md参照）。生成時点で1度だけ判定する（並列fetchでもぶれないため）。
     @bootstrap = !File.exist?(path)
-    # 単一キャッシュファイルを複数スレッドから更新する際の競合を防ぐ。
-    # 取得（フェッチ）自体はロック外で並列に走り、キャッシュ反映だけ直列化する。
+    # キャッシュファイルへの書き込みを直列化する（詳細はfetch参照）。
     @cache_mutex = Mutex.new
   end
 
   # 1 ソース分のフィード（単一 or 複数 URL）を取得・パースし、seen_at を更新したうえで
-  # seen_at > since の entry を返す（since は前回収集済みの起点なので排他的下限）。返す各
-  # entry は { link:, title:, date:, seen_at:, extra: }。
-  #
-  # 複数スレッドから同時に呼んでよい（ScriptGenerator がソースごとに並列で呼ぶ）。
-  # 取得・パースはロック外で並列に走り、キャッシュの読み書きだけ Mutex で直列化する。
-  #
-  # 副作用としてキャッシュファイルを更新する（新規 entry の記録と、保持期間切れのパージ）。
-  # 取得に失敗した場合は FetchError を送出する（不完全なまま後段へ進ませないため）。
+  # seen_at > since の entry を返す（排他的下限。理由はCLAUDE.md参照）。副作用として
+  # キャッシュファイルを更新し、取得失敗時は FetchError を送出する。
+  # 複数スレッドから同時に呼んでよい（取得は並列、キャッシュ反映のみ直列化）。
   #
   # @param urls [String, Array<String>] 1 ソース分のフィード URL（複数可）
   # @param now [Time] seen_at として記録する現在時刻
-  # @param since [Time] 前回収集済みの起点。これより後(排他的)に初登場した entry だけを返す
-  # @param extra_extractor [#call, nil] フィード本文から link => 追加メタデータ の対応を
-  #   作る呼び出し可能オブジェクト。ソース種別固有の情報（はてブのブックマーク数等）を
-  #   FeedCache に持ち込まずに載せるための注入口。渡さなければ extra は常に nil。
+  # @param since [Time] 前回収集済みの起点（排他的下限）
+  # @param extra_extractor [#call, nil] ソース種別固有メタデータの注入口
   # @return [Array<Hash>]
   def fetch(urls, now:, since:, extra_extractor: nil)
-    # 取得・パースはロック外。ソース間の取得を並列で走らせるため。
     entries = Array(urls).flat_map { |url| fetch_and_parse(url, extra_extractor) }
 
     @cache_mutex.synchronize do
@@ -94,8 +83,6 @@ class FeedCache
     raise FetchError, e.message
   end
 
-  # フィード本文をパースし、{ link:, title:, date:, extra: } の配列にする。
-  # extra_extractor が渡されていれば、その結果を link で引いて each entry に合成する。
   def parse(body, extra_extractor)
     extra_by_link = extra_extractor ? extra_extractor.call(body) : {}
     Internal::FeedParser.parse(body).map { |entry| entry.merge(extra: extra_by_link[entry[:link]]) }
@@ -104,17 +91,8 @@ class FeedCache
     raise FetchError, "feed parse failed: #{e.message}"
   end
 
-  # 今回フィードに登場した entry を seen_at 付きでキャッシュに反映する。
-  # 既にある link は seen_at を据え置き（初登場時刻を保つ）、title/date/last_fetched_at/extra
-  # だけ最新に更新する。
-  #
-  # 新規 link の seen_at は原則「今(now)」。ただし初回起動(bootstrap)時だけは、掲載が
-  # 古い記事まで新着として大量に流入するのを防ぐため、掲載日時(date)を初期値に使う
-  # （date が無ければ now）。2 回目以降の新規登場は now なので、昔書かれて今登場した
-  # 記事も拾える。
-  #
-  # last_fetched_at は「直近でこのフィードに実際に見えていた時刻」。パージ判定に使う
-  # （purge_expired 参照）。今回登場した entry は全て今(now)を持つ。
+  # 今回登場した entry を seen_at 付きでキャッシュへ反映する。既存 link は seen_at を
+  # 据え置き、他フィールドのみ最新化する（新規 entry の seen_at は initial_seen_at 参照）。
   def record_seen(cache, entries, now)
     entries.each do |entry|
       existing = cache[entry[:link]]
@@ -128,9 +106,7 @@ class FeedCache
     end
   end
 
-  # 今回の extra_extractor が値を出せなかった場合に、既存キャッシュから引き継ぐ。
-  # meta_extra を経由することで、旧形式（トップレベル "bookmarks"）のまま更新されていない
-  # entry も、新しい entry で上書きされる際に取りこぼされない。
+  # extra_extractor が値を出せなかった場合、既存キャッシュから引き継ぐ。
   def existing_extra(existing)
     existing && meta_extra(existing)
   end
@@ -141,18 +117,12 @@ class FeedCache
     entry[:date]
   end
 
-  # last_fetched_at（直近でこのフィードに実際に見えていた時刻）が保持期間より古い、
-  # つまりフィードから既に消えて久しい entry をキャッシュから削除する。
-  # seen_at で区切らないのは、フィードに載り続けている限り再登場＝二重紹介させないため
-  # （クラス冒頭のコメント参照）。
+  # last_fetched_at が保持期間より古い entry を削除する（理由はクラス冒頭のコメント参照）。
   def purge_expired(cache, now)
     cutoff = now - (@retention_days * 86_400)
     cache.reject! do |_link, meta|
-      # last_fetched_at を持たない旧形式の entry は、フィードに再登場すれば record_seen
-      # で付与されるが、既にフィードから消えている場合は付与されないままここに来る。
-      # 実在確認ができないので seen_at を代用する（bootstrap 時の initial_seen_at と
-      # 同じ考え方）。seen_at は更新されない固定値なので、cutoff が進むにつれて
-      # いずれ有限時間内に超過し、この entry も通常どおりパージされる。
+      # last_fetched_at が無い旧形式 entry は seen_at で代用する（bootstrap と同じ考え方）。
+      # seen_at は更新されないので、cutoff が進めばいずれ通常どおりパージされる。
       last_fetched_at = Time.iso8601(meta["last_fetched_at"] || meta["seen_at"])
       last_fetched_at < cutoff
     rescue ArgumentError
@@ -161,16 +131,12 @@ class FeedCache
     end
   end
 
-  # 今回このソースで登場した entry のうち、seen_at > since のものを返す。
-  # キャッシュ全体ではなく今回の entries に絞るのは、fetch がソース単位で呼ばれるため。
-  # 他ソースの entry を混ぜないよう、今回取得した link のものだけを対象にする。
-  # seen_at は初登場時刻なので、キャッシュに既にある entry はその値を採る。
-  # since は「前回収集済みの起点」なので排他的下限にする（>=ではなく>）。前回の収集で
-  # since ちょうどに初登場した記事は収集済みなので、次回は seen_at == since を除外しないと
-  # confirmed_at と seen_at が同一実行由来で一致したとき（毎回起こる）に二重紹介される。
+  # 今回このソースで登場した entry のうち seen_at > since のものを返す（今回の
+  # entries のみが対象）。
+  # since は排他的下限（>=ではなく>）: confirmed_at と同一実行由来の seen_at が
+  # 一致し得るため、含めると同じ記事を毎回新着として二重紹介してしまう。
   def select_since_for(cache, entries, since)
-    # 複数 URL を持つソース（はてブ hotentry/entrylist）は同じ link が両方に載るので、
-    # link で重複除去してから返す。
+    # 複数 URL ソースは同じ link が重複しうるので先に除去する。
     entries.uniq { |e| e[:link] }.filter_map do |entry|
       meta = cache[entry[:link]] or next
       seen_at = Time.iso8601(meta["seen_at"])
@@ -183,11 +149,8 @@ class FeedCache
     end
   end
 
-  # extra 導入前の旧キャッシュ（トップレベルの "bookmarks"）を読めるようにするフォールバック。
-  # 新形式は "extra" キーにまとまっているのでそのまま返す。JSON 経由の値は常に文字列キーの
-  # Hash になる（record_seen で書き込む entry[:extra] はシンボルキーだが、save_cache/
-  # load_cache の JSON 往復で文字列キーに変わる）ので、呼び出し側はどちらでも文字列キーで
-  # 引ける前提で扱ってよい。
+  # 旧形式（トップレベル "bookmarks"）を読めるようにするフォールバック。JSON 往復後は
+  # 常に文字列キーになる点は hatena_bookmarks.rb と共通（CLAUDE.md 参照）。
   def meta_extra(meta)
     meta["extra"] || (meta["bookmarks"] ? { "bookmarks" => meta["bookmarks"] } : nil)
   end

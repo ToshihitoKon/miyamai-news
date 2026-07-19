@@ -9,12 +9,10 @@ require "erb"
 # インスタンス変数（@title など）や private メソッド（h, date_with_slot など）を
 # そのまま呼べる。テンプレート固有の値は locals ハッシュで明示的に渡す。
 module TemplateRenderer
-  # templates/ はプロジェクトルート（lib/internal/ の二つ上）に置く。
   DIR = File.join(File.expand_path("../..", __dir__), "templates")
 
   class << self
-    # name は拡張子 .erb を除いたテンプレート名（例: "writer.prompt", "index.html"）。
-    # context のスコープに locals を差し込んだ binding でテンプレートを評価する。
+    # name は拡張子を除いたテンプレート名（例: "writer.prompt", "index.html"）。
     def render(name, context, locals = {})
       bind = context.instance_eval { binding }
       locals.each { |key, value| bind.local_variable_set(key, value) }

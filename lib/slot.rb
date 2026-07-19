@@ -13,10 +13,9 @@
 module Slot
   module_function
 
-  # slot の起点となる hour。ここより前(0:00-4:59)は前日 midnight の続きとみなす。
+  # slot の起点となる hour。
   DAY_START_HOUR = 5
 
-  # 実行時刻の hour から slot を決める。
   def for(time)
     case time.hour
     when DAY_START_HOUR...11 then "morning"
@@ -26,8 +25,7 @@ module Slot
     end
   end
 
-  # 実行時刻に対応する番組の日付を返す。0:00-4:59 は前日 midnight の続きなので
-  # 前日扱いにする。それ以外は実行日そのまま。
+  # 実行時刻に対応する番組の日付（深夜シフト済み）。
   def broadcast_date(time)
     time.hour < DAY_START_HOUR ? (time.to_date - 1) : time.to_date
   end
@@ -42,13 +40,11 @@ module Slot
 
   def ja_label(slot) = JA_LABELS.fetch(slot)
 
-  # ファイル名末尾の "_<slot>.mp3" から slot 名を取り出す正規表現。
-  # JA_LABELS のキーから組み立て、対応 slot が増減しても追従漏れが起きないようにする。
+  # JA_LABELS のキーから組み立てるので、対応 slot が増減しても追従漏れが起きない。
   FILENAME_PATTERN = /_(#{JA_LABELS.keys.join('|')})\.mp3\z/
 
-  # ファイル名から slot を判定して日本語ラベルにする。1日に複数回ある回を
-  # UI やフィードで見分けるための表示用。slot を持たない旧ファイル名は
-  # 空文字列を返す（後方互換）。
+  # ファイル名から slot を判定し日本語ラベルにする（表示用）。slot を持たない
+  # 旧ファイル名は空文字列を返す（後方互換）。
   def ja_label_from_filename(filename)
     m = filename.match(FILENAME_PATTERN)
     m ? ja_label(m[1]) : ""

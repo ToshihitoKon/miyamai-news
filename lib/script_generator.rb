@@ -14,12 +14,10 @@ class ScriptGenerator
   # 始めの挨拶。前置き除去の目印にも使う。
   OPENING_GREETING = "宮舞モカです。"
 
-  # フィードの seen_at 履歴を溜める単一ファイル（date/slot 非依存）。
-  # 回をまたいで保持する状態なので、last_fetch.json と同じく clean 対象に含めない。
+  # フィードの seen_at 履歴を保持する単一ファイル（date/slot 非依存、clean 非対象）。
   def self.feed_cache_path(work_dir) = File.join(work_dir, "feed_cache.json")
 
-  # このクラスが work/ に作る回ごとの中間ファイルの glob パターン。
-  # clean が消してよいものだけを列挙する（last_fetch.json / feed_cache.json は含めない）。
+  # work/ に作る回ごとの中間ファイルの glob パターン（clean 対象のみ）。
   def self.work_globs(work_dir)
     %w[news_*.txt script_*.txt tts_script_*.txt]
       .map { |pat| File.join(work_dir, pat) }
@@ -27,16 +25,13 @@ class ScriptGenerator
 
   # @param work_dir [String] 中間ファイルの置き場
   # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
-  # @param auto_confirm [Boolean] 前回の未確認収集window(pending)を、対話せず自動確定するか。
-  #   収集の since を確定する直前(#collect_news)に前回 pending を解決するが、その際 true なら
-  #   確認プロンプトを出さず自動確定する（CI等の非対話実行向け）。既定は対話（false）。
+  # @param auto_confirm [Boolean] 前回の未確認収集windowを対話せず自動確定するか
+  #   （CI等の非対話実行向け。既定は対話）
   def initialize(work_dir:, episode:, auto_confirm: false)
     @work_dir = work_dir
     @auto_confirm = auto_confirm
-    # この実行で新規 RSS 収集が起きたか。#digest/#generate 内で新規収集したら true になり、
-    # 以後リセットしない（load_or_collect_news 参照）。
+    # 新規収集が起きたら true にする（fetched_news? 参照）。
     @fetched_news = false
-    # 収集の時刻演算(since・seen_at・iso8601)には時刻精度のある now を使う。
     @now = episode.now
     @slot = episode.slot
     @date_tag = episode.date_tag
@@ -51,93 +46,72 @@ class ScriptGenerator
     )
   end
 
-  # ニュースを収集し、AI選別(selector)・facts抽出(extractor)まで進めて止める。
-  # pipeline.mode: digest の停止点。facts(ニュース要約)自体が単一ツールとしても
-  # 実用的な出力になるよう、selectorの出力(タイトル一覧)より一段先まで進める。
+  # ニュースを収集し、選定・facts 抽出まで進めて止める（pipeline.mode: digest 相当）。
   # 戻り値は facts ファイルのパス。
   def digest
     digest_news
     news_facts_path
   end
 
-  # 台本を生成する。format: false なら人間が読む台本(script)と used まで作って止め、
-  # VOICEPEAK 向けの整形(tts_script)は行わない（--script-only 用）。
-  # 戻り値は format 済みなら tts_script、未整形なら script のパス。
-  #
-  # 各ステップ（収集・選定・facts・script+used・整形）はそれぞれ中間ファイルの有無で
-  # 再利用を判断し、途中クラッシュ後の再実行で続きから進める。digest 相当のステップは
-  # 中間ファイルがあれば再利用されるので、digest 実行後に呼んでも二重に AI を呼ばない。
+  # 台本を生成する。format: false なら script/used まで作って止める（--script-only 用）。
+  # 各ステップは中間ファイルの有無で再利用を判断し、途中クラッシュ後の再実行や
+  # digest 実行後の呼び出しでも AI を二重に呼ばない。
   def generate(format: true)
     selected_news = digest_news
 
-    # ステップ2.2: ライター。ファクトシートをもとに台本と used を生成する。
     write_script_and_used(selected_news)
 
     return script_path unless format
 
-    # ステップ3: VOICEPEAK 向け整形（script → tts_script）。カナ化に集中させるため
-    # 別呼び出しにする。tts_script は読み上げ用の一時ファイル。
     format_tts_script
 
     tts_script_path
   end
 
-  # 人間が読む台本(script)のパス。--script-only の確認・手直し対象。
+  # --script-only の確認・手直し対象。
   def script_file = script_path
 
-  # 音声合成に渡す、VOICEPEAK 向けに整形した台本(tts_script)のパス。
+  # 音声合成に渡す整形済み台本。
   def tts_script_file = tts_script_path
 
-  # 番組で実際に触れたニュース一覧（used_news）のパス。成果物として書き出す用。
+  # 成果物として書き出す used_news。
   def used_news_file = used_news_path
 
-  # この実行で一度でも新規のRSS収集（FeedCache#fetch）が発生したか。既存の
-  # news_collected_path を再利用しただけなら false。呼び出し側（miyamai_news.rb）が
-  # 収集windowを pending 化すべきかどうかの判断に使う。digest→synthesize と同一インスタンスで
-  # 複数回工程を呼んでも、一度収集が起きていれば true を保つ（呼ぶ前は false）。
+  # この実行で一度でも新規の RSS 収集が発生したか。呼び出し側(miyamai_news.rb)が
+  # 収集windowを pending 化すべきか判断するのに使う。一度 true になったら false に
+  # 戻らない（詳細は CLAUDE.md 参照）。
   def fetched_news? = @fetched_news == true
 
-  # この収集で FeedCache#fetch に渡した基準時刻。新規 entry の seen_at はこの時刻で
-  # 記録されるので、次回の収集 window 起点（confirmed_at）にはこれを使う。実行完了時刻
-  # (Time.now)ではなく開始時刻を使うのは、実行に時間がかかった場合に seen_at が
-  # 開始〜完了の間に刻まれた記事を次回取りこぼさないため。
+  # この収集の基準時刻。次回の収集window起点（confirmed_at）にはこれを使う
+  # （実行完了時刻ではなく開始時刻。詳細は CLAUDE.md 参照）。
   def collect_since_anchor = @now
 
   private
 
   # --- 設定値 ---
 
-  # 番組編成上のカテゴリ定義（config.yaml の program_details.categories）。
-  # label と description のみを持つ。RSS 収集・sources とは完全に無関係
-  # （記事がどのカテゴリに属するかは selector が全体を見て判断する）。
+  # 番組編成上のカテゴリ定義（label + description）。RSS 収集・sources とは無関係
+  # （カテゴリ分類は selector が全体を見て判断する）。
   def category_details
     @category_details ||= Config.program_details.categories.map do |c|
       { label: c.label, description: c.description }
     end.freeze
   end
 
-  # 番組全体で紹介するニュースの合計本数の目安（メイン+補欠合計）。カテゴリ単位の
-  # 最低保証はない。台本が長くなりすぎるのを防ぐための、選定ステップの AI への指示。
+  # 番組全体で紹介するニュース本数の目安（カテゴリ単位の最低保証はない）。
   def total_news_count = Config.program_details.total_news_count
 
-  # RSS 収集元の一覧（フラットな配列）。カテゴリ区分は持たない。
   def sources = Config.rss_feed_sources
 
-  # 前回この mode に到達した記録（confirmed_at）が無い初回に、何時間前までの記事を
-  # 拾うかの上限。
+  # confirmed_at が無い初回に、何時間前までの記事を拾うかの上限。
   def lookback_hours = Config.collect.lookback_hours
 
-  # FeedCache が entry を保持する日数。フィードに最後に見えた時刻(last_fetched_at)が
-  # これより古い（＝フィードから既に消えている）entry だけがパージされる。
+  # FeedCache が entry を保持する日数（last_fetched_at 基準。詳細は CLAUDE.md 参照）。
   def retention_days = Config.collect.retention_days
 
-  # フィード取得の並列数
   def fetch_threads = Config.collect.fetch_threads
 
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
-  # hnrss などは一時的に 502 を返すことがある。ニュースが揃わないまま
-  # 後段の Claude 呼び出しへ進んでトークンを浪費しないよう、
-  # リトライし尽くしても取れないソースがあれば実行ごと中断する。
   def fetch_max_retries = Config.collect.fetch_max_retries
   def fetch_retry_base_sec = Config.collect.fetch_retry_base_sec
 
@@ -156,9 +130,8 @@ class ScriptGenerator
     selected_news
   end
 
-  # ステップ1.5: ニュース選定。全候補(collected_news)から、ソース/カテゴリごとの目安件数を
-  # AI がタイトルだけを見て選び出す。選んだニュースの情報（title/link/date/source等）を
-  # そのまま Markdown で書かせ、以降の facts 抽出・執筆はこの選定済みテキストを読む。
+  # ニュース選定。全候補からタイトルだけを見て AI に選ばせ、Markdown のまま書かせる。
+  # 以降の facts 抽出・執筆はこの選定済みテキストを読む。
   def select_news(collected_news)
     if File.exist?(news_selected_path)
       warn "reuse: #{news_selected_path}"
@@ -174,7 +147,7 @@ class ScriptGenerator
     File.read(news_selected_path)
   end
 
-  # ステップ2.1: ニュース抽出・整理。1 回の AI 呼び出しでニュース内容を抽出して facts.txt に書く。
+  # ニュース抽出・整理。1 回の AI 呼び出しでニュース内容を抽出して facts.txt に書く。
   def extract_news_facts(selected_news)
     if File.exist?(news_facts_path)
       warn "reuse: #{news_facts_path}"
@@ -189,8 +162,8 @@ class ScriptGenerator
     warn "news facts: #{news_facts_path}"
   end
 
-  # ステップ2.2: ライター。1 回の AI 呼び出しで script.txt と used.txt を書かせる。
-  # すでに抽出されたファクトをもとに執筆するため、WebFetch は許可しない（手戻り防止）。
+  # ライター。1 回の AI 呼び出しで script.txt と used.txt を書かせる。既に抽出された
+  # facts をもとに執筆するため、WebFetch は許可しない（手戻り防止）。
   def write_script_and_used(selected_news)
     if File.exist?(script_path) && File.exist?(used_news_path)
       warn "reuse: #{script_path}"
@@ -208,7 +181,7 @@ class ScriptGenerator
     warn "used news: #{used_news_path}"
   end
 
-  # ステップ3: 整形。script.txt を読んで VOICEPEAK 向けの tts_script.txt に整形させる。
+  # 整形。script.txt を読んで VOICEPEAK 向けの tts_script.txt に整形させる。
   def format_tts_script
     if File.exist?(tts_script_path)
       warn "reuse: #{tts_script_path}"
@@ -240,10 +213,8 @@ class ScriptGenerator
     File.write(path, yield(File.read(path)))
   end
 
-  # 一覧本体より前に混入した前置きや照合の思考メモを落とす。
-  # プロンプトで禁止しても稀に出るため、機械的に確実に取り除く。
-  #
-  # 本体は「■ カテゴリ名」という見出しから始まる構造なので、最初の「■」行を本体の起点とみなす。
+  # 一覧本体より前の前置きを機械的に取り除く。本体は「■ カテゴリ名」見出しから
+  # 始まる構造（category_details 由来）なので、最初の「■」行を起点とみなす。
   def strip_used_preamble(used)
     lines = used.lines
     start = lines.each_index.find { |i| lines[i].strip.start_with?("■") }
@@ -255,14 +226,8 @@ class ScriptGenerator
 
   # --- ニュース収集 ---
 
-  # 全候補のニュース一覧（選定ステップへの入力）を返す。
-  #
-  # その回に集まった entry 集合を news_*.txt にスナップショットとして残し、あれば再利用
-  # する（台本を作り直すとき収集入力を固定するため）。無ければ FeedCache から集めて作る。
-  #
-  # @fetched_news はここで false にリセットしない。digest→synthesize と進むと同一インスタンスで
-  # 2 回呼ばれ、2 回目はスナップショット再利用（新規収集なし）になるが、それで false に
-  # 戻すと「この実行で新規収集が起きたか」を取り違える。一度でも新規収集したら true を保つ。
+  # 全候補のニュース一覧（選定ステップへの入力）を返す。news_*.txt にスナップショット
+  # として残し、あれば再利用する（台本を作り直すとき収集入力を固定するため）。
   def load_or_collect_news
     if File.exist?(news_collected_path)
       warn "reuse: #{news_collected_path}"
@@ -276,9 +241,7 @@ class ScriptGenerator
     news_body
   end
 
-  # 収集 window の起点。last_fetch.json の confirmed_at、つまり人間が前回の成果物を
-  # 確認して確定させた時点を使う。実行が完了しただけでは進まない（pending_at 止まり）。
-  # 前回時刻が無い初回は lookback_hours ぶんさかのぼる（もともと古すぎる記事は対象にしない）。
+  # 収集 window の起点。前回時刻が無い初回は lookback_hours ぶんさかのぼる。
   def collect_since
     last_fetch_time || (@now - (lookback_hours * 3600))
   end
@@ -286,16 +249,10 @@ class ScriptGenerator
   # last_fetch.json に記録された、確定済みの収集window起点。無い/壊れていれば nil。
   def last_fetch_time = LastFetchStore.confirmed_at(@work_dir)
 
-  # FeedCache から since 以降に「初めて登場した」記事を集め、フラットなテキストにする。
-  # 掲載日時ではなく登場時刻(seen_at)で拾うので、昔書かれて今話題化した記事も取れる。
-  # ここでは件数の絞り込みは行わない（全候補を選定ステップの AI に渡すため）。
-  # カテゴリ区分は持たない（カテゴリへの分類は selector 段階の AI が行う）。
-  # dedup のみ行い、seen_at/priority は選定 AI の判断材料として残す。
+  # FeedCache から since 以降に初登場した記事を集め、フラットなテキストにする。
+  # 件数の絞り込みは行わない（選定ステップの AI に全候補を渡す）。
   def collect_news
-    # since を確定する直前に前回 pending を解決する（確定して since を進めるか／
-    # ロールバックして据え置くか）。ここは実際に新規収集が走るときにしか通らないので、
-    # 既存スナップショット再利用の実行では確認が出ない。対話込みの解決は LastFetchStore に任せ、
-    # ここは「収集の直前」というタイミングを与えるだけ。
+    # since を確定する直前に前回 pending を解決する（呼ぶタイミングはここが握る）。
     LastFetchStore.resolve_pending!(work_dir: @work_dir, auto_confirm: @auto_confirm)
 
     since = collect_since
@@ -308,15 +265,12 @@ class ScriptGenerator
     abort "aborting, news collection incomplete: #{e.message}"
   end
 
-  # 候補一覧をプレーンテキストにする。この段階では選定ステップの AI にしか
-  # 渡らないので、JSON にする必要はない（機械的にパースしない前提なら、フィールド名を
-  # 毎エントリ繰り返さないぶんトークンも少なく済む）。カテゴリ見出しは付けない
-  # （分類は selector が行う）。
+  # 候補一覧をプレーンテキストにする（選定 AI にしか渡らないので JSON 化しない）。
+  # カテゴリ見出しは付けない（分類は selector が行う）。
   def render_news_text(items)
     items.each_with_index.map { |item, i| render_news_item(i + 1, item) }.join("\n")
   end
 
-  # 候補ニュース1件分を「タイトル / link / メタ情報」の3行にする。
   def render_news_item(index, item)
     meta = [item[:date], "seen:#{item[:seen_at]}", item[:source]]
     meta << "bookmarks:#{item[:bookmarks]}" if item[:bookmarks]
@@ -324,8 +278,8 @@ class ScriptGenerator
     "#{index}. #{item[:title]}\n   #{item[:link]}\n   (#{meta.join(" / ")})"
   end
 
-  # 全ソースを fetch_threads 並列で収集する。戻り値は sources と同じ順の items 配列。
-  # FeedCache はソース単位の fetch を並列に呼んでよい（内部でキャッシュ更新を直列化する）。
+  # 全ソースを fetch_threads 並列で収集する（FeedCache はソース単位の並列呼び出しに
+  # 対応済み）。戻り値は sources と同じ順の items 配列。
   def fetch_sources_in_parallel(sources, since)
     queue = Queue.new
     sources.each_with_index { |src, i| queue << [src, i] }
@@ -353,11 +307,9 @@ class ScriptGenerator
     items.uniq { |i| i[:title].downcase.gsub(/\s+/, "") }
   end
 
-  # 1ソース分の新着記事を FeedCache から全件取得し、ソース名などのメタ情報を付けて返す。
-  # 件数の絞り込みはここでは行わない（選定ステップの AI がタイトルから選ぶ）。
-  #
-  # HatenaBookmarks は全ソースに無条件で適用する。はてブ以外のフィードには
-  # hatena:bookmarkcount が無いので、何も付与せず素通りするだけ（安全）。
+  # 1ソース分の新着記事を FeedCache から全件取得し、メタ情報を付けて返す。
+  # HatenaBookmarks は全ソースに無条件で適用する（はてブ以外には hatena:bookmarkcount
+  # が無いので何も付与せず素通りする）。
   def collect_source(src, since)
     items = @feed_cache.fetch(src.urls || src.url, now: @now, since: since,
       extra_extractor: Internal::HatenaBookmarks)
@@ -366,7 +318,6 @@ class ScriptGenerator
       picked = { title: item[:title], link: item[:link], date: item[:date],
                  source: src.name, seen_at: item[:seen_at] }
       picked[:bookmarks] = Internal::HatenaBookmarks.count_of(item[:extra]) if item[:extra]
-      # 優先度付きソースの記事に印を付け、選定・ライターの取捨選択に使わせる
       picked[:priority] = src.priority if src.priority
       picked
     end
@@ -374,8 +325,6 @@ class ScriptGenerator
 
   # --- AI CLI 実行 ---
 
-  # 設定された AI CLI を実行する。claude_extra_args（--allowedTools 等）は claude 固有の
-  # 引数なので、bin が claude のときだけ渡す。
   def run_ai_cli(spinner_message, prompt, *claude_extra_args, model_override: nil)
     bin = Config.ai_agent.bin
     model = model_override || Config.ai_agent.model
@@ -440,10 +389,8 @@ class ScriptGenerator
   # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # ニュース選定用タスク。全候補（フラット）のニュース一覧を差し込み、番組全体の
-  # 合計目安件数と、カテゴリの分類観点（label+description）、選定結果の書き込み先
-  # パスを渡す。ソース単位の絞り込みはせず、priority を判断材料として選定 AI に渡す
-  # （面白い記事はソースを問わず採用する方針のため）。
+  # ニュース選定用タスク。全候補・カテゴリの分類観点・合計目安件数・選定結果の
+  # 書き込み先パスを渡す。
   def selector_prompt(collected_news)
     TemplateRenderer.render("selector.prompt", self,
       collected_news:,
@@ -453,7 +400,6 @@ class ScriptGenerator
       news_selected_path: File.expand_path(news_selected_path))
   end
 
-  # ニュース抽出用タスク。選定済みニュースを差し込み、ファクトシートの書き込み先パスを渡す。
   def extractor_prompt(selected_news)
     TemplateRenderer.render("extractor.prompt", self,
       selected_news:,
@@ -463,10 +409,8 @@ class ScriptGenerator
       news_facts_path: File.expand_path(news_facts_path))
   end
 
-  # ライター用タスク。ファクトシートと選定済みニュースを差し込み、台本(script)と used の書き込み先パスを
-  # 渡す（Claude が Write で直接書く）。パスは Claude の cwd に依存しないよう絶対パス。
-  # category_details は番組構成の意図（各カテゴリの description）と、used_news の
-  # カテゴリ見出しに使う正式なラベル一覧の両方を兼ねる。
+  # ライター用タスク。facts と選定済みニュースを差し込み、台本(script)と used の
+  # 書き込み先パスを渡す（Claude が Write で直接書く。絶対パスで渡す）。
   def writer_prompt(selected_news, news_facts)
     TemplateRenderer.render("writer.prompt", self,
       selected_news:,

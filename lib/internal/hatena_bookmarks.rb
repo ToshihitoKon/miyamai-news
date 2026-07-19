@@ -8,12 +8,9 @@ module Internal
   # 公開しないため、REXML で直接引く。
   module HatenaBookmarks
     class << self
-      # フィード本文から link => { "bookmarks" => N } を作る。はてブ以外のフィードには
-      # hatena:bookmarkcount が無いので空ハッシュになる。
-      #
-      # キーを文字列にしているのは、FeedCache が extra を JSON キャッシュへ書き戻すため。
-      # JSON 往復後は必ず文字列キーになるので、往復前後で形を揃えて呼び出し側の扱いを
-      # 統一する。
+      # フィード本文から link => { "bookmarks" => N } を作る。はてブ以外には
+      # hatena:bookmarkcount が無いので空ハッシュになる。文字列キーの理由は
+      # feed_cache.rb と共通（CLAUDE.md 参照）。
       def call(body)
         doc = REXML::Document.new(body)
         pairs = doc.get_elements("//item").filter_map do |item|
