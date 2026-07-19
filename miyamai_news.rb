@@ -311,8 +311,8 @@ end
 
 # work/ の回ごとの中間ファイルを削除する。各コンポーネントが「自分が作る中間ファイルの
 # glob パターン」を申告するので、それに一致するものだけを消す（ホワイトリスト方式）。
-# 回をまたいで保持する状態（last_fetch.json / feed_cache.json）はパターンに含まれないので
-# 残る。消すと過去に見た記事を新着として拾い直し、重複紹介が起きるため。
+# 回をまたいで保持する状態（last_fetch.json / feed_cache/ ディレクトリ）はパターンに
+# 含まれないので残る。消すと過去に見た記事を新着として拾い直し、重複紹介が起きるため。
 def clean_work_dir
   patterns = ScriptGenerator.work_globs(WORK_DIR) + VoiceSynthesizer.work_globs(WORK_DIR)
   FileUtils.rm_rf(patterns.flat_map { |pat| Dir.glob(pat) })
