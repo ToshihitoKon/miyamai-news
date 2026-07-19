@@ -1,23 +1,13 @@
-# パイプラインの実行段階。どこまで自動的に進めるかの上限を決める。CLIフラグ
-# (--digest-only/--script-only/--synthesize-only/--publish-only 等)はこの上限の
-# 範囲内でしか使えず、フラグなし実行はこの上限まで自動的に進む。
-#   digest:     RSS収集 → AIによるカテゴリ別選別 → facts抽出(ニュース要約)まで。
-#               外部ツール(VOICEPEAK/ffmpeg/gcloud)やGCSバケットに依存しない。
-#   synthesize: digest の続きから音声合成・BGM合成まで。dist/ に mp3 を書き出す。
-#               GCS publish はしない。
-#   publish:    synthesize の続きから GCS への publish まで（フルパイプライン）。
-# 未指定時は digest（外部ツール・GCS依存が無く最も手軽に試せるため）。
-# 既存のフルパイプライン運用を続ける場合は publish を明示すること。
+# パイプラインの実行段階。どこまで自動的に進めるかの上限を決める。
 pipeline:
-  mode: digest
+  mode: digest # RSS収集, AIによるカテゴリ別選別, facts抽出(ニュース要約)
+  # mode: synthesize # digest + 音声合成・BGM合成。dist/ に mp3 を書き出す。
+  # mode: publish    # synthesize + GCS への publish
 
 gcs:
   bucket: your-bucket-name
   public_base: https://storage.googleapis.com
-  # archives.csv で保持するエピソード数の上限。publish のたびに、この件数を
-  # 超えた古い回を archives.csv/feed.xml の一覧から外し、GCS 上の実ファイル
-  # (mp3/used.txt/transcript.txt) は archived/ プレフィックス配下へ退避する
-  # (削除はしない。実削除は --clean-archive で行う)。
+  # publish で保持・公開する話数。
   retention_episodes: 5
 
 assets:
@@ -31,16 +21,14 @@ assets:
 # VOICEPEAK(音声合成)まわり。
 voicepeak:
   bin: /Applications/voicepeak.app/Contents/MacOS/voicepeak
-  # 各チャンク合成後に空ける秒数。連続起動によるクラッシュ避け。
+  # 各チャンク合成後に空ける秒数。
   interval_sec: 1
-  # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数。
+  # 合成失敗時のリトライ回数と指数バックオフの初期待機秒数。
   max_retries: 4
   retry_base_sec: 2
   # 1チャンク合成に許す最大秒数。超えたら kill してリトライへ回す。
   timeout_sec: 10
-  # チャンク（文）を結合する際に間に挟む無音の秒数。話題転換のない通常の
-  # 文区切りに使う。句点で区切った文がそのままつながると間延びなく聞こえて
-  # しまうため、一呼吸おけるよう無音を挟む。
+  # チャンク（文）を結合する際に間に挟む無音の秒数。
   chunk_gap_sec: 0.4
   # 台本中の [interval:mid] タグ（個々のニュース記事の切り替え）で挟む無音の秒数。
   mid_pause_sec: 1.0
@@ -68,19 +56,14 @@ ai_agent:
 #   writer_model: claude-sonnet-5
 #   formatter_model: claude-sonnet-5
 
-# 番組の編成方針。カテゴリは RSS 収集とは切り離された「AI への選定方針の提示」でしかない
-# （収集はカテゴリを問わずフラットに行う）。
+# 番組構成設定。
 program_details:
-  # 番組全体で紹介するニュースの合計本数の目安（メイン＋補欠の合計）。カテゴリ単位の
-  # 最低保証は設けない（話題が少ない日にカテゴリを無理に埋めさせないため。実際の配分は
-  # ニュースの充実度を見て selector・extractor 段階の AI に判断させる）。
+  # 番組全体で紹介するニュースの合計本数の目安（メイン＋補欠の合計）。
   total_news_count: 8
-  # カテゴリごとの表示名と選定方針。実際の運用ではカテゴリを複数並べる（下記は書き方の例が
-  # 1件だけ）。
-  #   label: selector/extractor プロンプトで使う日本語の表示名
-  #   description: このカテゴリで何を優先し、何を除外するかの自由記述。
-  #     selector・extractor 両方のプロンプトに同じ値を注入する。
+  # カテゴリごとの表示名と選定方針。
   categories:
+    # - label: カテゴリの日本語名
+    #   description: ニュースのカテゴリ分類プロンプト。
     - label: "生成AI"
       description: >-
         LLM・生成AIモデルそのものに関する話題（新モデル発表、AIサービスのリリース
@@ -91,44 +74,34 @@ program_details:
 
 # RSS 収集まわり。
 collect:
-  # 前回 publish 記録が無い初回に、何時間前までさかのぼって収集するかの上限。
+  # 何時間前までのニュースを取得するか。last_fetched_at から現在時刻の短い方が採用される。
   lookback_hours: 24
-  # フィードキャッシュ(feed_cache.json)が entry を保持する日数。
-  # フィードに最後に見えた時刻(last_fetched_at)からこの日数を過ぎても再登場しなかった
-  # entry だけをキャッシュから破棄する（フィードにまだ載っている entry は何日前に
-  # 初登場したかに関わらず保持し続け、再登場による二重紹介を防ぐ）。
+  # フィードキャッシュが entry を保持する日数。
   retention_days: 30
   # フィード取得の並列数。
   fetch_threads: 5
   # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
   fetch_max_retries: 3
   fetch_retry_base_sec: 2
-  # 各フィードの最終 fetch からこの分数以内は、再取得せず前回キャッシュから返す。
-  # 短時間の再実行で全フィードを取り直さずに済み、一部フィードが一時的に落ちていても
-  # 先へ進める。0 でスキップ無効（毎回必ず fetch）。
+  # 前回 fetch のキャッシュを使い回す時間。
   fetch_skip_minutes: 5
 
-# 収集元定義（フラット配列）。カテゴリ区分は持たない。番組編成上のカテゴリは
-# program_details.categories 側で一元管理し、記事がどのカテゴリに属するかは
-# selector が候補一覧全体を見て判断する。実際の運用ではソースを多数並べる（下記は書き方の
-# 例が1件だけ）。区切りコメントでソースの傾向をグルーピングしてよいが、コード・プロンプト
-# からは一切参照されない目印にすぎない。
-# 各ソースのキー:
-#   name: 表示名（収集したニュース一覧の source に入る）
-#   url: フィードURL。1 ソース = 1 URL = 1 キャッシュファイル。
-#   priority: "high" は公式ブログ・公式リリースノートなど一次情報源の優先度を上げる。
-#     "low" は、まとめ系・コミュニティ系など玉石混交で流量が多いソース向けに
-#     優先度を下げる。未指定は標準優先度。
+# 収集元定義。
 rss_feed_sources:
+  # - name:     表示名
+  #   url:      フィードURL
+  #   priority (high|low|<empty>): 情報源の優先度。未指定だと中間。
+  #     運用例:
+  #       high: 公式ブログ・公式リリースノートなどの一次情報源
+  #       low: まとめ系・コミュニティ系などで流量が多いソース
   - name: "Hacker News (AI)"
     url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
 
 # BGM 合成(ミキシング)まわり。
 mixer:
-  # BGM の音量。ffmpeg の volume フィルタにそのまま渡す倍率(voice_boost_dbとは独立)。
+  # BGM の音量。ffmpeg の volume フィルタにそのまま渡す倍率。
   bgm_volume: 0.23
-  # ナレーション音声に足すゲイン(dB)。VOICEPEAKの出力音量が小さめなため底上げする。
-  # 上げすぎるとピークが天井に張り付きクリップするため、実際の音声で確認しながら調整する。
+  # ナレーション音声に足すゲイン(dB)。
   voice_boost_db: 6
   # BGM 開始からナレーション開始までの秒数。
   intro_sec: 3
