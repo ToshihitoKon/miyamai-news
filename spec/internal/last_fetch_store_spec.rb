@@ -228,8 +228,8 @@ RSpec.describe LastFetchStore do
     end
   end
 
-  describe ".load (migration)" do
-    it "returns all-nil defaults when neither last_fetch.json nor the legacy file exists" do
+  describe ".load" do
+    it "returns all-nil defaults when last_fetch.json does not exist" do
       expect(described_class.load(work_dir)).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil)
     end
 
@@ -243,45 +243,6 @@ RSpec.describe LastFetchStore do
       expect(data["confirmed_at"]).to eq(confirmed.iso8601)
       expect(data).to have_key("last_op")
       expect(data["last_op"]).to be_nil
-    end
-
-    it "migrates a legacy mode-keyed last_fetch.json (publish present) into confirmed_at" do
-      digest_at = Time.utc(2026, 7, 10, 8, 0, 0)
-      publish_at = Time.utc(2026, 7, 12, 8, 0, 0)
-      File.write(described_class.path(work_dir), JSON.generate("digest" => digest_at.iso8601, "publish" => publish_at.iso8601))
-
-      data = described_class.load(work_dir)
-
-      expect(data["confirmed_at"]).to eq(publish_at.iso8601)
-      expect(data["pending_at"]).to be_nil
-      expect(data["rollback_at"]).to be_nil
-    end
-
-    it "migrates a legacy mode-keyed last_fetch.json (digest only) into confirmed_at" do
-      digest_at = Time.utc(2026, 7, 10, 8, 0, 0)
-      File.write(described_class.path(work_dir), JSON.generate("digest" => digest_at.iso8601))
-
-      data = described_class.load(work_dir)
-
-      expect(data["confirmed_at"]).to eq(digest_at.iso8601)
-    end
-
-    it "migrates the legacy last_fetch.txt into confirmed_at" do
-      at = Time.utc(2026, 7, 10, 8, 0, 0)
-      File.write(described_class.legacy_path(work_dir), at.iso8601)
-
-      data = described_class.load(work_dir)
-
-      expect(data["confirmed_at"]).to eq(at.iso8601)
-      expect(File.exist?(described_class.legacy_path(work_dir))).to be false
-      expect(File.exist?(described_class.path(work_dir))).to be true
-    end
-
-    it "leaves a corrupt legacy last_fetch.txt untouched and returns defaults" do
-      File.write(described_class.legacy_path(work_dir), "not-a-timestamp")
-
-      expect(described_class.load(work_dir)).to eq("confirmed_at" => nil, "pending_at" => nil, "rollback_at" => nil, "last_op" => nil)
-      expect(File.exist?(described_class.legacy_path(work_dir))).to be true
     end
 
     it "leaves a corrupt last_fetch.json untouched and returns defaults" do
