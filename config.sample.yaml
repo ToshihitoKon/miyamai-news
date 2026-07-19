@@ -49,24 +49,24 @@ voicepeak:
 
 # 台本生成・整形に使う AI CLI の設定。
 ai_agent:
-  bin: claude
-  model: claude-opus-4-8
-  # claude 固有の引数。bin が claude 以外なら無視される。
-  effort: xhigh
+  bin: agy
+  model: 'Gemini 3.5 Flash (High)'
   # ロールごとの使用モデル（未指定時は上記 model が使われます）
-  selector_model: claude-sonnet-5
-  extractor_model: claude-opus-4-8
-  writer_model: claude-sonnet-5
-  formatter_model: claude-sonnet-5
+  selector_model: 'Gemini 3.5 Flash (High)'
+  extractor_model: 'Gemini 3.5 Flash (High)'
+  writer_model: 'Gemini 3.5 Flash (High)'
+  formatter_model: 'Gemini 3.5 Flash (High)'
 
-# Antigravity CLI (agy) を使う場合の設定例。
+# Claude Code CLI (claude) を使う場合の設定例。
 # ai_agent:
-#   bin: agy
-#   model: 'Gemini 3.5 Flash (High)'
-#   selector_model: 'Gemini 3.5 Flash (High)'
-#   extractor_model: 'Gemini 3.5 Flash (High)'
-#   writer_model: 'Gemini 3.5 Flash (High)'
-#   formatter_model: 'Gemini 3.5 Flash (High)'
+#   bin: claude
+#   model: claude-opus-4-8
+#   # effort は claude 固有の引数。bin が claude 以外なら無視される。
+#   effort: xhigh
+#   selector_model: claude-sonnet-5
+#   extractor_model: claude-opus-4-8
+#   writer_model: claude-sonnet-5
+#   formatter_model: claude-sonnet-5
 
 # 番組の編成方針。カテゴリは RSS 収集とは切り離された「AI への選定方針の提示」でしかない
 # （収集はカテゴリを問わずフラットに行う）。
@@ -75,7 +75,8 @@ program_details:
   # 最低保証は設けない（話題が少ない日にカテゴリを無理に埋めさせないため。実際の配分は
   # ニュースの充実度を見て selector・extractor 段階の AI に判断させる）。
   total_news_count: 8
-  # カテゴリごとの表示名と選定方針。
+  # カテゴリごとの表示名と選定方針。実際の運用ではカテゴリを複数並べる（下記は書き方の例が
+  # 1件だけ）。
   #   label: selector/extractor プロンプトで使う日本語の表示名
   #   description: このカテゴリで何を優先し、何を除外するかの自由記述。
   #     selector・extractor 両方のプロンプトに同じ値を注入する。
@@ -87,37 +88,6 @@ program_details:
         であってもこのカテゴリに分類する（例: コーディングエージェントの内部動作を
         分析した論文）。AIエージェント・AIコーディングツールのカテゴリは、製品・
         ツール自体の動き（リリース・新機能・話題のツール）に限定する。
-    - label: "AIエージェント・AIコーディングツール（Claude Code、Devin、Cursor など）"
-      description: >-
-        Claude Code・Devin・Cursor・Antigravity など、AIエージェントやAIコーディング
-        支援ツール自体のリリース・新機能・話題に関する話題。研究論文・研究成果は
-        対象を問わず生成AIカテゴリに分類するため、ここには含めない。リリースノート系の
-        情報源は、バグ修正や軽微な変更は除外し、注目に値する新機能・大きな変更だけを
-        選ぶこと。同一ツールが短期間に複数バージョンを公開している場合は、それらを
-        別々の話題に分けず、まとめて1つの話題として扱う前提で候補に残すこと。
-        企業・自治体・プロジェクトがこれらのツールを導入・活用した事例は、
-        ツール自体の話題ではなく利用者側の業界動向にあたるため、「その他エンジニア向け
-        トピック」に分類する。
-    - label: "セキュリティ"
-      description: >-
-        セキュリティの話題。個別製品に閉じた脆弱性情報は除外し、Linux・OpenSSH・
-        OpenSSL・systemd・コンテナ・CI/CD など、開発環境やインフラに広く関わるものを
-        優先すること。Windows・Chrome など特定製品の月例パッチ・通常のセキュリティ
-        アップデートは、話題性が乏しいため除外する。ただし Heartbleed・Log4Shell・
-        Spectre のように広く通称が付き社会的に話題となった脆弱性は、広くエンジニアや
-        ユーザーに知られており日常生活や業務に関係する製品であれば優先して扱う。
-    - label: "その他エンジニア向けトピック"
-      description: >-
-        上記のいずれにも当てはまらない、エンジニア向けの技術トピック全般
-        （プログラミング言語、フレームワーク、開発ツール、業界動向など）。企業・自治体・
-        プロジェクトがAIエージェント・AIコーディングツールを導入・活用した事例
-        （ツール自体のリリースではなく、利用者側の取り組みが主題のもの）もここに含む。
-        ただし「とある企業がAIエージェント・AIコーディングツールを導入して業務効率化に
-        成功した」という枠組みだけの事例は、技術的な中身がなくリスナーが反応しづらいため
-        除外する。次のいずれかに当てはまる場合のみ例外的に扱う: (1) 広くエンジニアに
-        身近な技術・製品を扱っている、または技術的な新規性・独自性がある（例: AIを使って
-        Linuxカーネルの主要機能をRustで再現するOSSプロジェクト）、(2) Linux Foundationの
-        ような業界全体に影響力を持つ主体の動きである。
 
 # RSS 収集まわり。
 collect:
@@ -140,8 +110,9 @@ collect:
 
 # 収集元定義（フラット配列）。カテゴリ区分は持たない。番組編成上のカテゴリは
 # program_details.categories 側で一元管理し、記事がどのカテゴリに属するかは
-# selector が候補一覧全体を見て判断する。以下のコメント区切りは、ソースの傾向を
-# 人間が把握するための目印であり、コード・プロンプトからは一切参照されない。
+# selector が候補一覧全体を見て判断する。実際の運用ではソースを多数並べる（下記は書き方の
+# 例が1件だけ）。区切りコメントでソースの傾向をグルーピングしてよいが、コード・プロンプト
+# からは一切参照されない目印にすぎない。
 # 各ソースのキー:
 #   name: 表示名（収集したニュース一覧の source に入る）
 #   url: フィードURL。1 ソース = 1 URL = 1 キャッシュファイル。
@@ -149,70 +120,8 @@ collect:
 #     "low" は、まとめ系・コミュニティ系など玉石混交で流量が多いソース向けに
 #     優先度を下げる。未指定は標準優先度。
 rss_feed_sources:
-  # --- 生成AI ---
   - name: "Hacker News (AI)"
     url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
-  - name: "arXiv cs.AI"
-    url: "http://export.arxiv.org/rss/cs.AI"
-    priority: high
-  - name: "OpenAI Blog"
-    url: "https://openai.com/news/rss.xml"
-    priority: high
-
-  # --- AIエージェント・AIコーディングツール ---
-  # Devin(Cognition) は公式 RSS がないため HN のキーワード検索で拾う。
-  - name: "Hacker News (agents)"
-    url: "https://hnrss.org/newest?q=%22Claude%20Code%22%20OR%20%22coding%20agent%22%20OR%20Devin%20OR%20Cursor%20OR%20Antigravity&points=30"
-  - name: "Claude Code Releases"
-    url: "https://github.com/anthropics/claude-code/releases.atom"
-    priority: high
-  - name: "Cursor Changelog"
-    url: "https://cursor.com/changelog/rss.xml"
-    priority: high
-  - name: "Google AI Blog"
-    url: "https://blog.google/innovation-and-ai/technology/ai/rss/"
-    priority: high
-  - name: "Simon Willison's Weblog"
-    url: "https://simonwillison.net/atom/everything/"
-
-  # --- セキュリティ ---
-  - name: "JPCERT/CC"
-    url: "https://www.jpcert.or.jp/rss/jpcert.rdf"
-    priority: high
-  - name: "JVN"
-    url: "https://jvn.jp/rss/jvn.rdf"
-    priority: high
-
-  # --- その他エンジニア向けトピック ---
-  - name: "Publickey"
-    url: "https://www.publickey1.jp/atom.xml"
-    priority: high
-  - name: "Hacker News (frontpage)"
-    url: "https://hnrss.org/frontpage?points=100"
-  - name: "Lobsters"
-    url: "https://lobste.rs/rss"
-  - name: "gihyo.jp"
-    url: "https://gihyo.jp/feed/rss2"
-  - name: "InfoQ Japan"
-    url: "https://www.infoq.com/jp/feed/"
-  - name: "DevelopersIO"
-    url: "https://dev.classmethod.jp/feed/"
-  # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
-  # はてブはホットエントリと新着を別ソースとして読む（RSS は各30件が上限で、オフセット
-  # 等のパラメータは効かないため件数を稼ぐ）。同じ記事が両方に載っても収集後の
-  # dedup_by_title が除くので、独立した2ソースにして問題ない。
-  - name: "はてブ テクノロジー(hotentry)"
-    url: "https://b.hatena.ne.jp/hotentry/it.rss"
-    priority: low
-  - name: "はてブ テクノロジー(entrylist)"
-    url: "https://b.hatena.ne.jp/entrylist/it.rss"
-    priority: low
-  - name: "Qiita 人気記事"
-    url: "https://qiita.com/popular-items/feed.atom"
-    priority: low
-  - name: "Zenn 新着"
-    url: "https://zenn.dev/feed"
-    priority: low
 
 # BGM 合成(ミキシング)まわり。
 mixer:

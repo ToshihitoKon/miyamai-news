@@ -1,0 +1,152 @@
+pipeline:
+  mode: publish
+
+gcs:
+  bucket: nidodm-miyamai-news
+  public_base: https://storage.googleapis.com
+  retention_episodes: 5
+
+assets:
+  bgm_path: 古びた魔法書_気まぐれBGM工房.mp3
+  cover_image: miyamai_news.webp
+  icon_image: miyamai_news_icon.png
+
+voicepeak:
+  bin: /Applications/voicepeak.app/Contents/MacOS/voicepeak
+  interval_sec: 1
+  max_retries: 4
+  retry_base_sec: 2
+  timeout_sec: 10
+  chunk_gap_sec: 0.4
+  mid_pause_sec: 1.3
+  long_pause_sec: 1.5
+
+ai_agent:
+  bin: agy
+  model: 'Gemini 3.5 Flash (High)'
+
+program_details:
+  total_news_count: 10
+  categories:
+    - label: "生成AI"
+      description: >-
+        LLM・生成AIモデルそのものに関する話題（新モデル発表、AIサービスのリリース
+        など）。研究論文・研究成果は、対象がAIエージェントやAIコーディングツール
+        であってもこのカテゴリに分類する（例: コーディングエージェントの内部動作を
+        分析した論文）。AIエージェント・AIコーディングツールのカテゴリは、製品・
+        ツール自体の動き（リリース・新機能・話題のツール）に限定する。
+    - label: "AIエージェント・AIコーディングツール（Claude Code、Devin、Cursor など）"
+      description: >-
+        Claude Code・Devin・Cursor・Antigravity など、AIエージェントやAIコーディング
+        支援ツール自体のリリース・新機能・話題に関する話題。研究論文・研究成果は
+        対象を問わず生成AIカテゴリに分類するため、ここには含めない。リリースノート系の
+        情報源は、バグ修正や軽微な変更は除外し、注目に値する新機能・大きな変更だけを
+        選ぶこと。同一ツールが短期間に複数バージョンを公開している場合は、それらを
+        別々の話題に分けず、まとめて1つの話題として扱う前提で候補に残すこと。
+        企業・自治体・プロジェクトがこれらのツールを導入・活用した事例
+        （例: 自治体がClaude Codeでレガシーシステムを刷新した話）は、ツール自体の
+        話題ではなく利用者側の業界動向にあたるため、「その他エンジニア向けトピック」に
+        分類する。
+    - label: "セキュリティ"
+      description: >-
+        セキュリティの話題。個別製品に閉じた脆弱性情報は除外し、Linux・OpenSSH・
+        OpenSSL・systemd・コンテナ・CI/CD など、開発環境やインフラに広く関わるものを
+        優先すること。Windows・Chrome など特定製品の月例パッチ・通常のセキュリティ
+        アップデートは、話題性が乏しいため除外する。ただし Heartbleed・Log4Shell・
+        Spectre のように広く通称が付き社会的に話題となった脆弱性は、広くエンジニアや
+        ユーザーに知られており日常生活や業務に関係する製品であれば優先して扱う。
+    - label: "その他エンジニア向けトピック"
+      description: >-
+        上記のいずれにも当てはまらない、エンジニア向けの技術トピック全般
+        （プログラミング言語、フレームワーク、開発ツール、業界動向など）。企業・自治体・
+        プロジェクトがAIエージェント・AIコーディングツールを導入・活用した事例
+        （ツール自体のリリースではなく、利用者側の取り組みが主題のもの）もここに含むが、
+        自社の業務効率化・コスト削減が主題なだけの事例（技術的な新規性や独自性が薄いもの）
+        は優先度を下げ、他に良い候補がない枠を埋める補欠として扱う。一方、AIを使って
+        Linuxカーネルの主要機能をRustで再実装するような、技術的に新規性・独自性のある
+        個人・OSSプロジェクトは、AIエージェントが関わっていても通常の候補として扱う。
+
+collect:
+  lookback_hours: 24
+  retention_days: 30
+  fetch_threads: 5
+  fetch_max_retries: 3
+  fetch_retry_base_sec: 2
+  fetch_skip_minutes: 5
+
+rss_feed_sources:
+  # --- 生成AI ---
+  - name: "Hacker News (AI)"
+    url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
+  - name: "arXiv cs.AI"
+    url: "http://export.arxiv.org/rss/cs.AI"
+    priority: high
+  - name: "OpenAI Blog"
+    url: "https://openai.com/news/rss.xml"
+    priority: high
+  - name: "Google AI Blog"
+    url: "https://blog.google/innovation-and-ai/technology/ai/rss/"
+    priority: high
+
+  # --- AIエージェント・AIコーディングツール ---
+  # Devin(Cognition) は公式 RSS がないため HN のキーワード検索で拾う。
+  - name: "Hacker News (agents)"
+    url: "https://hnrss.org/newest?q=%22Claude%20Code%22%20OR%20%22coding%20agent%22%20OR%20Devin%20OR%20Cursor%20OR%20Antigravity&points=30"
+  - name: "Claude Code Releases"
+    url: "https://github.com/anthropics/claude-code/releases.atom"
+    priority: high
+  - name: "Cursor Changelog"
+    url: "https://cursor.com/changelog/rss.xml"
+    priority: high
+  - name: "Simon Willison's Weblog"
+    url: "https://simonwillison.net/atom/everything/"
+
+  # --- セキュリティ ---
+  - name: "JPCERT/CC"
+    url: "https://www.jpcert.or.jp/rss/jpcert.rdf"
+    priority: high
+  - name: "JVN"
+    url: "https://jvn.jp/rss/jvn.rdf"
+    priority: high
+  - name: "IPA: 重要なセキュリティ情報"
+    url: "https://www.ipa.go.jp/security/alert-rss.rdf"
+    priority: high
+  - name: "AWS News (Vulnerability)"
+    url: "https://aws.amazon.com/jp/security/security-bulletins/rss/feed/"
+    priority: high
+
+  # --- その他エンジニア向けトピック ---
+  - name: "Publickey"
+    url: "https://www.publickey1.jp/atom.xml"
+    priority: high
+  - name: "Hacker News (frontpage)"
+    url: "https://hnrss.org/frontpage?points=100"
+  - name: "Lobsters"
+    url: "https://lobste.rs/rss"
+  - name: "gihyo.jp"
+    url: "https://gihyo.jp/feed/rss2"
+  - name: "InfoQ Japan"
+    url: "https://www.infoq.com/jp/feed/"
+  - name: "DevelopersIO"
+    url: "https://dev.classmethod.jp/feed/"
+  # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
+  # はてブはホットエントリと新着の両フィードを読む（RSS は各30件が上限で、オフセット
+  # 等のパラメータは効かない）。
+  - name: "はてブ テクノロジー(hotentry)"
+    url: "https://b.hatena.ne.jp/hotentry/it.rss"
+  - name: "はてブ テクノロジー(entrylist)"
+    url: "https://b.hatena.ne.jp/entrylist/it.rss"
+    priority: low
+  - name: "Qiita 人気記事"
+    url: "https://qiita.com/popular-items/feed.atom"
+    priority: low
+  - name: "Zenn 新着"
+    url: "https://zenn.dev/feed"
+    priority: low
+
+mixer:
+  bgm_volume: 0.23
+  voice_boost_db: 6
+  intro_sec: 3
+  tail_sec: 3
+  fade_sec: 4
