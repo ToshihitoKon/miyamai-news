@@ -160,8 +160,9 @@ RSpec.describe ScriptGenerator do
           expect(call_count).to eq(4)
           expect(File.read(tts_path)).to include("整形済み")
           expect(File.read(generator.used_news_file)).to include("Title A")
-          expect(Open3).to have_received(:capture3).with(
-            "claude", "-p", "--model", "claude-sonnet-5", "--effort", "xhigh", "--allowedTools", "Write",
+          expect(Open3).to have_received(:capture3).at_least(:once).with(
+            "claude", "-p", "--model", "claude-sonnet-5", "--effort", "xhigh",
+            "--allowedTools", "Read Write WebFetch",
             stdin_data: an_instance_of(String)
           )
         end
@@ -191,7 +192,7 @@ RSpec.describe ScriptGenerator do
           generator.send(:select_news, generator.send(:collect_news))
 
           expect(Open3).to have_received(:capture3).with(
-            "claude", "-p", "--model", "claude-sonnet-5", "--allowedTools", "Write",
+            "claude", "-p", "--model", "claude-sonnet-5", "--allowedTools", "Read Write WebFetch",
             stdin_data: an_instance_of(String)
           )
         end

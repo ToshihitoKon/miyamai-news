@@ -74,8 +74,7 @@ RSpec.describe UsedNewsFormatter do
       result = described_class.send(:run_fix_cli, broken_used)
 
       expect(Internal::AiCli).to have_received(:run).with(
-        "repairing used news format", an_instance_of(String), "--allowedTools", "Write",
-        hash_including(fatal: false)
+        "repairing used news format", an_instance_of(String), hash_including(fatal: false)
       )
       expect(result).to eq(valid_used.strip)
     end

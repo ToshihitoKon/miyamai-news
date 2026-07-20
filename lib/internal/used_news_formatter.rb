@@ -86,7 +86,6 @@ module UsedNewsFormatter
         format_spec: FORMAT_SPEC, broken_content: broken_text, output_path: output_path)
 
       Internal::AiCli.run("repairing used news format", prompt,
-        "--allowedTools", "Write",
         model_override: Internal::AiCli.model_for(:used_fix),
         effort_override: ::Config.ai_agent.used_fix_effort,
         fatal: false)

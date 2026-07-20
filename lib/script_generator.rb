@@ -173,9 +173,8 @@ class ScriptGenerator
       return File.read(news_selected_path)
     end
 
-    selector_model = get_model_for_role(:selector)
-    run_ai_cli("selecting news",
-      selector_prompt(collected_news), "--allowedTools", "Write", model_override: selector_model)
+    selector_model = Internal::AiCli.model_for(:selector)
+    Internal::AiCli.run("selecting news", selector_prompt(collected_news), model_override: selector_model)
 
     rewrite_file(news_selected_path) { |text| strip_facts_preamble(text) }
     warn "news (selected): #{news_selected_path}"
@@ -189,9 +188,8 @@ class ScriptGenerator
       return
     end
 
-    extractor_model = get_model_for_role(:extractor)
-    run_ai_cli("extracting news facts",
-      extractor_prompt(selected_news), "--allowedTools", "WebFetch Write", model_override: extractor_model)
+    extractor_model = Internal::AiCli.model_for(:extractor)
+    Internal::AiCli.run("extracting news facts", extractor_prompt(selected_news), model_override: extractor_model)
 
     rewrite_file(news_facts_path) { |text| strip_facts_preamble(text) }
     warn "news facts: #{news_facts_path}"
@@ -219,10 +217,10 @@ class ScriptGenerator
       return
     end
 
-    writer_model = get_model_for_role(:writer)
+    writer_model = Internal::AiCli.model_for(:writer)
     news_facts = File.read(news_facts_path)
-    run_ai_cli("writing script and used news",
-      writer_prompt(selected_news, news_facts), "--allowedTools", "Read Write", model_override: writer_model)
+    Internal::AiCli.run("writing script and used news",
+      writer_prompt(selected_news, news_facts), model_override: writer_model)
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
     # used_news は writer が書いていなければ止める（不完全なまま後段へ進ませない）。
@@ -239,8 +237,8 @@ class ScriptGenerator
       return
     end
 
-    formatter_model = get_model_for_role(:formatter)
-    run_ai_cli("formatting for VOICEPEAK", format_prompt, "--allowedTools", "Read Write", model_override: formatter_model)
+    formatter_model = Internal::AiCli.model_for(:formatter)
+    Internal::AiCli.run("formatting for VOICEPEAK", format_prompt, model_override: formatter_model)
 
     rewrite_file(tts_script_path) { |text| strip_preamble(text) }
     warn "tts script: #{tts_script_path}"
@@ -366,15 +364,6 @@ class ScriptGenerator
       picked
     end
   end
-
-  # --- AI CLI 実行 ---
-  # 実行ロジック本体は Internal::AiCli（インスタンス状態に依存しない共通モジュール）に
-  # 集約している。ここでは既存の呼び出し元（selector/extractor/writer/format）を
-  # 書き換えずに済むよう薄いラッパーを残す。
-
-  def run_ai_cli(...) = Internal::AiCli.run(...)
-
-  def get_model_for_role(role) = Internal::AiCli.model_for(role)
 
   # 始めの挨拶より前に残った前置き（「整形しました」等）を削ぎ落とす。
   # プロンプトで前置き禁止を指示しても稀に混入するため、機械的に確実に落とす。

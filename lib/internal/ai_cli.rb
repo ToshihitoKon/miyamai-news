@@ -15,8 +15,7 @@ module Internal
     # effort_override は claude 用の effort を明示的に差し替える（nil なら
     # Config.ai_agent.effort を使う）。fatal: false のとき、失敗しても abort せず
     # nil を返す（used_news 整形修復のように失敗しても実行全体を止めたくない用途向け）。
-    def run(spinner_message, prompt, *claude_extra_args, model_override: nil,
-            effort_override: :default, fatal: true)
+    def run(spinner_message, prompt, model_override: nil, effort_override: :default, fatal: true)
       bin = ::Config.ai_agent.bin
       model = model_override || ::Config.ai_agent.model
 
@@ -27,8 +26,9 @@ module Internal
         run_with_spinner(
           "#{spinner_message} [#{bin}]",
           "AI CLI failed",
-          bin, "-p", "--model", model, *effort_args,
-          *claude_extra_args,
+          # allowedTools は呼び出し元ごとに絞らず常に同じ3つを許可する。実害のある
+          # ツールではなく、用途ごとに出し分ける利点が薄いため（CLAUDE.md 参照）。
+          bin, "-p", "--model", model, *effort_args, "--allowedTools", "Read Write WebFetch",
           stdin_data: prompt, fatal: fatal
         )
       else
