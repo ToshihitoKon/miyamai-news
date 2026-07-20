@@ -44,6 +44,11 @@ ai_agent:
   extractor_model: 'Gemini 3.5 Flash (High)'
   writer_model: 'Gemini 3.5 Flash (High)'
   formatter_model: 'Gemini 3.5 Flash (High)'
+  # used_news のフォーマット崩れをパース失敗時にだけ整形し直す軽量モデル。
+  # 通常は呼ばれない（未指定時は上記 model が使われます）。
+  used_fix_model: 'Gemini 3.5 Flash (Low)'
+  # フォーマット修復の最大リトライ回数（未指定時は 2）。0 で修復自体を無効化します。
+  used_fix_max_retries: 2
 
 # Claude Code CLI (claude) を使う場合の設定例。
 # ai_agent:
@@ -55,6 +60,9 @@ ai_agent:
 #   extractor_model: claude-opus-4-8
 #   writer_model: claude-sonnet-5
 #   formatter_model: claude-sonnet-5
+#   # 修復は軽いモデル・低 effort で十分。
+#   used_fix_model: claude-haiku-4-5
+#   used_fix_effort: low
 
 # 番組構成設定。
 program_details:

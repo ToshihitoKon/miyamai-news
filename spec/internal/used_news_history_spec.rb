@@ -10,13 +10,13 @@ RSpec.describe UsedNewsHistory do
 
   after { FileUtils.remove_entry(work_dir) }
 
-  # writer.prompt.erb の used_news 形式（タイトル→要約→link→(date/source)）のサンプル。
+  # writer.prompt.erb の used_news 形式（## カテゴリ / ### [タイトル](link) / 要約 /
+  # (date/source)）のサンプル。link はタイトル行に内包される。
   def used_news_text(title:, link:)
     <<~USED
-      ■ 生成AI
-      ・#{title}
+      ## 生成AI
+      ### [#{title}](#{link})
          推論性能が向上し、コーディング用途向けの新モデル。
-         #{link}
          (2026-07-20 / OpenAI)
     USED
   end
@@ -40,14 +40,16 @@ RSpec.describe UsedNewsHistory do
   end
 
   describe ".record!" do
-    it "copies the used_news into the history dir, stripping link-only lines" do
+    it "copies the used_news, dropping the URL from the title line but keeping the title" do
       record("20260720_afternoon", used_news_text(title: "GPT-5.6 発表", link: "https://openai.com/gpt56"))
 
       saved = File.read(File.join(described_class.dir(work_dir), "20260720_afternoon.txt"))
-      expect(saved).to include("GPT-5.6 発表")
+      # ### [タイトル](URL) → ### タイトル（URL だけ落ちてタイトルは残る）。
+      expect(saved).to include("### GPT-5.6 発表")
       expect(saved).to include("推論性能が向上")
       expect(saved).to include("(2026-07-20 / OpenAI)")
       expect(saved).not_to include("https://openai.com/gpt56")
+      expect(saved).not_to include("](")
     end
 
     it "does nothing when the used_news file is absent" do

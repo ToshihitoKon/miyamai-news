@@ -19,6 +19,18 @@ RSpec.describe Internal::Config do
 
       expect(agent.model_for(:selector)).to eq("claude-sonnet-5")
     end
+
+    it "defaults used_fix_max_retries to 2 when absent" do
+      agent = described_class.new(bin: "claude", model: "claude-opus-4-8")
+
+      expect(agent.used_fix_max_retries).to eq(2)
+    end
+
+    it "accepts 0 for used_fix_max_retries to disable repair" do
+      agent = described_class.new(bin: "claude", model: "claude-opus-4-8", used_fix_max_retries: 0)
+
+      expect(agent.used_fix_max_retries).to eq(0)
+    end
   end
 
   describe Internal::Config::RssFeedSource do

@@ -15,24 +15,33 @@ RSpec.describe Publisher do
 
   before do
     File.write(mp3_path, "fake mp3")
-    File.write(used_path, "1. Title A\nhttps://example.com/a\n")
+    File.write(used_path, "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n")
     File.write(transcript_path, "宮舞モカです。\n")
   end
 
   after { FileUtils.remove_entry(work_dir) }
 
   describe "#run" do
-    it "uploads mp3/used/transcript and writes archives/index/feed/manifest via gcloud storage, without a real gcloud" do
-      publisher = described_class.new(date: Date.new(2026, 7, 14))
+    def stub_gcloud_for_first_publish(publisher)
       commands = []
+      contents = {}
       # 初回公開シナリオ: archives.csv はまだ GCS に存在しない(object_exists? が false)。
       no_objects_status = instance_double(Process::Status, success?: false)
       allow(Open3).to receive(:capture3).and_return(["", "One or more URLs matched no objects.", no_objects_status])
 
       allow(publisher).to receive(:system) do |*args, **_opts|
         commands << args.map(&:to_s).join(" ")
+        if args[0..2] == %w[gcloud storage cp] && args.last.to_s.match?(/\.used\.(txt|html)\z/)
+          contents[args.last.to_s.end_with?(".used.html") ? :used_html : :used_txt] = File.read(args[-2])
+        end
         true
       end
+      [commands, contents]
+    end
+
+    it "uploads mp3/used/used.html/transcript and writes archives/index/feed/manifest via gcloud storage, without a real gcloud" do
+      publisher = described_class.new(date: Date.new(2026, 7, 14))
+      commands, contents = stub_gcloud_for_first_publish(publisher)
 
       publisher.run(mp3_path, used_path, transcript_path)
 
@@ -42,6 +51,32 @@ RSpec.describe Publisher do
       expect(commands).to include(a_string_matching(/index\.html/))
       expect(commands).to include(a_string_matching(/feed\.xml/))
       expect(commands).to include(a_string_matching(/manifest\.json/))
+      expect(commands).to include(a_string_matching(/used\.html/))
+      expect(contents[:used_html]).to include('<div class="news-cat">生成AI</div>')
+    end
+
+    it "aborts before any gcloud storage operation when used_news fails validation and repair" do
+      publisher = described_class.new(date: Date.new(2026, 7, 14))
+      File.write(used_path, "・タイトルだけの旧フォーマット\nhttps://example.com/a\n")
+      allow(UsedNewsFormatter).to receive(:run_fix_cli).and_return(nil) # 修復も失敗
+      commands = []
+      allow(publisher).to receive(:system) do |*args, **_opts|
+        commands << args.map(&:to_s).join(" ")
+        true
+      end
+
+      expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
+      expect(commands).to be_empty # mp3 含め何もアップロードされていない
+    end
+
+    it "does not validate used_news when used_txt_path is nil (no used news for this episode)" do
+      publisher = described_class.new(date: Date.new(2026, 7, 14))
+      _commands, = stub_gcloud_for_first_publish(publisher)
+      allow(UsedNewsFormatter).to receive(:ensure_valid!)
+
+      publisher.run(mp3_path, nil, transcript_path)
+
+      expect(UsedNewsFormatter).not_to have_received(:ensure_valid!)
     end
   end
 
@@ -207,46 +242,67 @@ RSpec.describe Publisher do
       xml[%r{<content type="html">(.*)</content>}m, 1]
     end
 
-    it "escapes used_news so it survives XML-decode-then-HTML-parse without becoming markup" do
-      used_news = "・<dialog>要素の新機能\n   https://example.com/a\n"
-
+    def render(used_news)
       xml = publisher.send(:render_feed_entry, "2026-07-14", "miyamai_news_20260714_morning.mp3",
         "宮舞モカの技術ニュース", used_news, "2026-07-14T00:00:00Z")
-      content = content_of(xml)
-
-      # XML デコードしても <dialog> が実タグとして残らないこと
-      # （h() が一段のみだと &lt;dialog&gt; まで戻り、リーダー側で実タグ化してしまう）。
-      xml_decoded = CGI.unescapeHTML(content)
-      expect(xml_decoded).to include("&lt;dialog&gt;")
-      expect(xml_decoded).not_to include("<dialog>")
+      content_of(xml)
     end
 
-    it "preserves line breaks as <br> after both decode steps" do
-      used_news = "1行目\n2行目\n"
+    # 新フォーマット（## カテゴリ / ### [タイトル](URL)）は構造化 HTML になる。
+    context "with the new Markdown format" do
+      let(:used_news) do
+        <<~USED
+          ## 生成AI
+          ### [Gemini 3.5 Pro が延期か](https://example.com/gemini)
+             次世代 LLM の開発が難航しているという観測。
+             (2026-07-17 / 財経新聞)
+        USED
+      end
 
-      xml = publisher.send(:render_feed_entry, "2026-07-14", "miyamai_news_20260714_morning.mp3",
-        "宮舞モカの技術ニュース", used_news, "2026-07-14T00:00:00Z")
-      xml_decoded = CGI.unescapeHTML(content_of(xml))
+      it "renders structured HTML with the title linked, surviving both decode steps" do
+        xml_decoded = CGI.unescapeHTML(render(used_news))
 
-      expect(xml_decoded).to include("1行目<br>")
-      expect(xml_decoded).to include("2行目<br>")
+        expect(xml_decoded).to include('<div class="news-cat">生成AI</div>')
+        expect(xml_decoded).to include(
+          '<div class="news-title"><a href="https://example.com/gemini" target="_blank" rel="noopener">Gemini 3.5 Pro が延期か</a></div>'
+        )
+        expect(xml_decoded).to include('<div class="news-meta">(2026-07-17 / 財経新聞)</div>')
+      end
+
+      it "escapes markup in the source text so it does not become real tags" do
+        malicious = "## 生成AI\n### [<dialog>要素](https://example.com/a)\n   本文\n"
+        xml_decoded = CGI.unescapeHTML(render(malicious))
+
+        expect(xml_decoded).to include("&lt;dialog&gt;")
+        expect(xml_decoded).not_to include("<dialog>")
+      end
     end
 
-    it "turns URLs into anchor tags after both decode steps" do
-      used_news = "参考: https://example.com/a\n"
+    # 旧フォーマット・崩れ（## 見出しが無い）は生テキスト整形へフォールバックする。
+    context "with the old/unparseable format (fallback path)" do
+      it "escapes used_news so it survives XML-decode-then-HTML-parse without becoming markup" do
+        xml_decoded = CGI.unescapeHTML(render("・<dialog>要素の新機能\n   https://example.com/a\n"))
 
-      xml = publisher.send(:render_feed_entry, "2026-07-14", "miyamai_news_20260714_morning.mp3",
-        "宮舞モカの技術ニュース", used_news, "2026-07-14T00:00:00Z")
-      xml_decoded = CGI.unescapeHTML(content_of(xml))
+        expect(xml_decoded).to include("&lt;dialog&gt;")
+        expect(xml_decoded).not_to include("<dialog>")
+      end
 
-      expect(xml_decoded).to include('<a href="https://example.com/a">https://example.com/a</a>')
+      it "preserves line breaks as <br> after both decode steps" do
+        xml_decoded = CGI.unescapeHTML(render("1行目\n2行目\n"))
+
+        expect(xml_decoded).to include("1行目<br>")
+        expect(xml_decoded).to include("2行目<br>")
+      end
+
+      it "turns URLs into anchor tags after both decode steps" do
+        xml_decoded = CGI.unescapeHTML(render("参考: https://example.com/a\n"))
+
+        expect(xml_decoded).to include('<a href="https://example.com/a">https://example.com/a</a>')
+      end
     end
 
     it "leaves content empty when used_news is blank" do
-      xml = publisher.send(:render_feed_entry, "2026-07-14", "miyamai_news_20260714_morning.mp3",
-        "宮舞モカの技術ニュース", "", "2026-07-14T00:00:00Z")
-
-      expect(content_of(xml)).to eq("")
+      expect(render("")).to eq("")
     end
   end
 

@@ -9,6 +9,8 @@ require "open3"
 require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/command_error"
+require_relative "internal/used_news_markdown"
+require_relative "internal/used_news_formatter"
 require_relative "slot"
 
 class Publisher
@@ -36,6 +38,11 @@ class Publisher
     EPISODE_FILE_EXTENSIONS.map { |ext| mp3_filename.sub(/\.mp3\z/, ext) }
   end
 
+  # .used.txt のオブジェクト名から .used.html のオブジェクト名を導く。
+  # EPISODE_FILE_EXTENSIONS には含めない（dist/ には実体が無い、GCS 専用の派生物のため。
+  # CLAUDE.md「Publisher / GCS」参照）。
+  def self.used_news_html_object(used_object) = used_object.sub(/\.used\.txt\z/, ".used.html")
+
   # GCS 上のオブジェクト名は、渡された mp3 のファイル名をそのまま使う
   # （例: miyamai_news_20260710_afternoon.mp3）。日付から組み立て直すと
   # slot が落ちて朝昼夜深夜が同名で上書きし合うため、呼び出し側のファイル名を正とする。
@@ -43,10 +50,17 @@ class Publisher
     filename = File.basename(mp3_path)
     _mp3_object, used_object, transcript_object = self.class.episode_object_names(filename)
 
+    # GCS への書き込みを何も始める前に used_news のフォーマットを確定させる。
+    # 検証・修復に失敗すればここで abort し、mp3 含め何もアップロードしない
+    # （「Publisher#run 中に1つでも失敗したら即 abort」原則の一部として扱う。CLAUDE.md 参照）。
+    used_news = load_and_validate_used_news(used_txt_path)
+
     upload_mp3(mp3_path, filename)
-    upload_used_news(used_txt_path, used_object) if used_txt_path
+    if used_txt_path
+      upload_used_news_content(used_news, used_object)
+      upload_used_news_html(used_news, self.class.used_news_html_object(used_object))
+    end
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
-    used_news = used_txt_path && File.exist?(used_txt_path) ? File.read(used_txt_path) : ""
     rows = update_archives(filename, used_news)
     write_index(rows)
     write_feed(rows)
@@ -155,15 +169,33 @@ class Publisher
 
   # --- used news ---------------------------------------------------------
   # その回で使用したニュース一覧(AI 生成テキスト)。音声と対にした名前で置く。
-  # 中身は解釈せず、再生ページ側でそのまま表示する(URL のみリンク化)。
 
-  def upload_used_news(local_path, object)
-    abort("used news not found: #{local_path}") unless File.exist?(local_path)
-    gcloud_storage(
-      "cp",
-      "--content-type=text/plain; charset=utf-8",
-      local_path, "gs://#{@bucket}/#{object}"
-    )
+  # used_txt_path が無ければ空文字列（used_news の無い回）。ensure_valid! は
+  # 空文字列を早期 return するので、この場合 AI 呼び出し・abort は発生しない。
+  def load_and_validate_used_news(used_txt_path)
+    return "" unless used_txt_path && File.exist?(used_txt_path)
+
+    UsedNewsFormatter.ensure_valid!(File.read(used_txt_path))
+  end
+
+  # 検証済みテキストをそのまま .used.txt としてアップロードする。
+  def upload_used_news_content(content, object)
+    upload_content(object, content, content_type: "text/plain; charset=utf-8")
+  end
+
+  # used_news を事前に HTML 化して .used.html としてアップロードする。パースできる
+  # 新フォーマットのときだけ作る。ok=false（Publisher#run に届く時点で
+  # UsedNewsFormatter.ensure_valid! を通過済みのため、新規公開分では基本的に発生しない。
+  # 発生し得るのは GCS に残る移行前データが再度渡された場合のみ）はアップロード自体を
+  # スキップする。再生ページの JS は .used.html が 404 なら .used.txt + 生テキスト表示へ
+  # フォールバックする設計なので、別途フォールバック HTML を用意する必要はない。
+  def upload_used_news_html(used_news, object)
+    result = UsedNewsMarkdown.render(used_news)
+    return unless result.ok
+
+    upload_content(object, result.html,
+      content_type: "text/html; charset=utf-8",
+      cache_control: "public, max-age=300")
   end
 
   # --- transcript ----------------------------------------------------------
@@ -206,9 +238,13 @@ class Publisher
   end
 
   # 保持件数を超えた回の実ファイルを archived/ へ退避する。used.txt/transcript.txt は
-  # 無い回もあるので、個別の移動失敗は警告に留めて処理を継続する。
+  # 無い回もあるので、個別の移動失敗は警告に留めて処理を継続する。.used.html は
+  # EPISODE_FILE_EXTENSIONS に含めていない（dist/ に実体を持たない GCS 専用の派生物の
+  # ため。CLAUDE.md 参照）ので、同じ fault-tolerant なパターンで個別に退避する。
   def archive_episode_files(filename)
-    self.class.episode_object_names(filename).each do |object|
+    used_txt_object = filename.sub(/\.mp3\z/, ".used.txt")
+    objects = self.class.episode_object_names(filename) + [self.class.used_news_html_object(used_txt_object)]
+    objects.each do |object|
       gcloud_storage_mv(object)
     rescue StandardError => e
       warn "archive skipped: #{e.message}"
@@ -306,10 +342,20 @@ class Publisher
       content: used_news.strip.empty? ? "" : h(used_news_html(used_news))).chomp
   end
 
-  # used_news を content type="html" 向けの HTML に組み立てる。h() で丸ごとエスケープ
-  # してから URL をリンク化し、最後に改行を <br> に変える（順序が逆だと生成した
-  # <a> タグ自体がエスケープされてしまう）。
+  # used_news を content type="html" 向けの HTML に組み立てる。新フォーマット
+  # （## カテゴリ / ### [タイトル](URL)）は構造化 HTML にし、パースできない旧
+  # フォーマット・崩れは生テキスト整形にフォールバックする。.used.html 用
+  # （upload_used_news_html）とは ok=false 時の扱いが異なる点に注意（feed.xml の
+  # content は空でも許容されるため fallback するが、.used.html は「無ければ JS が
+  # .used.txt にフォールバックする」ため作らない。詳細は CLAUDE.md 参照）。
   def used_news_html(used_news)
+    result = UsedNewsMarkdown.render(used_news)
+    result.ok ? result.html : fallback_used_news_html(used_news)
+  end
+
+  # 生テキスト用フォールバック。h() で丸ごとエスケープしてから URL をリンク化し、
+  # 最後に改行を <br> に変える（順序が逆だと生成した <a> タグ自体がエスケープされる）。
+  def fallback_used_news_html(used_news)
     h(used_news)
       .gsub(%r{https?://[^\s&]+}) { |url| %(<a href="#{url}">#{url}</a>) }
       .gsub("\n", "<br>\n")
