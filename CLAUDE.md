@@ -134,6 +134,16 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
 - `Publisher#run` 中に `gcloud storage` 操作が 1 つでも失敗したら即 abort する。
   公開バケットが index.html/feed.xml/manifest.json/archives.csv/mp3 の間で
   中途半端に不整合な状態のまま残らないようにするため。
+- `Publisher#run` は GCS への書き込みを一切始める前に
+  `UsedNewsFormatter.ensure_valid!` で used_news のフォーマットを確定させる
+  （前掲「used_news の表示フォーマット」節参照）。検証・修復に失敗すればここで
+  abort し、mp3 を含め何もアップロードしない。「Publisher#run 中に 1 つでも
+  失敗したら即 abort する」という上記原則の一部として扱う。
+- `.used.html`（used_news を事前に HTML 化したもの）は `dist/` に実体を持たない
+  GCS 専用の派生物であり、`EPISODE_FILE_EXTENSIONS`（`.mp3`/`.used.txt`/
+  `.transcript.txt` の3つ固定）には含めない。`archive_episode_files` では
+  `.used.html` の退避を個別に fault-tolerant に行う（無ければ mv 失敗を警告に
+  留めて継続する既存パターンを踏襲）。
 - Atom entry の `<id>` はエピソードごとの mp3 URL のままにすること（index.html に
   しない）。`<id>` は RSS リーダー側の新着重複判定キーであり、全エントリを同じ id
   にすると購読者が新着を検知できなくなる。
@@ -177,19 +187,103 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
 - writer ステップ（台本執筆）は意図的に WebFetch を allowedTools から外している。
   既に抽出済みの facts シートに基づいて執筆させ、Web への再アクセスによる
   手戻り・情報の食い違いを防ぐため。
-- `category_details` は「AI への執筆方針の指示」と「used_news の見出し
-  （■ ラベル名）として使う正式なラベル一覧」を兼ねる。`strip_used_preamble` は
-  この「■」見出しが本文の先頭に来る構造に依存しているため、category_details の
-  ラベル文言・見出し規則を変える際は `strip_used_preamble` も合わせて確認すること。
+- `category_details` は「AI への執筆方針の指示」と「used_news のカテゴリ見出し
+  （`## ラベル名`）として使う正式なラベル一覧」を兼ねる。`UsedNewsFormatter.strip_preamble`
+  （`ScriptGenerator` ではなく `UsedNewsFormatter` 側にある。前掲「used_news の
+  表示フォーマット」節参照）はこの「##」見出しが本文の先頭に来る構造に依存しているため、
+  category_details のラベル文言・見出し規則を変える際は合わせて確認すること。
+  （`strip_facts_preamble` も `##` をアンカーに含むが、used 用と facts 用は別モジュール・
+  別ファイルなので取り違えは起きない。）
+- used_news のフォーマット検証・AI修復は ScriptGenerator の責務ではない
+  （`UsedNewsFormatter` 参照）。ScriptGenerator は writer/extractor が書いた
+  used_news をそのまま work/ に残す。
 - AI CLI の出力には、プロンプトで前置き禁止を指示していても、まれに前置き文
   （「整形しました」等の応答）が混入する。`strip_preamble` /
-  `strip_facts_preamble` / `strip_used_preamble` は、いずれもこれを機械的な
-  アンカー探索（挨拶文/見出し等）で除去する対策。
+  `strip_facts_preamble` / `UsedNewsFormatter.strip_preamble` は、いずれもこれを
+  機械的なアンカー探索（挨拶文/見出し等）で除去する対策。
 - RSS ソースの `priority` は選定 AI への判断材料（ヒント）に過ぎず、掲載/除外を
   保証するものではない。
 - フィード取得（`FeedCache#fetch`）が 1 つでも失敗したら実行全体を中断する。
   ニュースが揃わないまま後段の AI 呼び出しに進み、不完全な情報を元にトークンを
   浪費するのを防ぐため。
+
+### used_news の表示フォーマット（Markdown サブセット）
+
+再生ページ（index.html）と feed.xml の「この回で紹介したニュース」欄（used_news）は、
+以下の限定 Markdown サブセットで書き、構造化 HTML に変換して表示する。**この文法の
+唯一の実装は Ruby 側（`lib/internal/used_news_markdown.rb` の `UsedNewsMarkdown`）**。
+JS 側に同じ文法のパーサは存在しない（後述）。パーサ側のコメントはこの節を参照するだけに
+し、文法の説明を各所に散らさない。
+
+- 行単位で解釈する（ブロックレベルのみ。インライン強調・コードは扱わない）。
+
+  | 種別 | マッチ | 変換 |
+  |---|---|---|
+  | カテゴリ見出し | `^##\s+(.+?)\s*$` | `<div class="news-cat">…</div>`（見出しタグにしない） |
+  | 記事タイトル | `^###\s+\[(.+)\]\((\S+)\)\s*$`（`[...]` は貪欲） | `<div class="news-item"><div class="news-title">…</div>`。$1=タイトル/$2=URL |
+  | メタ行 | `^\s*\((.+)\)\s*$` | 直近項目の `<div class="news-meta">(…)</div>` |
+  | 要約行 | 上記いずれにもマッチしない空でない行 | 直近項目の `<p class="news-sum">` |
+  | 空行 | — | 項目区切り（無視） |
+
+- カテゴリ・記事タイトルとも**見出しタグ（h2/h3）を使わず** `<div>` + CSS で表現する。
+  used_news はページ全体の中に埋め込まれるので、`##`/`###` を h タグにするとページの
+  見出しアウトライン（h1 タイトル / h2「この回で紹介したニュース」）に混ざるため。
+- **貪欲マッチの理由**: タイトルに `]` や `)` を含む記事がある（例
+  `GitHub - ayghri/i-have-adhd: Claude Code skill [beta]`）。URL に空白は入らない前提
+  なので、最後の `](URL)` を境界にできる。
+- **エスケープ**: タイトル・要約・メタは HTML エスケープしてから埋め込む。URL は
+  `http/https` で始まる場合のみ `<a>` 化する（`javascript:` 等はリンクにせずプレーン
+  表示。XSS 防止）。
+- **失敗（ok=false）条件**: (a) `##` 見出しが 1 つも無い、(b) `### [...](...)` タイトル行が
+  1 つも無い、(c) 見出しの前に孤立したタイトルがある等の破綻、(d) 例外発生。
+
+#### 表示の仕組み: Ruby が事前 HTML 化する（JS は二重パースしない）
+
+以前は Ruby（feed.xml 用）と JS（index.html 用）の両方に同じ Markdown サブセットの
+パーサを実装していたが、二重実装になるためやめた。現在は **Publisher が publish 時に
+`UsedNewsMarkdown.render` で used_news を HTML 化し、`.used.html` として GCS へ
+事前アップロードする**（`Publisher#upload_used_news_html`）。
+
+- `.used.html` は `UsedNewsMarkdown.render` が `ok` のときだけ作る。`ok=false`
+  （パース不能）のときはアップロード自体をスキップする。
+- 再生ページの JS（`loadNews`）は `.used.html` を fetch し、200 ならそのまま
+  `innerHTML` に差し込むだけで、JS 側にパーサは存在しない。`.used.html` が
+  404・fetch 失敗のときだけ `.used.txt` を fetch し、`<pre>` + URL リンク化
+  （`linkify`）の生テキスト表示にフォールバックする。
+- feed.xml は同じ `UsedNewsMarkdown.render` を `Publisher#used_news_html` 経由で呼ぶ。
+  ただし `ok=false` 時の扱いは `.used.html` 用と異なり、`fallback_used_news_html`
+  （URL リンク化 + `<br>`）で content を埋める（feed の content は空でも許容される
+  ため。`.used.html` 側は「無ければ JS が `.used.txt` にフォールバックする」ため
+  作らない、という判断）。
+- **旧フォーマットとの後方互換**: 移行前の `.used.txt`（`■` 見出し + `・タイトル` +
+  独立 URL 行）は `ok=false` になり、GCS 上にも `.used.html` は存在しない
+  （今回の変更以降に publish された回でしか生成されない）。JS の 404 フォールバックが
+  これを吸収し、GCS に残る過去回は壊れず従来どおり表示される。
+
+#### フォーマット保証は Publisher の責務（ScriptGenerator ではない）
+
+used_news のフォーマットが厳密に正しいかどうかを検証・保証する責務は
+**`ScriptGenerator` ではなく `UsedNewsFormatter`**（`lib/internal/used_news_formatter.rb`）
+にあり、**Publisher が GCS への書き込みを始める前に呼ぶ**（`UsedNewsFormatter.ensure_valid!`）。
+
+- `ScriptGenerator` は「## カテゴリ / ### [タイトル](URL)」形式のそれっぽい
+  Markdown を生成するだけで、前置き除去も含めてフォーマットには一切手を入れない
+  （work/ の中間ファイルには AI が書いた生のテキストがそのまま残る）。
+- `UsedNewsFormatter.ensure_valid!(text)` は、前置き除去 → `UsedNewsMarkdown.render`
+  で検証 → 崩れていれば軽量モデルで修復、の順に整えて返す。修復後もフォーマットが
+  直らなければ **`abort` し、`Publisher#run` 全体を止める**（GCS への書き込みは何も
+  始まっていない状態で止まるよう、`Publisher#run` の先頭でこの検証を呼んでいる。
+  「新規エピソードで壊れた used_news がそのまま公開される」事態を防ぐため。
+  used_news が無い回（空文字列）は早期 return し、AI 呼び出し・abort を行わない）。
+- 修復 AI の呼び出しは `templates/fix_format.prompt.erb`。出力は stdout ではなく
+  tmp file（Write→Read）で受け渡す（stdout は前置き・コードフェンス等のノイズが
+  混入しやすいため）。修復 AI が記事を捏造/欠落させないよう、整形後の URL 集合が
+  入力と一致することを Ruby 側で機械的に強制する（`preserves_urls?`）。
+- AI CLI の実行ロジック（`run_ai_cli` 相当）は `Internal::AiCli`
+  （`lib/internal/ai_cli.rb`）に切り出してあり、`ScriptGenerator`（selector/extractor/
+  writer/format）と `UsedNewsFormatter`（修復）の両方から共有される。非致命化
+  パラメータは `fatal:`（既定 `true`）で統一し、失敗時に abort するかどうかを
+  直接的に表す。
 
 ### UsedNewsHistory（紹介済みニュース履歴）
 
@@ -202,10 +296,11 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   reject ではなくプロンプトベース）。
 - 要約を持たせる理由: 別ソース・別 URL でも「同じ話題」を AI が判断できるよう、used_news
   自体に 1〜2 文の短い要約をタイトル直下に載せる。副次的に再生ページ・feed の「この回で
-  紹介したニュース」欄にも要約が出る。Publisher / index.html は used_news を構造として解釈せず、
-  テキストを整形表示するだけなので（`used_news_html` / `linkify`）、要約を足してもこれらの
-  コード変更は不要。`strip_used_preamble` は先頭の `■` 起点なので、要約を `・タイトル` 配下に
-  置く限り影響しない。
+  紹介したニュース」欄にも要約が出る。表示側（`.used.html` を作る `UsedNewsMarkdown` /
+  feed.xml の `Publisher#used_news_html`）は used_news を Markdown サブセットとして
+  構造化パースする（文法は上の「used_news の表示フォーマット」節参照。要約行は
+  「見出し・メタ・空行のいずれでもない行」として拾う）。`UsedNewsFormatter.strip_preamble`
+  は先頭の `##` 起点なので、要約を `### タイトル` 配下に置く限り前置き除去には影響しない。
 - used_news を書く工程は 2 つある。extractor が facts と一緒に**暫定版**を書き
   （`templates/extractor.prompt.erb`。digest mode の到達点でも履歴の元データを残すため。
   候補として facts 化した全ニュースが対象）、writer 到達時に**同じパス**へ**確定版**
@@ -213,10 +308,15 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   する方が履歴に入る。これにより digest mode 運用でも履歴が溜まる（used_news が全く無い
   digest なら記録するものが無く、`record!` は `File.exist?` ガードでスキップする）。暫定 used は
   履歴用の副産物なので、extractor が書き損ねても digest は止めない（`finalize_optional_used_news`
-  は無ければ何もしない。確定 used を書く writer 側の `rewrite_file` は従来どおり必須で abort する）。
+  は無ければ何もしない）。確定 used を書く writer 側はファイル欠落なら従来どおり abort する
+  （不完全なまま後段へ進ませない）。フォーマット検証・AI 修復は行わない（前掲「used_news の
+  表示フォーマット」節参照。ScriptGenerator は生テキストをそのまま残し、Publisher が
+  公開直前に検証・修復・失敗時 abort を行う）。
 - 履歴は機械パースしない: 用途は selector プロンプトへの丸ごと埋め込みなので、used_news の
-  テキストをそのまま置く。ただし link 行はプロンプトのノイズにしかならないので履歴コピー
-  からは正規表現で除去する（公開用 `dist/*.used.txt` には link を残す）。
+  テキストをそのまま置く。ただし link はプロンプトのノイズにしかならないので履歴コピー時に
+  除去する（`strip_links`）。新フォーマットでは URL がタイトル行 `### [タイトル](URL)` に
+  内包されるので、`### [タイトル](URL)` → `### タイトル` に畳んで URL だけ落とす（移行期に
+  混じりうる旧・独立 URL 行の除去も残す）。公開用 `dist/*.used.txt` には link を残す。
 - 保存場所と clean 非対象: `work/used_news_history/` は feed_cache/・last_fetch.json と同じ
   回をまたぐ永続状態。`ScriptGenerator.work_globs` のホワイトリスト（`news_*.txt` 等）に
   載らないので `clean` で消えない。中間ファイル `news_used_*.txt` は `news_*.txt` グロブで
@@ -236,10 +336,10 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
 
 ### Config
 
-- `ai_agent.effort` は現状 `bin == "claude"` のときだけ
-  `ScriptGenerator#run_ai_cli` が参照する。実装上対応しているのは claude のみだが、
-  将来 effort に対応する別の AI CLI が増えたときに使い回す想定でこのフィールドを
-  用意している。
+- `ai_agent.effort` は現状 `bin == "claude"` のときだけ `Internal::AiCli.run`
+  （`ScriptGenerator#run_ai_cli` はこの薄いラッパー）が参照する。実装上対応している
+  のは claude のみだが、将来 effort に対応する別の AI CLI が増えたときに使い回す
+  想定でこのフィールドを用意している。
 - `Config.validate_gcs!` は `pipeline.mode` に関わらず GCS を使う CLI 操作
   （`--clean` / `--ui-only` / `--clean-archive`）のために独立して存在する。
   mode 別の `validate_for!` では拾えない gcs セクション単体の欠落をここで検出する。
