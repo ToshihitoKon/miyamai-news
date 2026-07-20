@@ -174,6 +174,7 @@
       padding-top: 16px;
     }
     .news h2 { font-size: 12px; font-weight: 600; margin: 0 0 10px; color: var(--moca-deep); }
+    /* 生テキスト用フォールバック（パース失敗時・旧フォーマット回）。 */
     .news pre {
       margin: 0;
       white-space: pre-wrap;
@@ -183,6 +184,29 @@
       line-height: 1.6;
       color: #3a4652;
     }
+    /* 構造化表示（.used.html の innerHTML をそのまま差し込む。Ruby 側
+       UsedNewsMarkdown.render の出力）。カテゴリ・タイトルは見出しタグを使わず
+       div + スタイルで表現し、ページ全体の見出しアウトラインに混ぜない。 */
+    .news-cat {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--moca-deep);
+      margin: 14px 0 6px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    /* 先頭カテゴリの上マージンは詰める（newslist 直下の最初の要素が .news-cat）。 */
+    #newslist > .news-cat:first-child { margin-top: 0; }
+    .news-item { margin: 0 0 12px; }
+    .news-title { font-size: 12px; font-weight: 600; line-height: 1.5; }
+    .news-title a { color: var(--moca-deep); }
+    .news-sum {
+      margin: 2px 0 0;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #3a4652;
+    }
+    .news-meta { margin-top: 2px; font-size: 11px; color: #8a94a0; }
     .news a { color: var(--moca-deep); }
     .transcript {
       margin-top: 20px;
@@ -254,7 +278,7 @@
       </div>
       <div class="news">
         <h2>この回で紹介したニュース</h2>
-        <pre id="newslist">読み込み中…</pre>
+        <div id="newslist"><pre>読み込み中…</pre></div>
       </div>
       <details class="transcript" id="transcript">
         <summary>文字起こしを読む</summary>
@@ -330,16 +354,39 @@
       now.textContent = sel.options[sel.selectedIndex].textContent;
     };
 
-    const usedUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.used.txt');
+    const usedHtmlUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.used.html');
+    const usedTextUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.used.txt');
 
+    // 生テキストを <pre> で表示する（読み込み中・エラー・.used.html 未生成の回の
+    // フォールバック用）。linkify を通すと URL だけリンク化される。
+    const showNewsRaw = (text, { link = false } = {}) => {
+      const pre = document.createElement('pre');
+      if (link) pre.innerHTML = linkify(text); else pre.textContent = text;
+      newslist.replaceChildren(pre);
+    };
+
+    // .used.html（Ruby 側 UsedNewsMarkdown.render が publish 時に事前生成した構造化
+    // HTML）を優先して fetch し、成功すればそのまま innerHTML に差し込む。404・fetch
+    // 失敗（旧フォーマットの回・パース不能だった回は .used.html 自体が存在しない）は
+    // .used.txt を fetch して生テキスト表示(<pre>+linkify)へフォールバックする。
     const loadNews = async (mp3Url) => {
-      newslist.textContent = '読み込み中…';
+      showNewsRaw('読み込み中…');
       try {
-        const res = await fetch(usedUrlFor(mp3Url), { cache: 'no-cache' });
-        if (!res.ok) throw new Error(res.status);
-        newslist.innerHTML = linkify(await res.text());
+        const htmlRes = await fetch(usedHtmlUrlFor(mp3Url), { cache: 'no-cache' });
+        if (htmlRes.ok) {
+          newslist.innerHTML = await htmlRes.text();
+          return;
+        }
       } catch (e) {
-        newslist.textContent = 'ニュース一覧はありません';
+        // .used.html の fetch 自体が失敗した場合も .used.txt へフォールバックする。
+      }
+
+      try {
+        const res = await fetch(usedTextUrlFor(mp3Url), { cache: 'no-cache' });
+        if (!res.ok) throw new Error(res.status);
+        showNewsRaw(await res.text(), { link: true });
+      } catch (e) {
+        showNewsRaw('ニュース一覧はありません');
       }
     };
 
