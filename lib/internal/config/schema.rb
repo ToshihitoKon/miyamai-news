@@ -55,6 +55,10 @@ module Internal
       # effort は bin == "claude" のとき run_ai_cli の effort_override に渡す。
       attribute? :used_fix_model, Types::Strict::String
       attribute? :used_fix_effort, Types::Strict::String
+      # フォーマット修復の最大リトライ回数。0 で修復自体を無効化する
+      # （UsedNewsFormatter.repair は Integer#times で回すため、0 なら AI を
+      # 一度も呼ばずに諦める）。
+      attribute? :used_fix_max_retries, Types::Strict::Integer.default(2)
 
       # role別モデルが未指定なら model にフォールバックする
       # （config.sample.yaml の ai_agent セクションのコメント参照）。

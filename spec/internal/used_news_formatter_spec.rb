@@ -54,6 +54,13 @@ RSpec.describe UsedNewsFormatter do
 
       expect { described_class.ensure_valid!(broken_used) }.to raise_error(SystemExit)
     end
+
+    it "does not call the AI at all when used_fix_max_retries is 0 (disabled)" do
+      allow(Config.ai_agent).to receive(:used_fix_max_retries).and_return(0)
+      expect(described_class).not_to receive(:run_fix_cli)
+
+      expect { described_class.ensure_valid!(broken_used) }.to raise_error(SystemExit)
+    end
   end
 
   describe ".run_fix_cli (tmp file integration)" do

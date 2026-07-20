@@ -2,6 +2,7 @@
 
 require "set"
 require "tmpdir"
+require_relative "config"
 require_relative "ai_cli"
 require_relative "template_renderer"
 require_relative "used_news_markdown"
@@ -27,8 +28,6 @@ module UsedNewsFormatter
     ## <次のカテゴリ名>
     ### ...
   SPEC
-
-  MAX_REPAIR_RETRIES = 2
 
   # fix_format.prompt.erb は format_spec/broken_content/output_path のローカル変数
   # のみを参照し、ScriptGenerator/Publisher いずれのインスタンスメソッドにも依存しない
@@ -64,7 +63,7 @@ module UsedNewsFormatter
 
   def repair(content)
     candidate = content
-    MAX_REPAIR_RETRIES.times do
+    ::Config.ai_agent.used_fix_max_retries.times do
       fixed = run_fix_cli(candidate)
       return nil unless fixed
 

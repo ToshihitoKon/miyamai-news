@@ -25,6 +25,7 @@ ai_agent:
   bin: agy
   model: 'Gemini 3.5 Flash (High)'
   used_fix_model: 'Gemini 3.5 Flash (Low)'
+  used_fix_max_retries: 2
 
 program_details:
   total_news_count: 10

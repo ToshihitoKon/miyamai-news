@@ -47,6 +47,8 @@ ai_agent:
   # used_news のフォーマット崩れをパース失敗時にだけ整形し直す軽量モデル。
   # 通常は呼ばれない（未指定時は上記 model が使われます）。
   used_fix_model: 'Gemini 3.5 Flash (Low)'
+  # フォーマット修復の最大リトライ回数（未指定時は 2）。0 で修復自体を無効化します。
+  used_fix_max_retries: 2
 
 # Claude Code CLI (claude) を使う場合の設定例。
 # ai_agent:
