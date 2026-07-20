@@ -51,11 +51,17 @@
       padding: 32px 0;
     }
     .card {
-      width: min(520px, 92vw);
+      width: min(800px, 92vw);
       padding: 28px;
       border-radius: 14px;
       background: #ffffff;
       box-shadow: 0 8px 32px rgba(95, 125, 158, .25);
+    }
+    /* カバー画像〜プレーヤーだけをカード内で中央寄せの狭い幅に保つ。
+       ニュース一覧・文字起こしはこの外側に置き、カードの全幅を使わせる。 */
+    .player-wrap {
+      max-width: 520px;
+      margin: 0 auto;
     }
     .art {
       display: block;
@@ -257,23 +263,25 @@
 <body>
   <main class="content">
     <div class="card">
-      <img class="art" id="artwork" src="<%= h(cover_url) %>" alt="宮舞モカ">
-      <h1><%= h(og_title) %></h1>
-      <p class="sub" id="nowplaying"><%= h(date_with_slot(current[0], current[1])) %></p>
-      <select id="archive" aria-label="アーカイブ選択">
-        <%= options %>
-      </select>
-      <audio id="player" preload="metadata" src="<%= h(current_url) %>"></audio>
-      <div class="player">
-        <div class="rowtop">
-          <input type="range" class="seek" id="seek" min="0" max="100" value="0" step="any" aria-label="シーク位置">
-        </div>
-        <div class="rowbot">
-          <button type="button" class="pbtn play" id="playpause" aria-label="再生／一時停止"></button>
-          <span class="time" id="time">0:00 / 0:00</span>
-          <span class="spacer"></span>
-          <button type="button" class="pbtn ghost" id="mute" aria-label="ミュート"></button>
-          <button type="button" class="modebtn" id="playmode" aria-label="再生モード切り替え"></button>
+      <div class="player-wrap">
+        <img class="art" id="artwork" src="<%= h(cover_url) %>" alt="宮舞モカ">
+        <h1><%= h(og_title) %></h1>
+        <p class="sub" id="nowplaying"><%= h(date_with_slot(current[0], current[1])) %></p>
+        <select id="archive" aria-label="アーカイブ選択">
+          <%= options %>
+        </select>
+        <audio id="player" preload="metadata" src="<%= h(current_url) %>"></audio>
+        <div class="player">
+          <div class="rowtop">
+            <input type="range" class="seek" id="seek" min="0" max="100" value="0" step="any" aria-label="シーク位置">
+          </div>
+          <div class="rowbot">
+            <button type="button" class="pbtn play" id="playpause" aria-label="再生／一時停止"></button>
+            <span class="time" id="time">0:00 / 0:00</span>
+            <span class="spacer"></span>
+            <button type="button" class="pbtn ghost" id="mute" aria-label="ミュート"></button>
+            <button type="button" class="modebtn" id="playmode" aria-label="再生モード切り替え"></button>
+          </div>
         </div>
       </div>
       <div class="news">
