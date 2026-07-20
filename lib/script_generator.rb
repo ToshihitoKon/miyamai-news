@@ -1,15 +1,14 @@
 # frozen_string_literal: true
 
 require "time"
-require "open3"
 require "fileutils"
-require "tty-spinner"
 require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/hatena_bookmarks"
 require_relative "feed_cache"
 require_relative "internal/last_fetch_store"
 require_relative "internal/used_news_history"
+require_relative "internal/ai_cli"
 
 class ScriptGenerator
   # 始めの挨拶。前置き除去の目印にも使う。
@@ -203,11 +202,12 @@ class ScriptGenerator
     finalize_optional_used_news
   end
 
-  # extractor が書いた暫定 used_news があれば後処理して整える。無ければ何もしない。
+  # extractor が書いた暫定 used_news があれば知らせる。無ければ何もしない。
+  # フォーマットの検証・整形はしない（ScriptGenerator の責務ではない。Publisher が
+  # publish 時に UsedNewsFormatter 経由で保証する。CLAUDE.md 参照）。
   def finalize_optional_used_news
     return unless File.exist?(used_news_path)
 
-    File.write(used_news_path, strip_used_preamble(File.read(used_news_path)))
     warn "used news (provisional): #{used_news_path}"
   end
 
@@ -225,7 +225,9 @@ class ScriptGenerator
       writer_prompt(selected_news, news_facts), "--allowedTools", "Read Write", model_override: writer_model)
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
-    rewrite_file(used_news_path) { |text| strip_used_preamble(text) }
+    # used_news は writer が書いていなければ止める（不完全なまま後段へ進ませない）。
+    # フォーマットの検証・整形はしない（Publisher が publish 時に保証する。CLAUDE.md 参照）。
+    abort "expected file not written: #{used_news_path}" unless File.exist?(used_news_path)
     warn "script: #{script_path}"
     warn "used news: #{used_news_path}"
   end
@@ -260,17 +262,6 @@ class ScriptGenerator
     abort "expected file not written: #{path}" unless File.exist?(path)
 
     File.write(path, yield(File.read(path)))
-  end
-
-  # 一覧本体より前の前置きを機械的に取り除く。本体は「■ カテゴリ名」見出しから
-  # 始まる構造（category_details 由来）なので、最初の「■」行を起点とみなす。
-  def strip_used_preamble(used)
-    lines = used.lines
-    start = lines.each_index.find { |i| lines[i].strip.start_with?("■") }
-    # 想定した構造が見つからなければそのまま返して人間が気づけるようにする
-    return used unless start
-
-    "#{lines[start..].join.strip}\n"
   end
 
   # --- ニュース収集 ---
@@ -377,56 +368,13 @@ class ScriptGenerator
   end
 
   # --- AI CLI 実行 ---
+  # 実行ロジック本体は Internal::AiCli（インスタンス状態に依存しない共通モジュール）に
+  # 集約している。ここでは既存の呼び出し元（selector/extractor/writer/format）を
+  # 書き換えずに済むよう薄いラッパーを残す。
 
-  def run_ai_cli(spinner_message, prompt, *claude_extra_args, model_override: nil)
-    bin = Config.ai_agent.bin
-    model = model_override || Config.ai_agent.model
+  def run_ai_cli(...) = Internal::AiCli.run(...)
 
-    if bin == "claude"
-      effort = Config.ai_agent.effort
-      # effort 未設定なら --effort 自体を渡さず、claude CLI 側の既定に任せる。
-      effort_args = effort ? ["--effort", effort] : []
-      run_command_with_spinner(
-        "#{spinner_message} [#{bin}]",
-        "AI CLI failed",
-        bin, "-p", "--model", model, *effort_args,
-        *claude_extra_args,
-        stdin_data: prompt
-      )
-    else
-      run_command_with_spinner(
-        "#{spinner_message} [#{bin}]",
-        "AI CLI failed",
-        bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt
-      )
-    end
-  end
-
-  def get_model_for_role(role)
-    Config.ai_agent.model_for(role)
-  end
-
-  def run_command_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil)
-    spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
-    spinner.auto_spin
-
-    result = nil
-    worker = Thread.new do
-      opts = stdin_data ? { stdin_data: stdin_data } : {}
-      result = Open3.capture3(*cmd, **opts)
-    end
-    worker.join
-
-    stdout, stderr, status = result
-    unless status.success?
-      spinner.error("(failed)")
-      warn stderr
-      abort "#{error_message} (exit #{status.exitstatus})"
-    end
-
-    spinner.success("(done)")
-    stdout
-  end
+  def get_model_for_role(role) = Internal::AiCli.model_for(role)
 
   # 始めの挨拶より前に残った前置き（「整形しました」等）を削ぎ落とす。
   # プロンプトで前置き禁止を指示しても稀に混入するため、機械的に確実に落とす。

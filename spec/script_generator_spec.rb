@@ -67,7 +67,7 @@ RSpec.describe ScriptGenerator do
           when 2
             File.write(generator.send(:news_facts_path), "## Title A\n概要です。\n")
             # extractor は facts と一緒に暫定 used_news も書く。
-            File.write(generator.send(:used_news_path), "■ 生成AI\n・Title A\n   要約です。\n   https://example.com/a\n   (2026-07-14 / SourceA)\n")
+            File.write(generator.send(:used_news_path), "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n")
           end
           ["", "", success_status]
         end
@@ -148,7 +148,7 @@ RSpec.describe ScriptGenerator do
               File.write(generator.send(:news_facts_path), "## Title A\n概要です。\n")
             when 3
               File.write(generator.send(:script_path), "宮舞モカです。こんにちは、今日のニュースです。\n")
-              File.write(generator.send(:used_news_path), "1. Title A\nhttps://example.com/a\n")
+              File.write(generator.send(:used_news_path), "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n")
             when 4
               File.write(generator.send(:tts_script_path), "宮舞モカです。こんにちは、今日のニュースです（整形済み）。\n")
             end

@@ -1,0 +1,72 @@
+# frozen_string_literal: true
+
+require "open3"
+require "tty-spinner"
+require_relative "config"
+
+# claude/agy 等の AI CLI をサブプロセスとして実行する共通ロジック。ScriptGenerator
+# （selector/extractor/writer/format）と UsedNewsFormatter（used_fix）の双方が使う。
+# Config.ai_agent（グローバル設定）と引数だけで完結し、呼び出し元のインスタンス状態は
+# 参照しない。
+module Internal
+  module AiCli
+    module_function
+
+    # effort_override は claude 用の effort を明示的に差し替える（nil なら
+    # Config.ai_agent.effort を使う）。fatal: false のとき、失敗しても abort せず
+    # nil を返す（used_news 整形修復のように失敗しても実行全体を止めたくない用途向け）。
+    def run(spinner_message, prompt, *claude_extra_args, model_override: nil,
+            effort_override: :default, fatal: true)
+      bin = ::Config.ai_agent.bin
+      model = model_override || ::Config.ai_agent.model
+
+      if bin == "claude"
+        effort = effort_override == :default ? ::Config.ai_agent.effort : effort_override
+        # effort 未設定なら --effort 自体を渡さず、claude CLI 側の既定に任せる。
+        effort_args = effort ? ["--effort", effort] : []
+        run_with_spinner(
+          "#{spinner_message} [#{bin}]",
+          "AI CLI failed",
+          bin, "-p", "--model", model, *effort_args,
+          *claude_extra_args,
+          stdin_data: prompt, fatal: fatal
+        )
+      else
+        run_with_spinner(
+          "#{spinner_message} [#{bin}]",
+          "AI CLI failed",
+          bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt,
+          fatal: fatal
+        )
+      end
+    end
+
+    def model_for(role) = ::Config.ai_agent.model_for(role)
+
+    # fatal: false のとき、コマンドが失敗しても abort せず nil を返す（best-effort 用途）。
+    def run_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil, fatal: true)
+      spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
+      spinner.auto_spin
+
+      result = nil
+      worker = Thread.new do
+        opts = stdin_data ? { stdin_data: stdin_data } : {}
+        result = Open3.capture3(*cmd, **opts)
+      end
+      worker.join
+
+      stdout, stderr, status = result
+      unless status.success?
+        spinner.error("(failed)")
+        warn stderr
+        return nil unless fatal
+
+        abort "#{error_message} (exit #{status.exitstatus})"
+      end
+
+      spinner.success("(done)")
+      stdout
+    end
+    private_class_method :run_with_spinner
+  end
+end

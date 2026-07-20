@@ -51,6 +51,10 @@ module Internal
       attribute? :extractor_model, Types::Strict::String
       attribute? :writer_model, Types::Strict::String
       attribute? :formatter_model, Types::Strict::String
+      # used_news のフォーマット修復専用。パース失敗時のみ呼ばれる軽量モデル。
+      # effort は bin == "claude" のとき run_ai_cli の effort_override に渡す。
+      attribute? :used_fix_model, Types::Strict::String
+      attribute? :used_fix_effort, Types::Strict::String
 
       # role別モデルが未指定なら model にフォールバックする
       # （config.sample.yaml の ai_agent セクションのコメント参照）。
