@@ -24,6 +24,7 @@ voicepeak:
 ai_agent:
   bin: agy
   model: 'Gemini 3.5 Flash (High)'
+  used_fix_model: 'Gemini 3.5 Flash (Low)'
 
 program_details:
   total_news_count: 10
