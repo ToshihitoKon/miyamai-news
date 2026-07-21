@@ -82,7 +82,8 @@ program_details:
 
 # RSS 収集まわり。
 collect:
-  # 何時間前までのニュースを取得するか。last_fetched_at から現在時刻の短い方が採用される。
+  # 何時間前までのニュースを取得するか。confirmed_at が無い初回のみ使われる
+  # フォールバック値（詳細は CLAUDE.md「LastFetchStore / 収集 window」参照）。
   lookback_hours: 24
   # フィードキャッシュが entry を保持する日数。
   retention_days: 30

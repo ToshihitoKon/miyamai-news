@@ -121,9 +121,7 @@ class VoiceSynthesizer
     stdin.close
     pgid = Process.getpgid(wait_thr.pid)
 
-    # stdout/stderr を join 前に別スレッドで読み進める。読まずに join を待つと、
-    # 出力がパイプバッファ（約64KB）を超えた際に子プロセスの write がブロックし、
-    # 正常動作中でも timeout_sec 超過による偽ハング判定を招くため。
+    # stdout/stderr を join 前に別スレッドで読み進める（偽ハング対策、詳細は CLAUDE.md 参照）。
     stdout_reader = Thread.new { stdout.read }
     stderr_reader = Thread.new { stderr.read }
 
