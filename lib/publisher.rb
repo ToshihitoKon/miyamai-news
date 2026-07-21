@@ -376,11 +376,12 @@ class Publisher
 
   # Atom の <updated> 用 RFC3339 日時。updated_at があればそれを使い、無い過去行は
   # date の 00:00:00 UTC にフォールバックする（Date#to_time はローカルタイム扱いに
-  # なりずれるため、文字列から直接組み立てる）。
+  # なりずれるため、文字列から直接組み立てる）。date_str は呼び出し元で既に
+  # "YYYY-MM-DD" 形式に揃えてある（archives.csv の date 列 / date_for の戻り値）。
   def feed_datetime(date_str, updated_at = nil)
     return updated_at if updated_at && !updated_at.to_s.strip.empty?
 
-    "#{Date.parse(date_str).strftime('%Y-%m-%d')}T00:00:00Z"
+    "#{date_str}T00:00:00Z"
   end
 
   def now_rfc3339

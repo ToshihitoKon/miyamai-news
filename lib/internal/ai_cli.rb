@@ -48,14 +48,8 @@ module Internal
       spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
       spinner.auto_spin
 
-      result = nil
-      worker = Thread.new do
-        opts = stdin_data ? { stdin_data: stdin_data } : {}
-        result = Open3.capture3(*cmd, **opts)
-      end
-      worker.join
-
-      stdout, stderr, status = result
+      opts = stdin_data ? { stdin_data: stdin_data } : {}
+      stdout, stderr, status = Open3.capture3(*cmd, **opts)
       unless status.success?
         spinner.error("(failed)")
         warn stderr

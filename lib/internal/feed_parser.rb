@@ -13,7 +13,9 @@ module Internal
         return [] unless feed
 
         feed.items.filter_map do |item|
-          title = item.respond_to?(:title) && item.title or next
+          next unless item.respond_to?(:title) && item.title
+
+          title = item.title
           title = title.respond_to?(:content) ? title.content : title.to_s
           link  = item.link.respond_to?(:href) ? item.link.href : item.link.to_s
 
