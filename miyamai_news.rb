@@ -84,7 +84,6 @@ end
 
 require_relative "lib/episode"
 require_relative "lib/internal/last_fetch_store"
-require_relative "lib/internal/used_news_history"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"
 require_relative "lib/audio_mixer"
@@ -108,6 +107,14 @@ def ensure_mode_allows!(required_mode)
   return if Config::MODE_ORDER.fetch(Config.mode) >= Config::MODE_ORDER.fetch(required_mode)
 
   abort "this flag requires pipeline.mode >= #{required_mode}, but pipeline.mode=#{Config.mode}"
+end
+
+# 新規収集が起きていれば収集windowを pending 化する（詳細は CLAUDE.md「LastFetchStore /
+# 収集 window」参照）。
+def mark_pending_if_fetched!(generator)
+  return unless generator.fetched_news?
+
+  LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor, episode_key: generator.episode_key)
 end
 
 def main
@@ -151,7 +158,7 @@ def main
     # publish_only は新規 fetch をせず既存成果物を公開するだけなので、収集 window を
     # 新しい時刻に進めてはいけない（fetch していない時刻で確定すると取りこぼす）。
     # pending が残っていれば公開＝確定として昇格させ、無ければ何もしない。
-    record_used_news_history(LastFetchStore.confirm!(work_dir: WORK_DIR))
+    ScriptGenerator.record_used_news_history!(work_dir: WORK_DIR, episode_key: LastFetchStore.confirm!(work_dir: WORK_DIR))
     return
   end
 
@@ -164,14 +171,14 @@ def main
   if args[:digest_only]
     ensure_mode_allows!("digest")
     run_digest(generator)
-    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor, episode_key: generator.episode_key) if generator.fetched_news?
+    mark_pending_if_fetched!(generator)
     return
   end
 
   if args[:script_only]
     ensure_mode_allows!("synthesize")
     run_script(generator)
-    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor, episode_key: generator.episode_key) if generator.fetched_news?
+    mark_pending_if_fetched!(generator)
     return
   end
 
@@ -187,27 +194,21 @@ def main
   run_digest(generator)
   run_synthesize(episode, generator) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
 
-  # publish まで到達するときだけ「公開＝確定」を即座に反映する。到達しないときは、
-  # 新規収集が起きていれば pending 化するだけに留める（人間の確認を待つ）。
-  # 収集 window の起点には、実行完了時刻(Time.now)ではなく generator が FeedCache#fetch に
-  # 渡した収集基準時刻(collect_since_anchor)を使う。新規 entry の seen_at はこの時刻で
-  # 記録されるので、次回はここを since に続きから拾える。
-  # publish 到達でも、新規 fetch をせず既存 news を再利用しただけなら収集 window を
-  # 新しい時刻へ進めてはいけない（進めると前回確定〜今回の間に登場した記事を取りこぼす）。
-  # その場合は publish_only と同じく pending が残っていれば昇格するだけに留める。
+  # publish 到達時のみ「公開＝確定」を即座に反映し、それ以外は pending 化に留める
+  # （収集 window の確定タイミングの詳細は CLAUDE.md「LastFetchStore / 収集 window」参照）。
   if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
     run_publish(episode)
     if generator.fetched_news?
       LastFetchStore.confirm_immediately!(work_dir: WORK_DIR, at: generator.collect_since_anchor)
       # 公開＝確定した今回の回を紹介済みニュース履歴へ追記する（confirm_immediately! は
       # pending を経由しないので episode_key を返さない。今回の episode から直接渡す）。
-      record_used_news_history(generator.episode_key)
+      ScriptGenerator.record_used_news_history!(work_dir: WORK_DIR, episode_key: generator.episode_key)
     else
       # 既存 news の再利用でも、pending が残っていれば昇格した回を履歴へ追記する。
-      record_used_news_history(LastFetchStore.confirm!(work_dir: WORK_DIR))
+      ScriptGenerator.record_used_news_history!(work_dir: WORK_DIR, episode_key: LastFetchStore.confirm!(work_dir: WORK_DIR))
     end
-  elsif generator.fetched_news?
-    LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor, episode_key: generator.episode_key)
+  else
+    mark_pending_if_fetched!(generator)
   end
 end
 
@@ -220,22 +221,8 @@ def run_confirm_fetch
     return
   end
 
-  record_used_news_history(LastFetchStore.confirm!(work_dir: WORK_DIR))
+  ScriptGenerator.record_used_news_history!(work_dir: WORK_DIR, episode_key: LastFetchStore.confirm!(work_dir: WORK_DIR))
   warn "confirmed fetch window: #{pending}"
-end
-
-# episode_key の回の used_news を紹介済みニュース履歴へ追記する（収集window の confirm 時に
-# 呼ぶ）。ScriptGenerator インスタンスを持たない経路（publish_only / confirm_fetch）でも
-# episode_key さえあれば同じ命名規則で used ファイルを引ける。episode_key が nil（confirm
-# していない）なら何もしない。詳細は CLAUDE.md 参照。
-def record_used_news_history(episode_key)
-  return unless episode_key
-
-  UsedNewsHistory.record!(
-    work_dir: WORK_DIR, episode_key: episode_key,
-    used_news_path: ScriptGenerator.used_news_path(WORK_DIR, episode_key),
-    keep_episodes: Config.collect.used_news_history_episodes
-  )
 end
 
 # 直前の人間操作（確定・pending破棄）を 1 段巻き戻す独立コマンド。間違って確定した、

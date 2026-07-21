@@ -63,9 +63,6 @@ class FeedCache
     select_since_for(cache["entries"], entries, since)
   end
 
-  # entry の同一性キー（link）。呼び出し側が used 判定などで同じキーを使えるよう公開する。
-  def self.key(entry) = entry[:link]
-
   private
 
   # 最終 fetch から skip_window_sec 以内なら true（スキップの意味づけは CLAUDE.md 参照）。

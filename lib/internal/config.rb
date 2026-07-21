@@ -5,7 +5,7 @@ require_relative "config/schema"
 
 # config.yaml を dry-struct で型付き構造体（AppConfig）にロードし、
 # セクション名のメソッド（例: Config.gcs.bucket）で設定値を引くローダー。
-# 環境依存値をここに集約し、実体の config.yaml は git 管理外に置く（セットアップは README 参照）。
+# 環境依存値をここに集約する（セットアップは README 参照）。
 module Config
   # config.yaml はプロジェクトルート（lib/internal/ の二つ上）に置く。
   ROOT_DIR     = File.expand_path("../..", __dir__)

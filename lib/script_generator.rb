@@ -32,6 +32,20 @@ class ScriptGenerator
   # からも同じ命名でこのファイルを引けるようにする。
   def self.used_news_path(work_dir, episode_key) = File.join(work_dir, "news_used_#{episode_key}.txt")
 
+  # episode_key の回の used_news を紹介済みニュース履歴へ追記する（収集window の confirm
+  # 時に呼ぶ）。ScriptGenerator インスタンスを持たない経路（publish_only / confirm_fetch）
+  # でも episode_key さえあれば同じ命名規則で used ファイルを引ける。episode_key が nil
+  # （confirm していない）なら何もしない。詳細は CLAUDE.md 参照。
+  def self.record_used_news_history!(work_dir:, episode_key:)
+    return unless episode_key
+
+    UsedNewsHistory.record!(
+      work_dir: work_dir, episode_key: episode_key,
+      used_news_path: used_news_path(work_dir, episode_key),
+      keep_episodes: Config.collect.used_news_history_episodes
+    )
+  end
+
   # @param work_dir [String] 中間ファイルの置き場
   # @param episode [Episode] 番組コンテキスト（実行時刻・日付・slot）
   # @param auto_confirm [Boolean] 前回の未確認収集windowを対話せず自動確定するか
@@ -82,9 +96,6 @@ class ScriptGenerator
   # --script-only の確認・手直し対象。
   def script_file = script_path
 
-  # 音声合成に渡す整形済み台本。
-  def tts_script_file = tts_script_path
-
   # 成果物として書き出す used_news。
   def used_news_file = used_news_path
 
@@ -104,13 +115,7 @@ class ScriptGenerator
   # episode_key の回の used_news を紹介済みニュース履歴へ追記する（収集window の confirm
   # 時に呼ぶ）。episode_key が nil（confirm していない）なら何もしない。詳細は CLAUDE.md 参照。
   def record_used_news_history!(episode_key)
-    return unless episode_key
-
-    UsedNewsHistory.record!(
-      work_dir: @work_dir, episode_key: episode_key,
-      used_news_path: self.class.used_news_path(@work_dir, episode_key),
-      keep_episodes: used_news_history_episodes
-    )
+    self.class.record_used_news_history!(work_dir: @work_dir, episode_key: episode_key)
   end
 
   private
