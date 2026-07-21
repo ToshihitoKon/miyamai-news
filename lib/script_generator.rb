@@ -249,14 +249,22 @@ class ScriptGenerator
     warn "tts script: #{tts_script_path}"
   end
 
-  def strip_facts_preamble(text)
-    lines = text.lines
-    start = lines.each_index.find do |i|
-      lines[i].strip.start_with?("##", "---", "#")
-    end
-    return text.strip unless start
+  # AI 出力の前置き（「整形しました」等）を、本体の開始位置（ブロックが返す文字列
+  # index）を境に切り落とす。開始位置が見つからなければ原文をそのまま返す
+  # （前置き禁止を指示しても稀に混入するため、機械的に確実に落とす。詳細は CLAUDE.md 参照）。
+  def strip_preamble_before(text)
+    idx = yield(text)
+    return text unless idx
 
-    "#{lines[start..].join.strip}\n"
+    "#{text[idx..].strip}\n"
+  end
+
+  def strip_facts_preamble(text)
+    strip_preamble_before(text) do |t|
+      lines = t.lines
+      start = lines.each_index.find { |i| lines[i].strip.start_with?("##", "---", "#") }
+      start && lines[...start].join.length
+    end
   end
 
   # Claude が Write で書いたファイルを読み直し、後処理をかけて上書きする。
@@ -370,14 +378,9 @@ class ScriptGenerator
     end
   end
 
-  # 始めの挨拶より前に残った前置き（「整形しました」等）を削ぎ落とす。
-  # プロンプトで前置き禁止を指示しても稀に混入するため、機械的に確実に落とす。
+  # 始めの挨拶(OPENING_GREETING)を本体の開始位置とみなして前置きを削ぎ落とす。
   def strip_preamble(script)
-    idx = script.index(OPENING_GREETING)
-    # 挨拶が見つからなければ想定外なので、そのまま返して人間が気づけるようにする
-    return script unless idx
-
-    "#{script[idx..].strip}\n"
+    strip_preamble_before(script) { |text| text.index(OPENING_GREETING) }
   end
 
   # --- プロンプト ---
