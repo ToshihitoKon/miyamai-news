@@ -90,6 +90,8 @@ rss_feed_sources:
   - name: "Google AI Blog"
     url: "https://blog.google/innovation-and-ai/technology/ai/rss/"
     priority: high
+  - name: "Simon Willison's Weblog"
+    url: "https://simonwillison.net/atom/everything/"
 
   # --- AIエージェント・AIコーディングツール ---
   - name: "Hacker News (agents)"
@@ -100,8 +102,12 @@ rss_feed_sources:
   - name: "Cursor Changelog"
     url: "https://cursor.com/changelog/rss.xml"
     priority: high
-  - name: "Simon Willison's Weblog"
-    url: "https://simonwillison.net/atom/everything/"
+  - name: "OpenAI Codex CLI"
+    url: "https://github.com/openai/codex/releases.atom"
+    priority: high
+  - name: "Google Antigravity CLI"
+    url: "https://github.com/google-antigravity/antigravity-cli/releases.atom"
+    priority: high
 
   # --- セキュリティ ---
   - name: "JPCERT/CC"
@@ -143,8 +149,20 @@ rss_feed_sources:
   - name: "Qiita 人気記事"
     url: "https://qiita.com/popular-items/feed.atom"
     priority: low
-  - name: "Zenn 新着"
+  - name: "Zenn (new)"
     url: "https://zenn.dev/feed"
+    priority: low
+  - name: "Zenn topic:AI"
+    url: "https://zenn.dev/topics/ai/feed"
+    priority: low
+  - name: "Zenn topic:生成AI"
+    url: "https://zenn.dev/topics/%E7%94%9F%E6%88%90ai/feed"
+    priority: low
+  - name: "Zenn topic:security"
+    url: "https://zenn.dev/topics/security/feed"
+    priority: low
+  - name: "Zenn topic:agent"
+    url: "https://zenn.dev/topics/agent"
     priority: low
 
 mixer:
