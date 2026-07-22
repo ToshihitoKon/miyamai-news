@@ -23,12 +23,17 @@ class ScriptGenerator
 
   def self.used_news_path(work_dir, episode_key) = File.join(work_dir, "news_used_#{episode_key}.txt")
 
+  def self.provisional_used_news_path(work_dir, episode_key) = File.join(work_dir, "news_used_provisional_#{episode_key}.txt")
+
   def self.record_used_news_history!(work_dir:, episode_key:)
     return unless episode_key
 
+    path = used_news_path(work_dir, episode_key)
+    path = provisional_used_news_path(work_dir, episode_key) unless File.exist?(path)
+
     UsedNewsHistory.record!(
       work_dir: work_dir, episode_key: episode_key,
-      used_news_path: used_news_path(work_dir, episode_key),
+      used_news_path: path,
       keep_episodes: Config.collect.used_news_history_episodes
     )
   end
@@ -108,6 +113,7 @@ class ScriptGenerator
   def script_path      = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
   def tts_script_path  = File.join(@work_dir, "tts_script_#{@date_tag}_#{@slot}.txt")
   def used_news_path   = self.class.used_news_path(@work_dir, episode_key)
+  def provisional_used_news_path = self.class.provisional_used_news_path(@work_dir, episode_key)
 
   def digest_news
     load_or_collect_news
@@ -146,9 +152,9 @@ class ScriptGenerator
   end
 
   def finalize_optional_used_news
-    return unless File.exist?(used_news_path)
+    return unless File.exist?(provisional_used_news_path)
 
-    warn "used news (provisional): #{used_news_path}"
+    warn "used news (provisional): #{provisional_used_news_path}"
   end
 
   def write_script_and_used(selected_news)
@@ -324,7 +330,7 @@ class ScriptGenerator
       category_details:,
       total_news_count:,
       news_facts_path: File.expand_path(news_facts_path),
-      used_news_path: File.expand_path(used_news_path))
+      used_news_path: File.expand_path(provisional_used_news_path))
   end
 
   # ライター用タスク。facts と選定済みニュースを差し込み、台本(script)と used の
