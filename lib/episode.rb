@@ -13,7 +13,8 @@ require_relative "slot"
 #   slot: 時間帯 slot（morning/afternoon/evening/midnight）。
 #
 # now と date は 0:00-4:59 の実行でズレる（Slot.broadcast_date が前日 midnight 扱いに
-# して date を1日戻すため）。
+# して date を1日戻すため）。また --date で date を明示上書きする場合も、now は
+# 呼び出し側が常に実時刻を渡す契約になっている（詳細は CLAUDE.md 参照）。
 class Episode
   attr_reader :now, :date, :slot
 

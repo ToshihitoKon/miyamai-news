@@ -147,8 +147,9 @@ def main
   end
 
   # 番組コンテキスト（日付・slot）は実行時刻から Episode が導く。--date/--slot の明示
-  # 指定があればそれを尊重する（Episode 側で自動判定を上書き）。
-  episode = Episode.new(now: args[:date] || Time.now, date: args[:date]&.to_date, slot: args[:slot])
+  # 指定があればそれを尊重する（Episode 側で自動判定を上書き）。ただし収集基準時刻
+  # （now）は --date の影響を受けず常に実時刻を渡す（詳細は CLAUDE.md 参照）。
+  episode = Episode.new(now: Time.now, date: args[:date]&.to_date, slot: args[:slot])
 
   FileUtils.mkdir_p(WORK_DIR)
   FileUtils.mkdir_p(DIST_DIR)
