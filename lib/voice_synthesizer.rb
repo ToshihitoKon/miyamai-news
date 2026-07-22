@@ -5,6 +5,7 @@ require "tempfile"
 require "fileutils"
 require_relative "internal/config"
 require_relative "internal/command_error"
+require_relative "internal/episode_logger"
 
 class VoiceSynthesizer
   NARRATOR = "Miyamai Moca"
@@ -105,6 +106,7 @@ class VoiceSynthesizer
 
       wait = retry_base_sec * (2**(attempt - 1))
       warn "    synthesis failed (attempt #{attempt}/#{max_retries}): #{e.message} / retry in #{wait}s"
+      Internal::EpisodeLogger.record("voicepeak_chunk", attempt: attempt, error: e.message, retry_in_sec: wait)
       sleep wait
       retry
     end
@@ -113,6 +115,8 @@ class VoiceSynthesizer
   # VOICEPEAK を1回起動してWAVを生成する。timeout_sec 超過はハングとみなし
   # プロセスグループごと kill して RuntimeError を投げる（呼び出し元がリトライする）。
   def run_voicepeak(text, out_path)
+    start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
     # 新しいプロセスグループで起動し、ハング時に子孫ごとまとめて kill できるようにする。
     stdin, stdout, stderr, wait_thr = Open3.popen3(
       voicepeak_bin, "--narrator", NARRATOR, "--say", text, "--out", out_path,
@@ -127,11 +131,18 @@ class VoiceSynthesizer
 
     unless wait_thr.join(timeout_sec)
       kill_process_group(pgid)
+      duration_sec = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).round(3)
+      Internal::EpisodeLogger.record("voicepeak_chunk", duration_sec: duration_sec, timed_out: true)
       raise "VOICEPEAK did not respond within #{timeout_sec}s (treated as hang, killed)"
     end
 
     status = wait_thr.value
+    out = stdout_reader.value
     err = stderr_reader.value
+    duration_sec = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).round(3)
+    Internal::EpisodeLogger.record("voicepeak_chunk", duration_sec: duration_sec,
+      exit_code: status.exitstatus, stdout: out, stderr: err)
+
     raise "VOICEPEAK synthesis failed: #{Internal::CommandError.tail(err)}" unless status.success?
     raise "VOICEPEAK did not produce an audio file: #{out_path}" unless File.exist?(out_path)
   ensure

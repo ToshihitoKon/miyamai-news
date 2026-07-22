@@ -3,6 +3,7 @@
 require "open3"
 require "tty-spinner"
 require_relative "config"
+require_relative "episode_logger"
 
 # claude/agy 等の AI CLI をサブプロセスとして実行する共通ロジック。ScriptGenerator
 # （selector/extractor/writer/format）と UsedNewsFormatter（used_fix）の双方が使う。
@@ -29,14 +30,14 @@ module Internal
           # allowedTools は呼び出し元ごとに絞らず常に同じ3つを許可する。実害のある
           # ツールではなく、用途ごとに出し分ける利点が薄いため（CLAUDE.md 参照）。
           bin, "-p", "--model", model, *effort_args, "--allowedTools", "Read Write WebFetch",
-          stdin_data: prompt, fatal: fatal
+          stdin_data: prompt, fatal: fatal, bin: bin, model: model
         )
       else
         run_with_spinner(
           "#{spinner_message} [#{bin}]",
           "AI CLI failed",
           bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt,
-          fatal: fatal
+          fatal: fatal, bin: bin, model: model
         )
       end
     end
@@ -44,12 +45,21 @@ module Internal
     def model_for(role) = ::Config.ai_agent.model_for(role)
 
     # fatal: false のとき、コマンドが失敗しても abort せず nil を返す（best-effort 用途）。
-    def run_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil, fatal: true)
+    # cmd（プロンプト本文を含みうる argv）はログに残さない。bin/model だけで
+    # どのコマンドが実行されたかは十分特定できるうえ、agy 経由の呼び出しは
+    # プロンプトが -p の直後の引数として cmd に混ざる（claude は stdin 経由なので
+    # 混ざらない）ため、cmd をそのままログへ出すとプロンプト全文が漏れてしまう。
+    def run_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil, fatal: true, bin: nil, model: nil)
       spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
       spinner.auto_spin
 
       opts = stdin_data ? { stdin_data: stdin_data } : {}
+      start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       stdout, stderr, status = Open3.capture3(*cmd, **opts)
+      duration_sec = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).round(3)
+      EpisodeLogger.record(spinner_message, bin: bin, model: model,
+        exit_code: status.exitstatus, duration_sec: duration_sec, stdout: stdout, stderr: stderr)
+
       unless status.success?
         spinner.error("(failed)")
         warn stderr

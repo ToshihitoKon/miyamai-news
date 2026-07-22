@@ -12,7 +12,7 @@ RSpec.describe VoiceSynthesizer do
   let(:now) { Time.utc(2026, 7, 14, 12, 0, 0) } # afternoon slot
   let(:episode) { Episode.new(now: now) }
   let(:script_path) { File.join(work_dir, "script.txt") }
-  let(:success_status) { instance_double(Process::Status, success?: true) }
+  let(:success_status) { instance_double(Process::Status, success?: true, exitstatus: 0) }
 
   before do
     File.write(script_path, "こんにちは。今日のニュースです。")
@@ -69,7 +69,7 @@ RSpec.describe VoiceSynthesizer do
 
     context "failure" do
       it "retries a failed chunk with backoff and eventually raises with the short stderr reason intact" do
-        failure_status = instance_double(Process::Status, success?: false)
+        failure_status = instance_double(Process::Status, success?: false, exitstatus: 1)
         allow(Open3).to receive(:popen3) do |*_cmd|
           [StringIO.new, StringIO.new, StringIO.new("synthesis error"), fake_wait_thr(failure_status)]
         end

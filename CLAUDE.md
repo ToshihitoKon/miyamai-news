@@ -210,6 +210,49 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   ニュースが揃わないまま後段の AI 呼び出しに進み、不完全な情報を元にトークンを
   浪費するのを防ぐため。
 
+### EpisodeLogger（実行ログ）
+
+AI CLI（selector/extractor/writer/format/used_fix）・VOICEPEAK・HTTP フェッチの
+stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文字列に断片的に出るのみで
+構造化された形では残っていなかった。`Internal::EpisodeLogger`
+（`lib/internal/episode_logger.rb`）はこれを `work/<date_tag>_<slot>.log` に
+プレーンテキストで追記するだけの薄い記録係で、以下の不変条件を持つ。
+
+- **Config と同じモジュールレベルのグローバル状態**。`miyamai_news.rb` の
+  `main` 内で episode 確定後・`WORK_DIR` 作成後に一度だけ `configure(path)` する。
+  `AiCli`（呼び出し元のインスタンス状態を参照しない設計）や、`Publisher` 経由で
+  呼ばれ episode の概念を持たない `UsedNewsFormatter`、`FeedCache` の下位層で
+  episode を知らない `HttpFetcher` など、経路の異なる全呼び出し元に個別に
+  `log_path` を注入するとシグネチャ変更が広範囲に波及するため、Config と同じ
+  「一度設定してどこからでも参照する」パターンを踏襲した。
+- `configure` されるまで（`--clean`/`--clean-archive`/`--ui-only`/
+  `--confirm-fetch`/`--restore-fetch` など episode 生成前に早期 return する経路）
+  は `record` が no-op になる。これらの経路は AI CLI や VOICEPEAK を呼ばないため
+  実害はない。
+- **常に追記（truncate しない）**。`--digest-only`→`--script-only`→
+  `--synthesize-only`→`--publish-only` を別プロセスで順に実行する運用がある
+  ため、`configure` のたびに切り詰めると前段の実行ログが消えてしまう。
+- **`ScriptGenerator#fetch_sources_in_parallel` は複数スレッドから同時に
+  `HttpFetcher#get` を呼ぶ**（既存の前提。前掲「FeedCache」節参照）ため、
+  `record` 内部の Mutex で1エントリ（ヘッダー行＋任意の本文ブロック）の書き込みを
+  synchronize している。ロック保持時間を最小化するため、文字列を組み立てて
+  から1回だけ `File.open(path, "a")` する。
+- `record` は計測を一切行わない。呼び出し元（`AiCli`/`VoiceSynthesizer`/
+  `HttpFetcher`）が自分で `Process.clock_gettime(Process::CLOCK_MONOTONIC)` の
+  前後差を取り、処理の直後に明示的に呼ぶ（`Time.now` の差ではなく monotonic
+  clock を使うのは NTP 補正の影響を受けないため）。ブロックで包む API
+  （`measure { ... }` 相当）は、呼び出し元の主処理がブロックの中に埋もれて
+  読みにくくなるため採用していない。
+- `Internal::AiCli.run_with_spinner` は stdout/stderr に加え `bin`/`model`/
+  `exit_code`/`duration_sec` を記録するが、実行した argv（`cmd`）自体は
+  ログに含めない。`bin != "claude"`（agy 等）の分岐ではプロンプト本文が
+  `cmd` の一部（`-p` の直後の引数）として渡るため、そのまま出すとプロンプト
+  全文がログに漏れる（`claude` は stdin 経由なので `cmd` には混ざらないが、
+  `bin` 分岐ごとに扱いを変えるのは煩雑なため一律で `cmd` は出さない）。
+- `work_globs(work_dir)` は `work/*.log` を返し、`miyamai_news.rb` の
+  `clean_work_dir` が他コンポーネントの `work_globs` と合算して `--clean` の
+  対象にする（`ScriptGenerator`/`VoiceSynthesizer` と同じホワイトリスト方式）。
+
 ### used_news の表示フォーマット（Markdown サブセット）
 
 再生ページ（index.html）と feed.xml の「この回で紹介したニュース」欄（used_news）は、

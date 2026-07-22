@@ -84,6 +84,7 @@ end
 
 require_relative "lib/episode"
 require_relative "lib/internal/last_fetch_store"
+require_relative "lib/internal/episode_logger"
 require_relative "lib/script_generator"
 require_relative "lib/voice_synthesizer"
 require_relative "lib/audio_mixer"
@@ -151,6 +152,7 @@ def main
 
   FileUtils.mkdir_p(WORK_DIR)
   FileUtils.mkdir_p(DIST_DIR)
+  Internal::EpisodeLogger.configure(File.join(WORK_DIR, "#{episode.date_tag}_#{episode.slot}.log"))
 
   if args[:publish_only]
     ensure_mode_allows!("publish")
@@ -320,7 +322,8 @@ end
 # 回をまたいで保持する状態（last_fetch.json / feed_cache/ ディレクトリ）はパターンに
 # 含まれないので残る。消すと過去に見た記事を新着として拾い直し、重複紹介が起きるため。
 def clean_work_dir
-  patterns = ScriptGenerator.work_globs(WORK_DIR) + VoiceSynthesizer.work_globs(WORK_DIR)
+  patterns = ScriptGenerator.work_globs(WORK_DIR) + VoiceSynthesizer.work_globs(WORK_DIR) +
+    Internal::EpisodeLogger.work_globs(WORK_DIR)
   FileUtils.rm_rf(patterns.flat_map { |pat| Dir.glob(pat) })
   warn "reset work dir: #{WORK_DIR}"
 end
