@@ -23,8 +23,8 @@ voicepeak:
 
 ai_agent:
   bin: agy
-  model: 'Gemini 3.5 Flash (High)'
-  used_fix_model: 'Gemini 3.5 Flash (Low)'
+  model: 'gemini-3.6-flash-high'
+  used_fix_model: 'gemini-3.6-flash-low'
   used_fix_max_retries: 2
 
 program_details:
@@ -79,6 +79,9 @@ collect:
 
 rss_feed_sources:
   # --- 生成AI ---
+  - name: "Google deepmind blog"
+    url: "https://deepmind.google/blog/rss.xml"
+    priority: high
   - name: "Hacker News (AI)"
     url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
   - name: "arXiv cs.AI"
