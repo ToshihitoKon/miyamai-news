@@ -273,5 +273,18 @@ RSpec.describe LastFetchStore do
       expect(described_class.load(work_dir)).to eq("confirmed_at" => nil, "pending_at" => nil, "pending_episode" => nil, "rollback_at" => nil, "last_op" => nil)
       expect(File.read(described_class.path(work_dir))).to eq("not-json")
     end
+
+    # valid JSON だが Hash でない場合、デフォルトへ静かにフォールバックすると復旧の余地
+    # (confirmed_at 等) を失うので、代わりに abort してファイルを手つかずのまま残す。
+    ["null", "[]", "\"a-string\"", "42"].each do |raw|
+      it "aborts instead of silently defaulting when last_fetch.json is valid JSON but not an object (#{raw})" do
+        FileUtils.mkdir_p(work_dir)
+        File.write(described_class.path(work_dir), raw)
+
+        expect { described_class.load(work_dir) }.to raise_error(SystemExit)
+
+        expect(File.read(described_class.path(work_dir))).to eq(raw)
+      end
+    end
   end
 end

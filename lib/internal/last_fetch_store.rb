@@ -133,7 +133,10 @@ module LastFetchStore
   end
 
   def write(work_dir, data)
-    File.write(path(work_dir), JSON.generate(data))
+    file_path = path(work_dir)
+    tmp = "#{file_path}.tmp"
+    File.write(tmp, JSON.generate(data))
+    File.rename(tmp, file_path)
   end
   private_class_method :write
 
@@ -146,9 +149,17 @@ module LastFetchStore
 
   # last_fetch.json（存在する前提で呼ぶ）を読み、last_op 導入前に書かれたファイルに
   # 欠けているキーを default で補って返す。パース不能な壊れたファイルは空扱いで返す
-  # （安全側にフォールバックする）。
+  # （安全側にフォールバックする）。valid JSON だが Hash でない壊れ方は、デフォルト値で
+  # 上書きすると復旧の余地（手動修復・AIによる復旧）を失うため abort する。
   def read_data(work_dir)
-    default_data.merge(JSON.parse(File.read(path(work_dir))))
+    file_path = path(work_dir)
+    data = JSON.parse(File.read(file_path))
+    unless data.is_a?(Hash)
+      abort("#{file_path} is valid JSON but not an object; refusing to overwrite it with " \
+            "defaults. Inspect/repair it manually (or with AI assistance) and re-run.")
+    end
+
+    default_data.merge(data)
   rescue JSON::ParserError
     default_data
   end

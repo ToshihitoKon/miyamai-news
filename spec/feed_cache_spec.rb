@@ -90,6 +90,20 @@ RSpec.describe FeedCache do
       expect(file["entries"]["https://example.com/a"]["seen_at"]).to eq(now.iso8601)
     end
 
+    # valid JSON だが Hash でないキャッシュファイルを「空の新規キャッシュ」として静かに
+    # 扱うと、フィードの全 entry が「初登場」= 新着として再流入し二重紹介を招く。
+    # フォールバックせず abort し、HTTP フェッチにも進まないことを確認する。
+    it "aborts instead of treating a non-object cache file as a fresh cache" do
+      cache = build_cache
+      FileUtils.mkdir_p(dir)
+      File.write(cache.send(:cache_path, url), "null")
+      expect(fetcher).not_to receive(:get)
+
+      expect { cache.fetch(url, now: now, since: since) }.to raise_error(SystemExit)
+
+      expect(File.read(cache.send(:cache_path, url))).to eq("null")
+    end
+
     context "short-term skip" do
       # 直近 fetch のキャッシュを用意してから、skip_window 内/外で挙動を分ける。
       def seed_cache!(fetched_at)
