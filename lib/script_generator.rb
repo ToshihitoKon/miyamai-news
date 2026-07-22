@@ -27,21 +27,30 @@ class ScriptGenerator
       .map { |pat| File.join(work_dir, pat) }
   end
 
-  # episode_key（"<date_tag>_<slot>"）から used_news 中間ファイルのパスを組み立てる。
+  # episode_key（"<date_tag>_<slot>"）から used_news（確定版）中間ファイルのパスを組み立てる。
   # 紹介済みニュース履歴の追記が、ScriptGenerator インスタンスを持たない confirm 経路
   # からも同じ命名でこのファイルを引けるようにする。
   def self.used_news_path(work_dir, episode_key) = File.join(work_dir, "news_used_#{episode_key}.txt")
 
+  # extractor が書く暫定版 used_news のパス（詳細は CLAUDE.md「UsedNewsHistory」節参照）。
+  # 確定版と別パスにすることで、writer 側の書き込み検証が existence チェックだけで
+  # 済むようにしている（issue #83）。
+  def self.provisional_used_news_path(work_dir, episode_key) = File.join(work_dir, "news_used_provisional_#{episode_key}.txt")
+
   # episode_key の回の used_news を紹介済みニュース履歴へ追記する（収集window の confirm
   # 時に呼ぶ）。ScriptGenerator インスタンスを持たない経路（publish_only / confirm_fetch）
   # でも episode_key さえあれば同じ命名規則で used ファイルを引ける。episode_key が nil
-  # （confirm していない）なら何もしない。詳細は CLAUDE.md 参照。
+  # （confirm していない）なら何もしない。確定版があればそれを、writer 未到達で無ければ
+  # 暫定版を使う（詳細は CLAUDE.md 参照）。
   def self.record_used_news_history!(work_dir:, episode_key:)
     return unless episode_key
 
+    path = used_news_path(work_dir, episode_key)
+    path = provisional_used_news_path(work_dir, episode_key) unless File.exist?(path)
+
     UsedNewsHistory.record!(
       work_dir: work_dir, episode_key: episode_key,
-      used_news_path: used_news_path(work_dir, episode_key),
+      used_news_path: path,
       keep_episodes: Config.collect.used_news_history_episodes
     )
   end
@@ -161,6 +170,7 @@ class ScriptGenerator
   # used_news のファイル名規則はクラスメソッドに集約する（confirm 経路が episode_key
   # からパスを再構成できるようにするため。詳細は CLAUDE.md 参照）。
   def used_news_path   = self.class.used_news_path(@work_dir, episode_key)
+  def provisional_used_news_path = self.class.provisional_used_news_path(@work_dir, episode_key)
 
   # digest（収集→選定→facts抽出）を実行し、facts抽出で使った選定済みニュースの
   # テキストを返す。generate はこの戻り値を使って続きのライター工程に渡す。
@@ -200,8 +210,8 @@ class ScriptGenerator
     warn "news facts: #{news_facts_path}"
 
     # extractor には facts と一緒に暫定 used_news も書かせる（digest mode でも紹介済み
-    # ニュース履歴の元データを残すため。詳細は CLAUDE.md 参照）。writer 到達時は同じパスへ
-    # 確定版が上書きされる。履歴用の副産物なので、書かれていなくても digest は止めない。
+    # ニュース履歴の元データを残すため。詳細は CLAUDE.md 参照）。writer 到達時は別パスへ
+    # 確定版が新規に書かれる。履歴用の副産物なので、書かれていなくても digest は止めない。
     finalize_optional_used_news
   end
 
@@ -209,9 +219,9 @@ class ScriptGenerator
   # フォーマットの検証・整形はしない（ScriptGenerator の責務ではない。Publisher が
   # publish 時に UsedNewsFormatter 経由で保証する。CLAUDE.md 参照）。
   def finalize_optional_used_news
-    return unless File.exist?(used_news_path)
+    return unless File.exist?(provisional_used_news_path)
 
-    warn "used news (provisional): #{used_news_path}"
+    warn "used news (provisional): #{provisional_used_news_path}"
   end
 
   # ライター。1 回の AI 呼び出しで script.txt と used.txt を書かせる。既に抽出された
@@ -228,8 +238,10 @@ class ScriptGenerator
       writer_prompt(selected_news, news_facts), model_override: writer_model)
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
-    # used_news は writer が書いていなければ止める（不完全なまま後段へ進ませない）。
-    # フォーマットの検証・整形はしない（Publisher が publish 時に保証する。CLAUDE.md 参照）。
+    # used_news（確定版）は writer が新規に書いていなければ止める（不完全なまま後段へ
+    # 進ませない）。暫定版は別パスに書かれるので、この existence チェックだけで
+    # 書き忘れを検知できる（CLAUDE.md 参照）。フォーマットの検証・整形はしない
+    # （Publisher が publish 時に保証する。CLAUDE.md 参照）。
     abort "expected file not written: #{used_news_path}" unless File.exist?(used_news_path)
     warn "script: #{script_path}"
     warn "used news: #{used_news_path}"
@@ -400,7 +412,7 @@ class ScriptGenerator
   end
 
   # facts に加え、紹介済みニュース履歴の元になる暫定 used_news の書き込み先も渡す
-  # （digest mode でも履歴を残すため。writer 到達時は同じパスへ確定版が上書きされる）。
+  # （digest mode でも履歴を残すため。writer 到達時は別パスの確定版が新規に書かれる）。
   def extractor_prompt(selected_news)
     TemplateRenderer.render("extractor.prompt", self,
       selected_news:,
@@ -408,7 +420,7 @@ class ScriptGenerator
       category_details:,
       total_news_count:,
       news_facts_path: File.expand_path(news_facts_path),
-      used_news_path: File.expand_path(used_news_path))
+      used_news_path: File.expand_path(provisional_used_news_path))
   end
 
   # ライター用タスク。facts と選定済みニュースを差し込み、台本(script)と used の
