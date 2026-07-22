@@ -115,7 +115,7 @@ class VoiceSynthesizer
   # VOICEPEAK を1回起動してWAVを生成する。timeout_sec 超過はハングとみなし
   # プロセスグループごと kill して RuntimeError を投げる（呼び出し元がリトライする）。
   def run_voicepeak(text, out_path)
-    start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    start = Internal::EpisodeLogger.start_timer
 
     # 新しいプロセスグループで起動し、ハング時に子孫ごとまとめて kill できるようにする。
     stdin, stdout, stderr, wait_thr = Open3.popen3(
@@ -131,16 +131,15 @@ class VoiceSynthesizer
 
     unless wait_thr.join(timeout_sec)
       kill_process_group(pgid)
-      duration_sec = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).round(3)
-      Internal::EpisodeLogger.record("voicepeak_chunk", duration_sec: duration_sec, timed_out: true)
+      Internal::EpisodeLogger.record("voicepeak_chunk",
+        duration_sec: Internal::EpisodeLogger.elapsed_since(start), timed_out: true)
       raise "VOICEPEAK did not respond within #{timeout_sec}s (treated as hang, killed)"
     end
 
     status = wait_thr.value
     out = stdout_reader.value
     err = stderr_reader.value
-    duration_sec = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).round(3)
-    Internal::EpisodeLogger.record("voicepeak_chunk", duration_sec: duration_sec,
+    Internal::EpisodeLogger.record("voicepeak_chunk", duration_sec: Internal::EpisodeLogger.elapsed_since(start),
       exit_code: status.exitstatus, stdout: out, stderr: err)
 
     raise "VOICEPEAK synthesis failed: #{Internal::CommandError.tail(err)}" unless status.success?

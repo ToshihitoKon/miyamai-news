@@ -23,10 +23,10 @@ module Internal
     def get(url)
       attempt = 0
       begin
-        start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        start = Internal::EpisodeLogger.start_timer
         body = get_once(url)
-        duration_sec = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).round(3)
-        Internal::EpisodeLogger.record("http_fetch", url: url, attempt: attempt, duration_sec: duration_sec)
+        Internal::EpisodeLogger.record("http_fetch", url: url, attempt: attempt,
+          duration_sec: Internal::EpisodeLogger.elapsed_since(start))
         body
       rescue StandardError => e
         attempt += 1

@@ -20,6 +20,8 @@ module Internal
       bin = ::Config.ai_agent.bin
       model = model_override || ::Config.ai_agent.model
 
+      log_meta = { bin: bin, model: model }
+
       if bin == "claude"
         effort = effort_override == :default ? ::Config.ai_agent.effort : effort_override
         # effort 未設定なら --effort 自体を渡さず、claude CLI 側の既定に任せる。
@@ -30,14 +32,14 @@ module Internal
           # allowedTools は呼び出し元ごとに絞らず常に同じ3つを許可する。実害のある
           # ツールではなく、用途ごとに出し分ける利点が薄いため（CLAUDE.md 参照）。
           bin, "-p", "--model", model, *effort_args, "--allowedTools", "Read Write WebFetch",
-          stdin_data: prompt, fatal: fatal, bin: bin, model: model
+          stdin_data: prompt, fatal: fatal, log_meta: log_meta
         )
       else
         run_with_spinner(
           "#{spinner_message} [#{bin}]",
           "AI CLI failed",
           bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt,
-          fatal: fatal, bin: bin, model: model
+          fatal: fatal, log_meta: log_meta
         )
       end
     end
@@ -45,20 +47,19 @@ module Internal
     def model_for(role) = ::Config.ai_agent.model_for(role)
 
     # fatal: false のとき、コマンドが失敗しても abort せず nil を返す（best-effort 用途）。
-    # cmd（プロンプト本文を含みうる argv）はログに残さない。bin/model だけで
+    # cmd（プロンプト本文を含みうる argv）はログに残さない。log_meta（bin/model）だけで
     # どのコマンドが実行されたかは十分特定できるうえ、agy 経由の呼び出しは
     # プロンプトが -p の直後の引数として cmd に混ざる（claude は stdin 経由なので
     # 混ざらない）ため、cmd をそのままログへ出すとプロンプト全文が漏れてしまう。
-    def run_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil, fatal: true, bin: nil, model: nil)
+    def run_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil, fatal: true, log_meta: {})
       spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
       spinner.auto_spin
 
       opts = stdin_data ? { stdin_data: stdin_data } : {}
-      start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      start = EpisodeLogger.start_timer
       stdout, stderr, status = Open3.capture3(*cmd, **opts)
-      duration_sec = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).round(3)
-      EpisodeLogger.record(spinner_message, bin: bin, model: model,
-        exit_code: status.exitstatus, duration_sec: duration_sec, stdout: stdout, stderr: stderr)
+      EpisodeLogger.record(spinner_message, **log_meta, exit_code: status.exitstatus,
+        duration_sec: EpisodeLogger.elapsed_since(start), stdout: stdout, stderr: stderr)
 
       unless status.success?
         spinner.error("(failed)")

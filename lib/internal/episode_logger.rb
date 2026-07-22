@@ -19,6 +19,16 @@ module Internal
     # work/ に作る回ごとのログファイルの glob パターン（clean 対象のみ）。
     def work_globs(work_dir) = [File.join(work_dir, "*.log")]
 
+    # 経過秒数計測用の薄いヘルパー。Time.now の差ではなく monotonic clock を使う
+    # （NTP 補正の影響を受けないため）。呼び出し元は
+    #   start = EpisodeLogger.start_timer
+    #   ...
+    #   EpisodeLogger.record(step, duration_sec: EpisodeLogger.elapsed_since(start), ...)
+    # のように使う（計測自体を record に委譲すると呼び出し元の主処理がブロックの
+    # 中に埋もれるため、ここでは開始時刻を返すだけに留める）。
+    def start_timer = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    def elapsed_since(start) = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).round(3)
+
     # step: ログ上の見出し（例: "selecting news", "voicepeak_chunk", "http_fetch"）
     # fields: ヘッダー行に "key=value" で並べる任意のメタ情報（duration_sec/model/
     #   bin/exit_code/attempt/url など、呼び出し元が計測・用意する）

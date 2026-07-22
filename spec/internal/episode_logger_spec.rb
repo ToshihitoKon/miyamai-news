@@ -66,4 +66,16 @@ RSpec.describe Internal::EpisodeLogger do
       end
     end
   end
+
+  describe ".start_timer / .elapsed_since" do
+    it "returns a non-negative elapsed duration rounded to milliseconds" do
+      start = described_class.start_timer
+      sleep 0.01
+
+      elapsed = described_class.elapsed_since(start)
+
+      expect(elapsed).to be_a(Float)
+      expect(elapsed).to be >= 0.01
+    end
+  end
 end
