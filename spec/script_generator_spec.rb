@@ -66,8 +66,8 @@ RSpec.describe ScriptGenerator do
             File.write(generator.send(:news_selected_path), "## 生成AI\n1. Title A\n   https://example.com/a\n   (meta)\n")
           when 2
             File.write(generator.send(:news_facts_path), "## Title A\n概要です。\n")
-            # extractor は facts と一緒に暫定 used_news も書く。
-            File.write(generator.send(:used_news_path), "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n")
+            # extractor は facts と一緒に暫定 used_news（別パス）も書く。
+            File.write(generator.send(:provisional_used_news_path), "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n")
           end
           ["", "", success_status]
         end
@@ -78,7 +78,7 @@ RSpec.describe ScriptGenerator do
         expect(facts_path).to eq(generator.send(:news_facts_path))
         expect(File.read(facts_path)).to include("概要です")
         # digest mode でも暫定 used_news が残る（履歴の元データ）。台本は作らない。
-        expect(File.read(generator.send(:used_news_path))).to include("Title A")
+        expect(File.read(generator.send(:provisional_used_news_path))).to include("Title A")
         expect(File.exist?(generator.send(:script_path))).to be false
       end
     end
@@ -175,6 +175,33 @@ RSpec.describe ScriptGenerator do
           allow(Open3).to receive(:capture3).and_return(["", "boom", failure_status])
 
           expect { generator.generate }.to raise_error(SystemExit)
+        end
+
+        # issue #83: extractor が書いた暫定版が確定版パスと同じだと、writer が used_news を
+        # 書き損ねても existence チェックを素通りしてしまっていた。暫定版を別パスにしたので、
+        # writer が確定版パスに書かなければ abort することを確認する。
+        it "aborts when the writer writes the script but skips the finalized used_news" do
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          success_status = instance_double(Process::Status, success?: true, exitstatus: 0)
+          call_count = 0
+
+          allow(Open3).to receive(:capture3) do |*_cmd, **_opts|
+            call_count += 1
+            case call_count
+            when 1
+              File.write(generator.send(:news_selected_path), "## 生成AI\n1. Title A\n   https://example.com/a\n   (meta)\n")
+            when 2
+              File.write(generator.send(:news_facts_path), "## Title A\n概要です。\n")
+              File.write(generator.send(:provisional_used_news_path), "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n")
+            when 3
+              # writer は script だけ書いて used_news（確定版）への Write を怠る。
+              File.write(generator.send(:script_path), "宮舞モカです。こんにちは、今日のニュースです。\n")
+            end
+            ["", "", success_status]
+          end
+
+          expect { generator.generate }.to raise_error(SystemExit)
+          expect(File.exist?(generator.send(:used_news_path))).to be false
         end
       end
 
@@ -285,6 +312,41 @@ RSpec.describe ScriptGenerator do
       generator.send(:load_or_collect_news)
 
       expect(LastFetchStore).not_to have_received(:resolve_pending!)
+    end
+  end
+
+  describe ".record_used_news_history!" do
+    # 確定版（writer 到達後）があればそれを、無ければ暫定版（extractor のみ到達した
+    # digest mode）を履歴へ記録する。旧「同一パスへの上書き」の代替となるフォールバック。
+    it "records the finalized used_news when it exists" do
+      episode_key = "20260714_afternoon"
+      File.write(described_class.provisional_used_news_path(work_dir, episode_key),
+        "## 生成AI\n### [暫定](https://example.com/provisional)\n   暫定要約。\n   (2026-07-14 / SourceA)\n")
+      File.write(described_class.used_news_path(work_dir, episode_key),
+        "## 生成AI\n### [確定](https://example.com/final)\n   確定要約。\n   (2026-07-14 / SourceA)\n")
+
+      described_class.record_used_news_history!(work_dir: work_dir, episode_key: episode_key)
+
+      saved = File.read(File.join(UsedNewsHistory.dir(work_dir), "#{episode_key}.txt"))
+      expect(saved).to include("確定要約")
+      expect(saved).not_to include("暫定要約")
+    end
+
+    it "falls back to the provisional used_news when the finalized one was never written" do
+      episode_key = "20260714_afternoon"
+      File.write(described_class.provisional_used_news_path(work_dir, episode_key),
+        "## 生成AI\n### [暫定](https://example.com/provisional)\n   暫定要約。\n   (2026-07-14 / SourceA)\n")
+
+      described_class.record_used_news_history!(work_dir: work_dir, episode_key: episode_key)
+
+      saved = File.read(File.join(UsedNewsHistory.dir(work_dir), "#{episode_key}.txt"))
+      expect(saved).to include("暫定要約")
+    end
+
+    it "does nothing when neither file exists" do
+      described_class.record_used_news_history!(work_dir: work_dir, episode_key: "20260714_afternoon")
+
+      expect(Dir.glob(File.join(UsedNewsHistory.dir(work_dir), "*.txt"))).to be_empty
     end
   end
 end
