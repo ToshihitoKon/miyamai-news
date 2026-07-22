@@ -2,6 +2,7 @@
 
 require "net/http"
 require "uri"
+require_relative "episode_logger"
 
 module Internal
   # 単一 URL の HTTP GET を、リダイレクト追従と指数バックオフ付きリトライで実行する。
@@ -22,13 +23,18 @@ module Internal
     def get(url)
       attempt = 0
       begin
-        get_once(url)
+        start = Internal::EpisodeLogger.start_timer
+        body = get_once(url)
+        Internal::EpisodeLogger.record("http_fetch", url: url, attempt: attempt,
+          duration_sec: Internal::EpisodeLogger.elapsed_since(start))
+        body
       rescue StandardError => e
         attempt += 1
         raise "failed to fetch #{url}: #{e.message}" if attempt > @max_retries
 
         wait = @retry_base_sec * (2**(attempt - 1))
         warn "  ! fetch failed for #{url} (attempt #{attempt}/#{@max_retries}): #{e.message} / retry in #{wait}s"
+        Internal::EpisodeLogger.record("http_fetch", url: url, attempt: attempt, error: e.message, retry_in_sec: wait)
         sleep wait
         retry
       end

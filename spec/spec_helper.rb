@@ -10,6 +10,7 @@ Encoding.default_internal = Encoding::UTF_8
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
 require_relative "../lib/internal/config"
+require_relative "../lib/internal/episode_logger"
 
 # lib/* の Config 参照は初回アクセス時まで遅延される（require 時には読まない）ので、
 # 各 spec が対象クラスを require する前に fixture の config.yaml を指すよう差し替えておけば足りる。
@@ -27,6 +28,12 @@ RSpec.configure do |config|
   config.filter_run_when_matching :focus
   config.order = :random
   Kernel.srand config.seed
+
+  # Internal::EpisodeLogger は Config と同じくモジュールレベルの状態(@path)を持つ。
+  # ある spec が configure した path (tmpdir 配下) は、その spec の after で
+  # tmpdir ごと消えるため、reset せずに残すと後続の無関係な spec が消えた path への
+  # 書き込みで失敗する。各 example の前後で必ず未設定状態に戻す。
+  config.before { Internal::EpisodeLogger.instance_variable_set(:@path, nil) }
 
   # テスト対象コードは warn/puts や TTY::Spinner で進捗を $stderr/$stdout に直接書く。
   # CI ログでは rspec 自身の出力（どの例が失敗したか）がこれに埋もれてしまうため、
