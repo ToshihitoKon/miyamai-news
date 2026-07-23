@@ -3,12 +3,13 @@
 require_relative "../config"
 require_relative "../facts_full_text"
 require_relative "slack_notifier"
+require_relative "discord_notifier"
 
 module Internal
   module Notifiers
     # Pipeline#run_digest_only が facts ファイル生成直後に呼ぶ唯一の入口。
     # facts不在・config欠落時の warn-and-skip をここに集約する（詳細は
-    # CLAUDE.md「Notifier」参照）。dispatch_discord の実装は後続 PR で追加する。
+    # CLAUDE.md「Notifier」参照）。
     module NotifyDispatcher
       module_function
 
@@ -47,9 +48,12 @@ module Internal
                      .notify(parsed, raw_text: raw_text, episode_label: episode_label)
       end
 
-      # 後続 PR で実クライアント呼び出しに差し替える。
-      def dispatch_discord(_parsed, raw_text:, episode_label:)
-        warn "discord notify not implemented yet"
+      def dispatch_discord(parsed, raw_text:, episode_label:)
+        cfg = ::Config.notify&.discord
+        return warn "discord notify requested but config.notify.discord is missing, skipping" unless cfg
+
+        DiscordNotifier.new(webhook_url: cfg.webhook_url)
+                       .notify(parsed, raw_text: raw_text, episode_label: episode_label)
       end
     end
   end

@@ -113,8 +113,6 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
 - `notify` セクションは `Config::REQUIRED_SECTIONS_DELTA` に加えない。
   `pipeline.mode` の到達段階とは無関係なオプトイン機能であり、未設定でも他の
   機能に影響しないため。
-- Discord への実クライアント実装は別途追加する。現時点で `notify.targets` に
-  `discord` を入れても「未実装」の warn のみで実際の投稿は行われない。
 
 #### Slack
 
@@ -137,6 +135,22 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   を返す。呼び出し元（`SlackNotifier`）が `ts` の有無で成否を判断し、warn して
   処理を継続できるようにするため。`Internal::EpisodeLogger` には成否・所要時間の
   みを記録し、bot_token・channel・投稿本文はログに残さない。
+
+#### Discord
+
+- **スレッド概念を使わず、webhook URL への複数メッセージ連続 POST で全文相当を
+  投稿する**。Slack と異なり、Discord は webhook のレスポンスが成功時 204 no
+  content で後続投稿に使う識別子（Slackの`ts`に相当するもの）を持たないため、
+  スレッド化・親子関係の構築はそもそも成立しない。全文をカテゴリ・記事単位の
+  block として並べ、`Internal::Notifiers::Chunker` で 2000文字（`CONTENT_LIMIT`、
+  Discord API のハード制約）以内のチャンクに分割し、順に webhook へ POST する。
+- `Internal::Notifiers::DiscordClient`（`lib/internal/notifiers/discord_client.rb`）は
+  webhook への POST 専用クライアント。認証ヘッダーは不要（webhook URL 自体が
+  秘匿情報）。成功可否のみ true/false で返す（Slackの`Response`のような戻り値型は
+  不要。後続投稿に使う識別子が無いため）。`Internal::EpisodeLogger` には成否・
+  ステータスコード・所要時間のみを記録し、webhook URL・投稿本文はログに残さない。
+- 1通の投稿が失敗しても warn して残りのチャンクの投稿を継続する（Slackと同じ
+  warn-and-continue の方針。即abortしない）。
 
 ### FeedCache（フィード収集・重複判定）
 
