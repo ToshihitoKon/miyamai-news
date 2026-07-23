@@ -118,13 +118,19 @@ module Internal
       attribute :channel, Types::Strict::String
     end
 
+    # Discord webhook の認証情報。認証ヘッダーは不要で webhook URL 自体が秘匿情報
+    # （詳細は CLAUDE.md「Notifier」参照）。
+    class DiscordNotify < Base
+      attribute :webhook_url, Types::Strict::String
+    end
+
     # Slack/Discord への digest 全文通知（任意機能。詳細は CLAUDE.md「Notifier」参照）。
-    # discord の設定は後続 PR で追加する。配信先の切り替えは CLI フラグを持たず、
-    # この targets のみで行う（--digest-only 実行時、列挙された配信先だけが
-    # 自動的に通知される）。
+    # 配信先の切り替えは CLI フラグを持たず、この targets のみで行う
+    # （--digest-only 実行時、列挙された配信先だけが自動的に通知される）。
     class Notify < Base
       attribute? :targets, Types::Strict::Array.of(Types::Strict::String).default([].freeze)
       attribute? :slack, SlackNotify
+      attribute? :discord, DiscordNotify
     end
 
     # config.yaml 全体を表す構造体。mode によってセクションの要否が変わるため、
