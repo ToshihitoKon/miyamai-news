@@ -172,12 +172,20 @@ class FeedCache
     File.join(@dir, "#{Digest::SHA1.hexdigest(Internal::FeedParser.normalize_link(url))}.json")
   end
 
-  # URL 別キャッシュを読む。無い/壊れていれば空の骨組みを返す（entries が無いフィード初回）。
+  # URL 別キャッシュを読む。無い/パース不能なら空の骨組みを返す（entries が無いフィード初回）。
+  # valid JSON だが Hash でない壊れ方は、空扱いにすると全 entry が「初登場」= 新着として
+  # 再流入し二重紹介を招くため、静かにフォールバックせず abort する。
   def load_cache(url)
     path = cache_path(url)
     return { "url" => url, "fetched_at" => nil, "entries" => {} } unless File.exist?(path)
 
     data = JSON.parse(File.read(path))
+    unless data.is_a?(Hash)
+      abort("#{path} is valid JSON but not an object; refusing to treat #{url} as a fresh " \
+            "cache (that would re-introduce every entry as new). Inspect/repair it manually " \
+            "(or with AI assistance) and re-run.")
+    end
+
     data["entries"] ||= {}
     data
   rescue JSON::ParserError
