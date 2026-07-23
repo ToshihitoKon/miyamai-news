@@ -149,6 +149,28 @@ RSpec.describe FeedCache do
 
         expect(skip_result.map { |e| e[:link] }).to eq(fetch_result.map { |e| e[:link] })
       end
+
+      it "does not resurrect an article that fell out of the feed on the most recent real fetch (issue #87)" do
+        # t0: OLD と A の両方がフィードに載っている実 fetch。
+        seeder = build_cache
+        allow(fetcher).to receive(:get)
+          .and_return(rss_for([["https://example.com/old", "Old"], ["https://example.com/a", "Alpha"]]))
+        seeder.fetch(url, now: now, since: since)
+
+        # t1: OLD がフィードから落ち、A のみの実 fetch（retention 内なので OLD は
+        # entries に残るが last_fetched_at は t0 のまま更新されない）。
+        refetcher = build_cache(skip_window_sec: 0)
+        allow(fetcher).to receive(:get).and_return(rss_for([["https://example.com/a", "Alpha"]]))
+        refetcher.fetch(url, now: now + 300, since: since)
+
+        # t1 + 60s: skip window 内の再実行。直前の実 fetch(t1) には OLD が
+        # 含まれていないので、スキップ経路の結果にも OLD が混ざってはいけない。
+        skipped = build_cache(skip_window_sec: 300)
+        allow(fetcher).to receive(:get)
+        result = skipped.fetch(url, now: now + 300 + 60, since: since)
+
+        expect(result.map { |e| e[:link] }).to eq(["https://example.com/a"])
+      end
     end
 
     context "legacy seen_at inheritance" do

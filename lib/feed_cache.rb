@@ -77,9 +77,13 @@ class FeedCache
     false
   end
 
-  # スキップ時に select_since_for へ渡す擬似 entries。絞り込みには link しか使わないので、
-  # キャッシュ済みの link だけを持つ Hash 配列にすれば通常 fetch と同じ結果を再現できる。
-  def cached_entries(cache) = cache["entries"].keys.map { |link| { link: link } }
+  # スキップ時に select_since_for へ渡す擬似 entries。「直前の実 fetch でフィード本文に
+  # 実際に載っていた link」だけに絞る（理由・last_fetched_at との一致で判別できる根拠は
+  # CLAUDE.md 参照）。
+  def cached_entries(cache)
+    cache["entries"].select { |_link, meta| meta["last_fetched_at"] == cache["fetched_at"] }
+                    .keys.map { |link| { link: link } }
+  end
 
   def fetch_and_parse(url, extra_extractor)
     parse(fetch_body(url), extra_extractor)

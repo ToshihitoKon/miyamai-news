@@ -84,6 +84,16 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   一切更新しない完全な read no-op。fetched_at を更新すると skip_window ごとの再実行で
   永久にスキップし続けてしまう）。スキップは HTTP を叩かない＝FetchError も起きないので、
   一部フィードが一時的に落ちていても短時間の再実行なら先へ進める。0 で無効。
+  スキップ時に擬似 entries として渡す link 集合（`cached_entries`）は、
+  `entries.keys` 全件ではなく「`last_fetched_at` が直前の実 fetch の `fetched_at` と
+  一致する entry」だけに絞る。purge（前掲パージの項参照）は実 fetch 時にしか走らない
+  ため、`entries.keys` にはフィードから既に落ちた記事が最大 retention_days 日分残り
+  得る。これをそのままスキップ経路に使うと、実 fetch では候補に出ない古い記事が
+  数分後の再実行（スキップ経路）でだけ候補に復活してしまい、「前回 fetch と同じ結果を
+  返す」というスキップの契約が崩れる。`record_seen` は実 fetch のたびに今回フィードに
+  載っていた全 entry の `last_fetched_at` をその回の `now`（= `fetched_at` と同じ値）で
+  更新するため、両者の一致だけで「直前の実 fetch で実際に登場した link」を機械的に
+  判別できる。
 - FeedCache#fetch は複数スレッドから同時に呼んでよい。フィードごとに別ファイルなので
   キャッシュ更新の直列化（Mutex）は不要（同一 URL を 2 スレッドが同時に触らない前提。
   ScriptGenerator が 1 フィード 1 ジョブで並列に呼ぶ）。書き込みは tmp→rename で atomic。
