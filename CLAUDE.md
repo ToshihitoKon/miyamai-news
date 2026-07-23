@@ -53,6 +53,24 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   ここに追記してからコード側は参照にする。既にあるならコード側で繰り返さない。
 - この方針で新規コード・既存コードのコメントを書く／整理する。
 
+### Pipeline（工程オーケストレーション）
+
+- `Pipeline`（`lib/pipeline.rb`）は `miyamai_news.rb` の CLI フラグに応じた工程の
+  呼び分けと、その間の副作用（work/dist の mkdir・`Internal::EpisodeLogger` の
+  configure・`LastFetchStore` の確定/pending化）を一元管理するオーケストレーター。
+  新しいドメインロジックは持たず、既存の `ScriptGenerator`/`Publisher`/
+  `LastFetchStore`/`Internal::EpisodeLogger` の呼び出し順序を集約するだけに徹する。
+  `miyamai_news.rb` 自体は CLI 解析と `Pipeline` の呼び出しだけの薄い層になっている。
+- `pipeline.mode`（digest/synthesize/publish、どこまで工程を進めるか）と、将来
+  追加されうる「配信先」（例: web/Slack/Discord、どこに出力するか）は別軸として
+  扱う設計にしている。前者は `Config.mode`/`Config::MODE_ORDER` が担い、`Pipeline`
+  はその到達段階に応じて `run_digest`/`run_synthesize`/`run_publish` を呼び分ける
+  だけ。配信先を増やす場合も、この到達段階のロジックに混ぜ込まない。
+- `--clean`/`--clean-archive`/`--ui-only`/`--confirm-fetch`/`--restore-fetch` は
+  Episode を作らない（＝ `EpisodeLogger.configure` されないまま no-op で動く）
+  という既存の不変条件があるため、`Pipeline#run` はこれらを Episode 構築
+  （`setup_episode!`）より前で早期 return して処理する。
+
 ### FeedCache（フィード収集・重複判定）
 
 - 新着判定は掲載日時ではなく seen_at（このキャッシュが entry を初めて見た時刻）を使う。
