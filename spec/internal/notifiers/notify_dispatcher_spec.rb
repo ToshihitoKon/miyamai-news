@@ -3,7 +3,9 @@
 require "spec_helper"
 require "fileutils"
 require "tmpdir"
+require "internal/config"
 require "internal/notifiers/notify_dispatcher"
+require "internal/notifiers/slack_notifier"
 
 RSpec.describe Internal::Notifiers::NotifyDispatcher do
   let(:work_dir) { Dir.mktmpdir }
@@ -40,13 +42,35 @@ RSpec.describe Internal::Notifiers::NotifyDispatcher do
       expect(described_class).to have_received(:warn).with(a_string_matching(/unknown notify target: mastodon/))
     end
 
-    it "slack/discord ともに未実装として warn する（PR2時点の骨格）" do
+    it "discord は未実装として warn する（実クライアント追加待ち）" do
       File.write(facts_path, "## cat\n### [メイン] title\n")
 
-      described_class.run(%w[slack discord], facts_path: facts_path, episode_label: "label")
+      described_class.run(["discord"], facts_path: facts_path, episode_label: "label")
 
-      expect(described_class).to have_received(:warn).with(a_string_matching(/slack notify not implemented yet/))
       expect(described_class).to have_received(:warn).with(a_string_matching(/discord notify not implemented yet/))
+    end
+
+    it "config.notify.slack が未設定なら slack を warn してスキップする" do
+      File.write(facts_path, "## cat\n### [メイン] title\n")
+      allow(Config).to receive(:notify).and_return(nil)
+
+      described_class.run(["slack"], facts_path: facts_path, episode_label: "label")
+
+      expect(described_class).to have_received(:warn).with(a_string_matching(/config.notify.slack is missing/))
+    end
+
+    it "config.notify.slack があれば SlackNotifier#notify を呼ぶ" do
+      File.write(facts_path, "## cat\n### [メイン] title\n")
+      slack_cfg = instance_double(Internal::Config::SlackNotify, bot_token: "xoxb-x", channel: "C1")
+      allow(Config).to receive(:notify).and_return(instance_double(Internal::Config::Notify, slack: slack_cfg))
+      fake_notifier = instance_double(Internal::Notifiers::SlackNotifier, notify: nil)
+      allow(Internal::Notifiers::SlackNotifier).to receive(:new).with(bot_token: "xoxb-x", channel: "C1").and_return(fake_notifier)
+
+      described_class.run(["slack"], facts_path: facts_path, episode_label: "label")
+
+      expect(fake_notifier).to have_received(:notify).with(
+        an_instance_of(Internal::FactsFullText::Result), raw_text: "## cat\n### [メイン] title\n", episode_label: "label"
+      )
     end
 
     it "1ターゲットが例外を投げても他ターゲットの処理を継続する" do

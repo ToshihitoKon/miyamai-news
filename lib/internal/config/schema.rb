@@ -110,12 +110,21 @@ module Internal
       attribute :fade_sec, Types::Coercible::Float
     end
 
+    # Slack Web API (chat.postMessage) の認証情報。incoming webhook ではなく
+    # bot_token + channel を使う理由は CLAUDE.md「Notifier」参照（スレッド返信に
+    # thread_ts の指定が必要なため）。
+    class SlackNotify < Base
+      attribute :bot_token, Types::Strict::String
+      attribute :channel, Types::Strict::String
+    end
+
     # Slack/Discord への digest 全文通知（任意機能。詳細は CLAUDE.md「Notifier」参照）。
-    # slack/discord の各設定は PR3/PR4 で追加する。配信先の切り替えは CLI フラグを
-    # 持たず、この targets のみで行う（--digest-only 実行時、列挙された配信先だけが
+    # discord の設定は後続 PR で追加する。配信先の切り替えは CLI フラグを持たず、
+    # この targets のみで行う（--digest-only 実行時、列挙された配信先だけが
     # 自動的に通知される）。
     class Notify < Base
       attribute? :targets, Types::Strict::Array.of(Types::Strict::String).default([].freeze)
+      attribute? :slack, SlackNotify
     end
 
     # config.yaml 全体を表す構造体。mode によってセクションの要否が変わるため、
