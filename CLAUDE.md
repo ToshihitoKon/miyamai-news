@@ -61,15 +61,61 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   新しいドメインロジックは持たず、既存の `ScriptGenerator`/`Publisher`/
   `LastFetchStore`/`Internal::EpisodeLogger` の呼び出し順序を集約するだけに徹する。
   `miyamai_news.rb` 自体は CLI 解析と `Pipeline` の呼び出しだけの薄い層になっている。
-- `pipeline.mode`（digest/synthesize/publish、どこまで工程を進めるか）と、将来
-  追加されうる「配信先」（例: web/Slack/Discord、どこに出力するか）は別軸として
-  扱う設計にしている。前者は `Config.mode`/`Config::MODE_ORDER` が担い、`Pipeline`
-  はその到達段階に応じて `run_digest`/`run_synthesize`/`run_publish` を呼び分ける
-  だけ。配信先を増やす場合も、この到達段階のロジックに混ぜ込まない。
+- `pipeline.mode`（digest/synthesize/publish、どこまで工程を進めるか）と、
+  「配信先」（web/Slack/Discord、どこに出力するか）は別軸として扱う設計にしている。
+  前者は `Config.mode`/`Config::MODE_ORDER` が担い、`Pipeline` はその到達段階に
+  応じて `run_digest`/`run_synthesize`/`run_publish` を呼び分けるだけ。後者は
+  `Config.notify.targets` と `Internal::Notifiers::NotifyDispatcher` が担う
+  （詳細は次節「Notifier」参照）。配信先を増やしても、この到達段階のロジックに
+  混ぜ込まない。
 - `--clean`/`--clean-archive`/`--ui-only`/`--confirm-fetch`/`--restore-fetch` は
   Episode を作らない（＝ `EpisodeLogger.configure` されないまま no-op で動く）
   という既存の不変条件があるため、`Pipeline#run` はこれらを Episode 構築
   （`setup_episode!`）より前で早期 return して処理する。
+- `--publish-only` は新規収集を一切行わないため、`ScriptGenerator`（コンストラクタが
+  `FeedCache.new` 経由で旧台帳ファイルを読む実ファイルI/Oを伴う）を生成しない。
+  `Pipeline#run` は Episode 構築を担う `setup_episode!` と、`ScriptGenerator` 構築を
+  担う `setup_generator!` を分離しており、`publish_only` 経路は後者を呼ばない。
+
+### Notifier（Slack/Discord digest 全文通知）
+
+- **全文投稿の方針**: facts ファイル（`work/news_facts_<date_tag>_<slot>.txt`）の
+  内容を要約・圧縮せず、構造（カテゴリ→記事→URL・要点要約）を保った全文を
+  Slack/Discord へ投稿する。`Internal::FactsFullText`（`lib/internal/facts_full_text.rb`）
+  はカテゴリ・記事の境界がどこかだけを判定し、記事の中身（URL・発行元・要点等）は
+  見出し行から次の見出し直前までの生の行（raw_lines）としてそのまま保持する。
+  フィールドに分解して後で再構成する設計は、再構成漏れによる情報欠落の恐れがあるため
+  採用していない。パース失敗時（`## `見出しが無い等）は `ok: false` を返し、
+  呼び出し側（各 Notifier）が生テキスト全体をチャンク分割して投稿するフォールバック
+  経路を持つ。
+- `Internal::FactsFullText` は `templates/extractor.prompt.erb` の出力フォーマットに
+  依存する唯一のパーサ（`UsedNewsMarkdown` とは別物で、目的も文法も異なる）。
+  `extractor.prompt.erb` の見出し・箇条書き構造を変更する際は
+  `spec/internal/facts_full_text_spec.rb` の fixture ベーステストが通ることを確認する。
+- **配信先の切り替えは CLI フラグを持たず、`config.yaml` の `notify.targets` のみ**
+  で行う。`--digest-only` 実行時、facts ファイル生成後に `Pipeline#run_digest_only` が
+  `Internal::Notifiers::NotifyDispatcher.run` を呼び、列挙された配信先だけを通知する。
+  未設定（`targets` が空）なら何もしない。CLIフラグの組み合わせ爆発を避けるための
+  単純さ優先の判断。
+- **チャンク分割**: `Internal::Notifiers::Chunker`（`lib/internal/notifiers/chunker.rb`）
+  が、プラットフォームごとの文字数上限に収まるようチャンクへ分割する。記事1本の
+  内容が単体で上限を超えるケースがあるため、block（記事単位）の貪欲な詰め込みと、
+  単体で上限を超える block の行単位・文字単位フォールバック分割の2段階で行う。
+  戻り値のチャンクを連結すれば入力全体を復元できる（情報欠落なしの保証）。
+  文字数は `String#length`（コードポイント数）で数える。`bytesize` で数えると
+  日本語部分が想定より早く上限に達し、意図せず過剰分割されるため。
+- **失敗時の扱い**: `Internal::Notifiers::NotifyDispatcher.run` は facts ファイル
+  不在・config 欠落時に warn してその配信先だけスキップする（abort しない）。
+  1ターゲットの想定外クラッシュも rescue して warn し、他ターゲットの投稿を
+  道連れにしない。`Publisher#run` の即abortパターンとは異なる方針を採る理由は、
+  Slack/Discord への通知が GCS 公開のような共有状態（archives.csv・feed.xml・
+  last_fetch.json）を一切変更しないため。
+- `notify` セクションは `Config::REQUIRED_SECTIONS_DELTA` に加えない。
+  `pipeline.mode` の到達段階とは無関係なオプトイン機能であり、未設定でも他の
+  機能に影響しないため。
+- Slack/Discord への実クライアント実装（bot token・webhook URL を使った実際の
+  投稿ロジック）は別途追加する。本節時点では `NotifyDispatcher` は骨格のみで、
+  `notify.targets` に値を入れても実際の投稿は行われない（「未実装」の warn のみ）。
 
 ### FeedCache（フィード収集・重複判定）
 

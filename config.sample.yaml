@@ -120,3 +120,15 @@ mixer:
   tail_sec: 3
   # フェードアウトにかける秒数。
   fade_sec: 4
+
+# Slack/Discord への digest 全文通知（任意機能）。targets に列挙した配信先だけ、
+# --digest-only 実行時に facts ファイルの内容を自動投稿する（CLI フラグでの切り替えは
+# 持たない）。未設定でも他の機能には影響しない。bot_token・webhook_url は
+# config.yaml（gitignore対象）にのみ実値を書き、ここにはプレースホルダのみ残す。
+# notify:
+#   targets: [slack, discord]
+#   slack:
+#     bot_token: xoxb-your-bot-token
+#     channel: C0123456789
+#   discord:
+#     webhook_url: https://discord.com/api/webhooks/your-webhook-id/your-webhook-token

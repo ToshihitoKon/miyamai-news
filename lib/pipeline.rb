@@ -9,6 +9,7 @@ require_relative "script_generator"
 require_relative "voice_synthesizer"
 require_relative "audio_mixer"
 require_relative "publisher"
+require_relative "internal/notifiers/notify_dispatcher"
 
 # miyamai_news.rb の CLI フラグに応じた工程の呼び分けと、その間の副作用
 # （work/dist の mkdir・EpisodeLogger の configure・LastFetchStore の確定/pending化）
@@ -146,8 +147,10 @@ class Pipeline
 
   def run_digest_only
     ensure_mode_allows!("digest")
-    run_digest
+    facts_path = run_digest
     mark_pending_if_fetched!
+    Internal::Notifiers::NotifyDispatcher.run(Config.notify&.targets || [],
+      facts_path: facts_path, episode_label: "#{@episode.today_ja}（#{@episode.slot_ja}）")
   end
 
   def run_script_only
@@ -210,6 +213,7 @@ class Pipeline
     facts_path = @generator.digest
 
     warn "news facts: #{facts_path}"
+    facts_path
   end
 
   # 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。

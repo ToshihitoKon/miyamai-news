@@ -89,6 +89,28 @@ RSpec.describe Internal::Config do
     end
   end
 
+  describe Internal::Config::Notify do
+    it "defaults targets to an empty array when absent" do
+      expect(described_class.new({}).targets).to eq([])
+    end
+
+    it "accepts a list of target names" do
+      notify = described_class.new(targets: %w[slack discord])
+
+      expect(notify.targets).to eq(%w[slack discord])
+    end
+
+    # PR3/PR4 で slack/discord の具体的なセクション定義を追加するまでの間、
+    # config.sample.yaml のプレースホルダ（slack:/discord: キー）をそのまま
+    # config.yaml にコピーしても、dry-struct が未知キーを無視するため
+    # 例外にならないことを確認する（PR2時点で利用者がエラーに遭遇しないため）。
+    it "ignores unknown keys like slack:/discord: (sample.yaml との前方互換)" do
+      expect do
+        described_class.new(targets: ["slack"], slack: { bot_token: "x", channel: "y" }, discord: { webhook_url: "z" })
+      end.not_to raise_error
+    end
+  end
+
   describe Internal::Config::AppConfig do
     it "builds successfully with every section present" do
       data = YAML.safe_load_file(File.expand_path("../../fixtures/config.yaml", __dir__))
@@ -115,6 +137,19 @@ RSpec.describe Internal::Config do
       data["gcs"]["bucket"] = ["not", "a", "string"]
 
       expect { described_class.new(data) }.to raise_error(Dry::Struct::Error)
+    end
+
+    it "returns nil for notify when the section is absent" do
+      data = YAML.safe_load_file(File.expand_path("../../fixtures/config.yaml", __dir__))
+
+      expect(described_class.new(data).notify).to be_nil
+    end
+
+    it "builds notify.targets from config when present" do
+      data = YAML.safe_load_file(File.expand_path("../../fixtures/config.yaml", __dir__))
+      data["notify"] = { "targets" => %w[slack] }
+
+      expect(described_class.new(data).notify.targets).to eq(%w[slack])
     end
   end
 end
