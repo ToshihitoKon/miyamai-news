@@ -113,9 +113,30 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
 - `notify` セクションは `Config::REQUIRED_SECTIONS_DELTA` に加えない。
   `pipeline.mode` の到達段階とは無関係なオプトイン機能であり、未設定でも他の
   機能に影響しないため。
-- Slack/Discord への実クライアント実装（bot token・webhook URL を使った実際の
-  投稿ロジック）は別途追加する。本節時点では `NotifyDispatcher` は骨格のみで、
-  `notify.targets` に値を入れても実際の投稿は行われない（「未実装」の warn のみ）。
+- Discord への実クライアント実装は別途追加する。現時点で `notify.targets` に
+  `discord` を入れても「未実装」の warn のみで実際の投稿は行われない。
+
+#### Slack
+
+- **incoming webhook ではなく Slack Web API（bot token + channel ID）を使う**。
+  incoming webhook は URL のみで設定できるが、投稿しても `ts`（メッセージの
+  タイムスタンプ識別子）を返さずスレッド返信ができない。`chat.postMessage` の
+  戻り値 `ts` を次の投稿の `thread_ts` に指定することでスレッド化するため、
+  bot token + channel ID を config（`notify.slack.bot_token`/`notify.slack.channel`）
+  に持たせる設計にした。
+- **投稿シーケンス**: `Internal::Notifiers::SlackNotifier` が親メッセージ
+  （概要＋カテゴリ・記事タイトル一覧のみ、全文はここに含めない）を投稿し `ts` を
+  得る。親メッセージが失敗したら `ts` が無いためスレッド返信は一切行わず warn して
+  終了する。成功したらカテゴリごとに `Internal::Notifiers::Chunker` で全文を
+  チャンク分割し、同じ `thread_ts` を指定してスレッド返信する。1通の失敗は warn
+  して残りのカテゴリ・チャンクの投稿を継続する（即abortしない）。
+- `Internal::Notifiers::SlackClient`（`lib/internal/notifiers/slack_client.rb`）は
+  `chat.postMessage` への POST 専用クライアント。既存の `Internal::HttpFetcher` は
+  GET専用のfetch実装で認証ヘッダーの概念を持たないため流用せず新規実装した。
+  `HttpFetcher` と異なり、失敗しても例外を投げず常に `Response`（`ok`/`ts`/`error`）
+  を返す。呼び出し元（`SlackNotifier`）が `ts` の有無で成否を判断し、warn して
+  処理を継続できるようにするため。`Internal::EpisodeLogger` には成否・所要時間の
+  みを記録し、bot_token・channel・投稿本文はログに残さない。
 
 ### FeedCache（フィード収集・重複判定）
 
