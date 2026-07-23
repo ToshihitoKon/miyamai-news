@@ -145,6 +145,28 @@ RSpec.describe Pipeline do
       )
     end
 
+    it "--digest-only は facts パスと config.notify.targets を NotifyDispatcher へ渡す" do
+      allow(Internal::Notifiers::NotifyDispatcher).to receive(:run)
+      allow(Config).to receive(:notify).and_return(instance_double(Internal::Config::Notify, targets: ["slack"]))
+
+      build_pipeline(digest_only: true, date: now).run
+
+      expect(Internal::Notifiers::NotifyDispatcher).to have_received(:run).with(
+        ["slack"], facts_path: "news_facts_path", episode_label: a_string_matching(/2026/)
+      )
+    end
+
+    it "--digest-only は config.notify が未設定なら空配列を NotifyDispatcher へ渡す" do
+      allow(Internal::Notifiers::NotifyDispatcher).to receive(:run)
+      allow(Config).to receive(:notify).and_return(nil)
+
+      build_pipeline(digest_only: true, date: now).run
+
+      expect(Internal::Notifiers::NotifyDispatcher).to have_received(:run).with(
+        [], facts_path: "news_facts_path", episode_label: anything
+      )
+    end
+
     it "--script-only は generate(format: false) を呼ぶ" do
       build_pipeline(script_only: true, date: now).run
 

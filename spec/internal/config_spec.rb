@@ -113,5 +113,9 @@ RSpec.describe Config do
 
       expect(Config.gcs).to be_nil
     end
+
+    it "returns nil for notify when the fixture has no notify section (opt-in, mode非依存)" do
+      expect(Config.notify).to be_nil
+    end
   end
 end

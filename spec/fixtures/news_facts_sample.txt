@@ -1,0 +1,33 @@
+---
+## 生成AI
+
+### [メイン] Introducing OpenAI Presence
+- **URL**: https://openai.com/index/introducing-openai-presence
+- **発行元**: OpenAI
+- **日付**: 2026-07-22
+- **要点・要約**:
+  - 仕組み・技術的な中身: 大企業が音声およびチャットワークフローでAIエージェントを本番デプロイ・管理するためのエンタープライズプラットフォーム。
+  - インパクト・今後への影響: 実証実験（PoC）段階を超え、顧客サポート、販売、社内オペレーションなど高価値な業務へのAIエージェント本番導入を加速。
+  - 深掘りポイント・新規性: 企業のセキュリティやポリシー、製品仕様変更に安全に追従できる運用基盤を確立。
+- **関連技術**: OpenAI Presence, Codex, Voice Agents, Chat Agents
+
+### [補欠] GigaToken: ~1000x faster Language model tokenization
+- **URL**: https://github.com/marcelroed/gigatoken
+- **発行元**: Marcel Roed
+- **日付**: 2026-07-22
+- **要点・要約**:
+  - LLMの前処理であるトークナイズ処理を、GB/s単位（従来比で最大約1000倍）の超高速で実行する新オープンソースツール。
+- **関連技術**: Tokenization, Rust, C++
+
+---
+## AIエージェント・AIコーディングツール
+
+### [メイン] アトラシアン、JiraがAIによる要件定義の自動作成
+- **URL**: https://www.publickey1.jp/blog/26/jiraaiclaudecopilotai.html
+- **発行元**: Publickey
+- **日付**: 2026-07-23
+- **要点・要約**:
+  - 仕組み・技術的な中身: JiraにAI機能「Jira Planner」および「Jira Coding Agent」を新搭載。
+  - インパクト・今後への影響: プロジェクト管理（PM）ツールがAIエージェントのオーケストレーションハブへと進化。
+  - 深掘りポイント・新規性: 特定のAIベンダーに偏らずマルチエージェント環境に対応。
+- **関連技術**: Jira, Atlassian, Claude Code, GitHub Copilot
