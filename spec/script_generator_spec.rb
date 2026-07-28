@@ -265,6 +265,29 @@ RSpec.describe ScriptGenerator do
     end
   end
 
+  describe "fetch事実の永続化（プロセスをまたいだ引き継ぎ）" do
+    # 新規fetchが起きたプロセスが publish 到達前に終了しても、後続の別プロセス
+    # （同じ news_collected_path を reuse するだけの generator）が正しく
+    # confirmed_at・履歴記録を引き継げることを保証する（回またぎの二重紹介を防ぐ）。
+    it "collect完了と同時にpendingを永続化し、fetched_news?がfalseな後続インスタンスからも確定できる" do
+      generator_a = described_class.new(work_dir: work_dir, episode: episode)
+      generator_a.send(:load_or_collect_news)
+
+      expect(LastFetchStore.pending_at(work_dir)).to eq(now)
+      expect(LastFetchStore.pending_episode(work_dir)).to eq(generator_a.episode_key)
+
+      generator_b = described_class.new(work_dir: work_dir, episode: episode)
+      generator_b.send(:load_or_collect_news) # 既存スナップショットを reuse するだけ
+
+      expect(generator_b.fetched_news?).to be false
+
+      episode_key = LastFetchStore.confirm!(work_dir: work_dir)
+
+      expect(episode_key).to eq(generator_a.episode_key)
+      expect(LastFetchStore.confirmed_at(work_dir)).to eq(now)
+    end
+  end
+
   describe "pending fetch resolution timing" do
     # 前回 pending の確定/ロールバック確認は「新規 fetch が実際に走る直前」だけに出したい。
     # --script-only の後にフラグなしで synthesize へ進むと、収集は既存スナップショットの

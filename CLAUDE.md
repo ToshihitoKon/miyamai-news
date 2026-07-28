@@ -175,6 +175,19 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   （＝ confirmed_at を進めない）。理由: 記事を取りこぼす（confirmed_at を進めて
   しまうと二度と収集対象に戻らない）よりも、次回また同じ記事が候補に上がる
   （重複・再確認の手間）方が安全という判断。
+- 新規 fetch が起きた事実は `ScriptGenerator#load_or_collect_news` が
+  `news_collected_path` へ書き込むのと同じタイミングで `mark_pending!` を呼び、
+  即座に `last_fetch.json` へ永続化する（実行完了時ではなく fetch 完了の瞬間）。
+  `fetched_news?`（`@fetched_news` インスタンス変数）はプロセスローカルな状態で、
+  そのプロセスが後続の selector 等で中断・再起動されると失われる。中断後に
+  別プロセスが `news_collected_path` の reuse だけで publish まで到達した場合、
+  そのプロセスの `fetched_news?` は false になるが、`mark_pending!` が既に
+  fetch 時点で書き込み済みなので `LastFetchStore.confirm!` が pending を
+  正しく見つけて `confirmed_at`・履歴記録を引き継げる。実行完了時にまとめて
+  pending 化する設計だと、fetch した張本人のプロセスが完了前に終了した場合に
+  この事実がどこにも残らず、`confirmed_at` が進まないまま同じ記事が翌回に
+  再登場し、かつ紹介済み履歴にも記録されない（回またぎの二重紹介）という
+  不具合になる。
 
 ### ScriptGenerator / AI パイプライン
 
@@ -191,9 +204,14 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
   次回取りこぼさないため。
 - ニュースの重複除去はタイトル基準（大文字小文字・空白を無視）。
 - `fetched_news?` は「この実行で一度でも新規 RSS 収集が発生したか」を表す
-  フラグで、呼び出し側（miyamai_news.rb）が収集 window を pending 化すべきか
-  判断するのに使う。digest→generate と同一インスタンスで複数回工程を呼んでも、
-  一度 true になったら false に戻らない。
+  フラグで、呼び出し側（miyamai_news.rb）が publish 到達時に
+  `confirm_immediately!`（fetch あり）と `confirm!`（fetch なし、pending
+  ベース）のどちらの経路で収集window を確定するか判断するのに使う。
+  digest→generate と同一インスタンスで複数回工程を呼んでも、一度 true に
+  なったら false に戻らない。収集window の pending 化自体は
+  `load_or_collect_news` が fetch 完了時に行うため（前掲「LastFetchStore /
+  収集window」参照）、このフラグ自体はプロセスをまたいで pending 化の要否を
+  判断する用途には使わない。
 - writer ステップ（台本執筆）は、既に抽出済みの facts シートに基づいて執筆させる
   よう**プロンプト側**で指示している（Web への再アクセスによる手戻り・情報の
   食い違いを防ぐため）。`allowedTools` は全 AI CLI 呼び出しで共通の

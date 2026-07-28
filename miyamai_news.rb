@@ -110,14 +110,6 @@ def ensure_mode_allows!(required_mode)
   abort "this flag requires pipeline.mode >= #{required_mode}, but pipeline.mode=#{Config.mode}"
 end
 
-# 新規収集が起きていれば収集windowを pending 化する（詳細は CLAUDE.md「LastFetchStore /
-# 収集 window」参照）。
-def mark_pending_if_fetched!(generator)
-  return unless generator.fetched_news?
-
-  LastFetchStore.mark_pending!(work_dir: WORK_DIR, at: generator.collect_since_anchor, episode_key: generator.episode_key)
-end
-
 def main
   args = ARGS
 
@@ -174,14 +166,12 @@ def main
   if args[:digest_only]
     ensure_mode_allows!("digest")
     run_digest(generator)
-    mark_pending_if_fetched!(generator)
     return
   end
 
   if args[:script_only]
     ensure_mode_allows!("synthesize")
     run_script(generator)
-    mark_pending_if_fetched!(generator)
     return
   end
 
@@ -210,8 +200,6 @@ def main
       # 既存 news の再利用でも、pending が残っていれば昇格した回を履歴へ追記する。
       ScriptGenerator.record_used_news_history!(work_dir: WORK_DIR, episode_key: LastFetchStore.confirm!(work_dir: WORK_DIR))
     end
-  else
-    mark_pending_if_fetched!(generator)
   end
 end
 
