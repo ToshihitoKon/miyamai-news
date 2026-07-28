@@ -290,6 +290,13 @@ class ScriptGenerator
     @fetched_news = true
     news_body = collect_news
     File.write(news_collected_path, news_body)
+    # fetch の事実は @fetched_news という実行中プロセスのメモリ上にしか残らない。
+    # このプロセスが publish に到達する前に終了すると、後続プロセスは
+    # news_collected_path の reuse だけで動き「新規fetchが起きた」ことを知る術を
+    # 失う（詳細は CLAUDE.md「LastFetchStore / 収集 window」参照）。fetch 完了の
+    # この瞬間に pending 化しておくことで、プロセスが後で中断しても後続プロセスの
+    # confirm! が引き継げるようにする。
+    LastFetchStore.mark_pending!(work_dir: @work_dir, at: collect_since_anchor, episode_key:)
     warn "news: #{news_collected_path}"
     news_body
   end
