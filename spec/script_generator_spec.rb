@@ -189,7 +189,8 @@ RSpec.describe ScriptGenerator do
             ["", "", success_status]
           end
 
-          generator.send(:select_news, generator.send(:collect_news))
+          generator.send(:load_or_collect_news)
+          generator.send(:select_news)
 
           expect(Open3).to have_received(:capture3).with(
             "claude", "-p", "--model", "claude-sonnet-5", "--allowedTools", "Read Write WebFetch",
