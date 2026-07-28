@@ -21,8 +21,7 @@ module TemplateRenderer
 
     private
 
-    # コンパイル済み ERB をテンプレート名でキャッシュする。同一プロセス内で
-    # 同じテンプレートを何度も描画しても、ファイル読み込みと構文解析は 1 回で済む。
+    # コンパイル済み ERB をテンプレート名でキャッシュする。
     def erb(name)
       cache[name] ||= build_erb(name)
     end
@@ -31,8 +30,6 @@ module TemplateRenderer
       path = File.join(DIR, "#{name}.erb")
       raise ArgumentError, "template not found: #{path}" unless File.exist?(path)
 
-      # trim_mode "-" は <%- -%> を書いたときだけ前後の空白を削る。通常の
-      # <%= %> には影響しないので、プロンプトも HTML/XML も同じ設定で扱える。
       ERB.new(File.read(path), trim_mode: "-")
     end
 

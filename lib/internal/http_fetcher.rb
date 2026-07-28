@@ -8,7 +8,7 @@ module Internal
   # 単一 URL の HTTP GET を、リダイレクト追従と指数バックオフ付きリトライで実行する。
   # フィードの内容や用途には関与しない、純粋な取得ユーティリティ。
   class HttpFetcher
-    # 追従するリダイレクトの上限ホップ数。無限リダイレクトループでの永久ハングを防ぐ。
+    # 追従するリダイレクトの上限ホップ数。
     MAX_REDIRECTS = 5
 
     # @param max_retries [Integer] 最大リトライ回数
@@ -19,7 +19,7 @@ module Internal
     end
 
     # url を取得して本文を返す。失敗時は指数バックオフで max_retries 回まで再試行し、
-    # それでも取れなければ例外を送出する（一時的な 502 等を返すサーバーがあるため）。
+    # それでも取れなければ例外を送出する。
     def get(url)
       attempt = 0
       begin
@@ -42,9 +42,8 @@ module Internal
 
     private
 
-    # リダイレクトを MAX_REDIRECTS 回まで追従する。Location は相対URIのことがある
-    # （RFC 7231 で許容されており実サーバーでも一般的）ため、直前の URL を基点に
-    # URI#merge で解決する。
+    # リダイレクトを MAX_REDIRECTS 回まで追従する。Location は相対URIのことがあるため、
+    # 直前の URL を基点に URI#merge で解決する。
     def get_once(url)
       current = URI.parse(url)
 

@@ -33,10 +33,8 @@ module UsedNewsHistory
       .join("\n\n")
   end
 
-  # link を落とす。履歴の用途は selector プロンプトへの埋め込みで、URL は
-  # ノイズにしかならない（重複判定はタイトル・要約・情報源で足りる）。
-  # 新フォーマットは `### [タイトル](URL)` に URL が内包されるので `### タイトル` に畳む。
-  # 旧フォーマット（独立した URL 行）が履歴に混じっていても落とせるよう、その除去も残す。
+  # link を落とす。新フォーマットは `### [タイトル](URL)` に URL が内包されるので
+  # `### タイトル` に畳む。旧フォーマット（独立した URL 行）の除去も残す。
   # 除去で空いた行が連続しないよう、3 行以上の空行は 1 行に畳む。
   def strip_links(text)
     text
@@ -66,7 +64,6 @@ module UsedNewsHistory
   private_class_method :prune
 
   # episode_key（"<date_tag>_<slot>"）を [date_tag, slot の日内順] に分解する。
-  # 未知形式のキーは末尾（最古扱い）へ寄せて、削除・並べ替えが壊れないようにする。
   def episode_sort_key(episode_key)
     date_tag, slot = episode_key.rpartition("_").values_at(0, 2)
     [date_tag, Slot.sort_key(slot)]

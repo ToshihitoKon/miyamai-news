@@ -51,8 +51,6 @@ class VoiceSynthesizer
 
     wav_paths = chunks.each_with_index.map do |chunk, i|
       path = File.join(wav_dir, format("%04d.wav", i))
-      # 前回クラッシュした場合に備え、合成済みの WAV が残っていれば再利用して
-      # 続きから再開する（合成完了時に wav_dir ごと消えるので、残存＝未完了分）。
       if File.exist?(path)
         warn "  [#{i + 1}/#{chunks.size}] skip (already synthesized)"
         next path
@@ -77,16 +75,14 @@ class VoiceSynthesizer
 
   def voicepeak_bin = Config.voicepeak.bin
 
-  # 各チャンク合成後に空ける秒数。VOICEPEAK の連続起動によるクラッシュ避け。
+  # 各チャンク合成後に空ける秒数。
   def interval_sec = Config.voicepeak.interval_sec
 
-  # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数（VOICEPEAK は
-  # まれに初期化時にクラッシュするため）。
+  # 合成失敗時のリトライ回数と、指数バックオフの初期待機秒数。
   def max_retries = Config.voicepeak.max_retries
   def retry_base_sec = Config.voicepeak.retry_base_sec
 
-  # 1チャンクの合成に許す最大秒数。VOICEPEAK は異常終了後にハングし応答しなく
-  # なることがあり、超過したら kill してリトライへ回す。
+  # 1チャンクの合成に許す最大秒数。超過したら kill してリトライへ回す。
   def timeout_sec = Config.voicepeak.timeout_sec
 
   # チャンク結合時に挟む無音の秒数（:short=通常の文区切り / :mid=[interval:mid]
@@ -117,7 +113,6 @@ class VoiceSynthesizer
   def run_voicepeak(text, out_path)
     start = Internal::EpisodeLogger.start_timer
 
-    # 新しいプロセスグループで起動し、ハング時に子孫ごとまとめて kill できるようにする。
     stdin, stdout, stderr, wait_thr = Open3.popen3(
       voicepeak_bin, "--narrator", NARRATOR, "--say", text, "--out", out_path,
       pgroup: true
@@ -125,7 +120,6 @@ class VoiceSynthesizer
     stdin.close
     pgid = Process.getpgid(wait_thr.pid)
 
-    # stdout/stderr を join 前に別スレッドで読み進める（偽ハング対策、詳細は CLAUDE.md 参照）。
     stdout_reader = Thread.new { stdout.read }
     stderr_reader = Thread.new { stderr.read }
 
@@ -161,8 +155,7 @@ class VoiceSynthesizer
   end
 
   # 台本を合成単位のチャンクに分割する。戻り値は { text:, pause: } の配列。
-  # INTERVAL_TAG は「。」分割・MAX_CHARS 分割より先に抜き出す（後にすると分割が
-  # タグ文字列を横切って壊す恐れがあるため）。
+  # INTERVAL_TAG は「。」分割・MAX_CHARS 分割より先に抜き出す。
   def split_chunks(script)
     normalized = script.gsub(/\r\n?/, "\n")
 
@@ -177,8 +170,7 @@ class VoiceSynthesizer
         .map(&:strip)
         .reject(&:empty?)
         .flat_map { |sentence| split_long_sentence(sentence) }
-      # タグ直後に文が続かない場合、この pause はどのチャンクにも乗らず捨てられる
-      # （低頻度の許容済みエッジケース）。
+      # タグ直後に文が続かない場合、この pause はどのチャンクにも乗らず捨てられる。
       next if sentences.empty?
 
       sentences.each_with_index do |sentence, i|

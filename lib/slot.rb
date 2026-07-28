@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
-# 番組の時間帯 slot を扱う。1日に複数回まわしても回ごとに別の slot を持たせ、
-# ファイル名を衝突させず別エピソードとして共存させるための区分。
+# 番組の時間帯 slot を扱う。
 #
 # 11:00 起点で 6 時間ずつ 4 分割する:
 #   morning   5:00-10:59
@@ -46,10 +45,9 @@ module Slot
   ORDER = JA_LABELS.keys.freeze
 
   # slot を日内の並び順（0 始まり）に変換する。(date_tag, sort_key(slot)) でエピソードの
-  # 時系列順が一意に決まる。未知の slot は fetch で例外にして早期に気づけるようにする。
+  # 時系列順が一意に決まる。
   def sort_key(slot) = ORDER.index(slot) || raise(KeyError, "unknown slot: #{slot}")
 
-  # JA_LABELS のキーから組み立てるので、対応 slot が増減しても追従漏れが起きない。
   FILENAME_PATTERN = /_(#{JA_LABELS.keys.join('|')})\.mp3\z/
 
   # ファイル名から slot を判定し日本語ラベルにする（表示用）。slot を持たない

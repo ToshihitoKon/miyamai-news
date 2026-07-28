@@ -2,10 +2,10 @@
 
 require "cgi"
 
-# used_news（この回で紹介したニュース欄）の限定 Markdown サブセットを HTML に変換する。
-# 文法（## カテゴリ / ### [タイトル](URL) / メタ / 要約）と失敗条件は
-# CLAUDE.md「used_news の表示フォーマット」参照。Publisher が publish 時にこれで
-# HTML 化して .used.html として事前生成する（唯一のパーサ実装）。
+# used_news（この回で紹介したニュース欄）の限定 Markdown サブセット
+# （## カテゴリ / ### [タイトル](URL) / メタ / 要約）を HTML に変換する。
+# Publisher が publish 時にこれで HTML 化して .used.html として事前生成する
+# （唯一のパーサ実装）。
 module UsedNewsMarkdown
   module_function
 
@@ -14,7 +14,6 @@ module UsedNewsMarkdown
   Result = Struct.new(:ok, :html, keyword_init: true)
 
   RE_CATEGORY = /\A##\s+(.+?)\s*\z/
-  # [...] は貪欲。タイトルに ] や ) を含む記事があるため、最後の ](URL) を境界にする。
   RE_TITLE = /\A###\s+\[(.+)\]\((\S+)\)\s*\z/
   RE_META = /\A\s*\((.+)\)\s*\z/
 
@@ -64,8 +63,7 @@ module UsedNewsMarkdown
 
   def failure = Result.new(ok: false, html: nil)
 
-  # スキームが http/https のときだけリンク化する。javascript: 等はリンクにせず
-  # プレーン表示（XSS 防止）。
+  # スキームが http/https のときだけリンク化する。javascript: 等はプレーン表示にする。
   def anchor(title, url)
     return h(title) unless url.match?(%r{\Ahttps?://}i)
 
