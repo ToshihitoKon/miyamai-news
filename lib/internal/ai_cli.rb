@@ -35,10 +35,14 @@ module Internal
           stdin_data: prompt, fatal: fatal, log_meta: log_meta
         )
       else
+        # --add-dir を渡さないと、agy がカレントディレクトリではなく
+        # ~/.gemini/antigravity-cli 等の無関係なディレクトリをワークスペースと
+        # 誤認識することがあるため明示する（詳細は CLAUDE.md 参照）。
         run_with_spinner(
           "#{spinner_message} [#{bin}]",
           "AI CLI failed",
-          bin, "--model", model, "--dangerously-skip-permissions", "-p", prompt,
+          bin, "--model", model, "--dangerously-skip-permissions",
+          "--add-dir", Dir.pwd, "-p", prompt,
           fatal: fatal, log_meta: log_meta
         )
       end

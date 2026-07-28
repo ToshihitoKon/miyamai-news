@@ -165,21 +165,23 @@ class ScriptGenerator
   # digest（収集→選定→facts抽出）を実行し、facts抽出で使った選定済みニュースの
   # テキストを返す。generate はこの戻り値を使って続きのライター工程に渡す。
   def digest_news
-    selected_news = select_news(load_or_collect_news)
+    load_or_collect_news
+    selected_news = select_news
     extract_news_facts(selected_news)
     selected_news
   end
 
   # ニュース選定。全候補からタイトルだけを見て AI に選ばせ、Markdown のまま書かせる。
-  # 以降の facts 抽出・執筆はこの選定済みテキストを読む。
-  def select_news(collected_news)
+  # 候補ニュースは文字列として埋め込まず news_collected_path を渡して Read させる
+  # （詳細は CLAUDE.md 参照）。以降の facts 抽出・執筆はこの選定済みテキストを読む。
+  def select_news
     if File.exist?(news_selected_path)
       warn "reuse: #{news_selected_path}"
       return File.read(news_selected_path)
     end
 
     selector_model = Internal::AiCli.model_for(:selector)
-    Internal::AiCli.run("selecting news", selector_prompt(collected_news), model_override: selector_model)
+    Internal::AiCli.run("selecting news", selector_prompt, model_override: selector_model)
 
     rewrite_file(news_selected_path) { |text| strip_facts_preamble(text) }
     warn "news (selected): #{news_selected_path}"
@@ -387,11 +389,12 @@ class ScriptGenerator
   # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # ニュース選定用タスク。全候補・カテゴリの分類観点・合計目安件数・選定結果の
-  # 書き込み先パスに加え、直近の紹介済みニュース（回またぎの重複回避用）を渡す。
-  def selector_prompt(collected_news)
+  # ニュース選定用タスク。全候補（AI に Read させるファイルパス）・カテゴリの
+  # 分類観点・合計目安件数・選定結果の書き込み先パスに加え、直近の紹介済みニュース
+  # （回またぎの重複回避用）を渡す。
+  def selector_prompt
     TemplateRenderer.render("selector.prompt", self,
-      collected_news:,
+      news_collected_path: File.expand_path(news_collected_path),
       today_ja: @today_ja,
       category_details:,
       total_news_count:,
