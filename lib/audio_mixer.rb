@@ -27,7 +27,7 @@ class AudioMixer
   private
 
   def bgm_volume = Config.mixer.bgm_volume
-  # VOICEPEAK の出力音量が小さめなため底上げするゲイン(dB)。未指定時は0(無調整)。
+  # ナレーション音量を底上げするゲイン(dB)。未指定時は0(無調整)。
   def voice_boost_db = Config.mixer.voice_boost_db
   # ミックスのタイムライン: [intro_sec: BGM単独] → [ナレーション] →
   # [tail_sec: BGM単独] → [fade_sec: フェードアウト]
@@ -45,8 +45,6 @@ class AudioMixer
     out.strip.to_f
   end
 
-  # -stream_loop -1: BGM がナレーションより短くても最後まで途切れないようループ
-  # normalize=0: amix の自動音量正規化を無効化し、指定した音量バランスを保つ
   def run_mix(voice_path, output_path, fade_start:, total_dur:, delay_ms:)
     filter = "[0:a]volume=#{bgm_volume},afade=t=out:st=#{fade_start}:d=#{fade_sec}[bgm]; " \
              "[1:a]volume=#{voice_boost_db}dB,adelay=#{delay_ms}|#{delay_ms}[voice]; " \

@@ -318,7 +318,6 @@
     const playpause = document.getElementById('playpause');
     const mute = document.getElementById('mute');
 
-    // カスタムプレーヤーの再生/一時停止・音量アイコン(ネイティブ controls を廃したため自前描画)
     const ICON = {
       play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
       pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>',
@@ -352,8 +351,6 @@
     };
 
     // select の各 option の見た目テキストに「・N時間前」を付け直す。
-    // data-label(元のラベル)を基準に毎回組み立て直すので、繰り返し呼んでも
-    // 「・3時間前・3時間前」のように積み上がらない(冪等)。
     const applyRelativeLabels = () => {
       Array.from(sel.options).forEach((opt) => {
         const ago = relativeLabel(opt.dataset.updatedAt);
@@ -365,8 +362,7 @@
     const usedHtmlUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.used.html');
     const usedTextUrlFor = (mp3Url) => mp3Url.replace(/\.mp3$/, '.used.txt');
 
-    // 生テキストを <pre> で表示する（読み込み中・エラー・.used.html 未生成の回の
-    // フォールバック用）。linkify を通すと URL だけリンク化される。
+    // 生テキストを <pre> で表示する。linkify を通すと URL だけリンク化される。
     const showNewsRaw = (text, { link = false } = {}) => {
       const pre = document.createElement('pre');
       if (link) pre.innerHTML = linkify(text); else pre.textContent = text;
@@ -375,8 +371,7 @@
 
     // .used.html（Ruby 側 UsedNewsMarkdown.render が publish 時に事前生成した構造化
     // HTML）を優先して fetch し、成功すればそのまま innerHTML に差し込む。404・fetch
-    // 失敗（旧フォーマットの回・パース不能だった回は .used.html 自体が存在しない）は
-    // .used.txt を fetch して生テキスト表示(<pre>+linkify)へフォールバックする。
+    // 失敗時は .used.txt を fetch して生テキスト表示(<pre>+linkify)へフォールバックする。
     const loadNews = async (mp3Url) => {
       showNewsRaw('読み込み中…');
       try {
@@ -386,7 +381,7 @@
           return;
         }
       } catch (e) {
-        // .used.html の fetch 自体が失敗した場合も .used.txt へフォールバックする。
+        // 何もしない。下の .used.txt フォールバックへ続く。
       }
 
       try {
@@ -419,12 +414,10 @@
     });
 
     // select の指定 index の回に切り替え、プレーヤーと付随表示を更新する。
-    // select 操作(change)と連続再生の自動遷移で共通に使う。
     const switchToArchive = (index) => {
       sel.selectedIndex = index;
       player.src = sel.value;
       now.textContent = sel.options[index].textContent;
-      // src 差し替えで duration が変わる。実値は loadedmetadata で確定するので暫定リセット
       seek.value = 0;
       seek.style.setProperty('--pct', '0%');
       timeLabel.textContent = '0:00 / 0:00';
@@ -444,7 +437,6 @@
     // - sequential: 1曲終わったら1つ古い回(select上で次の index)へ進む。
     //              最古(末尾)まで到達したら停止する。
     // - repeat   : 同じ回を繰り返す(単曲リピート)。
-    // ラベルはここに集約。将来アイコン化する場合もこの配列を変えればよい。
     const MODES = [
       { key: 'single', label: '一曲' },
       { key: 'sequential', label: '連続' },
@@ -458,7 +450,6 @@
       playmode.textContent = mode.label;
     };
 
-    // ネイティブ controls を廃したので、再生状態・シーク・音量表示を自前で描画する。
     const renderPlay = () => { playpause.innerHTML = player.paused ? ICON.play : ICON.pause; };
 
     const renderMute = () => {
@@ -479,14 +470,11 @@
     });
 
     // 曲終端。連続再生時のみ1つ古い回へ自動で進める。
-    // repeat は audio.loop に任せるため ended が発火せず、ここには来ない。
     player.addEventListener('ended', () => {
       if (MODES[modeIndex].key !== 'sequential') return;
       const next = sel.selectedIndex + 1; // select は最新が先頭・降順なので +1 が1つ古い回
       if (next >= sel.options.length) return; // 最古まで到達したら停止
       switchToArchive(next);
-      // src 差し替え直後の play。メタデータ読み込み後に自動再生される。
-      // 自動再生ポリシー等での reject は握り潰す(連続再生はユーザー操作起点なので通常起きない)。
       player.play().catch(() => {});
     });
 
@@ -500,8 +488,6 @@
       }
     };
 
-    // 再生トグルは3経路(再生ボタン・アートワーク・Space)が同じ togglePlay を共有し、
-    // play/pause イベント経由で renderPlay がアイコンを同期する。
     playpause.addEventListener('click', togglePlay);
     artwork.addEventListener('click', togglePlay);
     player.addEventListener('play', renderPlay);

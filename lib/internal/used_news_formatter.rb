@@ -11,12 +11,12 @@ require_relative "used_news_markdown"
 # ScriptGenerator は「## カテゴリ / ### [タイトル](URL)」形式のそれっぽい Markdown を
 # 生成するだけでよく、フォーマットが厳密に正しいかどうかの検証・保証はしない。
 # 最終的にフォーマットを保証するのは Publisher で、GCS への書き込みを始める前に
-# ensure_valid! を呼ぶ（詳細は CLAUDE.md「used_news の表示フォーマット」参照）。
+# ensure_valid! を呼ぶ。
 module UsedNewsFormatter
   module_function
 
   # used_news の期待フォーマット。パース失敗時に AI へ渡す整形指示
-  # （文法の正は lib/internal/used_news_markdown.rb / CLAUDE.md）。
+  # （文法の正は lib/internal/used_news_markdown.rb）。
   FORMAT_SPEC = <<~SPEC
     ## <カテゴリ名>
     ### [<タイトル>](<link>)
@@ -29,14 +29,10 @@ module UsedNewsFormatter
     ### ...
   SPEC
 
-  # fix_format.prompt.erb は format_spec/broken_content/output_path のローカル変数
-  # のみを参照し、ScriptGenerator/Publisher いずれのインスタンスメソッドにも依存しない
-  # ため、テンプレート描画用の context はこの専用の空オブジェクトで足りる。
   PROMPT_CONTEXT = Object.new.freeze
 
   # 前置き除去 → フォーマット検証 → 崩れていれば AI 修復、の順に整えて返す。
-  # 修復後もフォーマットが直らなければ abort する（Publisher から呼ばれる想定なので、
-  # ここで publish 全体を止める。中途半端な公開状態を作らないため）。
+  # 修復後もフォーマットが直らなければ abort する。
   # used_news が無い回（空文字列）は早期 return し、AI 呼び出し・abort を行わない。
   def ensure_valid!(text)
     cleaned = strip_preamble(text.to_s)
@@ -55,7 +51,6 @@ module UsedNewsFormatter
   def strip_preamble(used)
     lines = used.lines
     start = lines.each_index.find { |i| lines[i].strip.start_with?("##") }
-    # 想定した構造が見つからなければそのまま返して人間が気づけるようにする
     return used unless start
 
     "#{lines[start..].join.strip}\n"

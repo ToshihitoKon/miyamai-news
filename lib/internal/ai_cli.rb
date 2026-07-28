@@ -29,15 +29,10 @@ module Internal
         run_with_spinner(
           "#{spinner_message} [#{bin}]",
           "AI CLI failed",
-          # allowedTools は呼び出し元ごとに絞らず常に同じ3つを許可する。実害のある
-          # ツールではなく、用途ごとに出し分ける利点が薄いため（CLAUDE.md 参照）。
           bin, "-p", "--model", model, *effort_args, "--allowedTools", "Read Write WebFetch",
           stdin_data: prompt, fatal: fatal, log_meta: log_meta
         )
       else
-        # --add-dir を渡さないと、agy がカレントディレクトリではなく
-        # ~/.gemini/antigravity-cli 等の無関係なディレクトリをワークスペースと
-        # 誤認識することがあるため明示する（詳細は CLAUDE.md 参照）。
         run_with_spinner(
           "#{spinner_message} [#{bin}]",
           "AI CLI failed",
@@ -51,10 +46,7 @@ module Internal
     def model_for(role) = ::Config.ai_agent.model_for(role)
 
     # fatal: false のとき、コマンドが失敗しても abort せず nil を返す（best-effort 用途）。
-    # cmd（プロンプト本文を含みうる argv）はログに残さない。log_meta（bin/model）だけで
-    # どのコマンドが実行されたかは十分特定できるうえ、agy 経由の呼び出しは
-    # プロンプトが -p の直後の引数として cmd に混ざる（claude は stdin 経由なので
-    # 混ざらない）ため、cmd をそのままログへ出すとプロンプト全文が漏れてしまう。
+    # cmd（プロンプト本文を含みうる argv）はログに残さない。
     def run_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil, fatal: true, log_meta: {})
       spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
       spinner.auto_spin

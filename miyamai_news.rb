@@ -6,8 +6,7 @@
 
 require "bundler/inline"
 
-# 単体で完結するよう bundler/inline で依存 gem を取得する。bundled gem の
-# rss/csv/rexml も明示しないと後続の require で読めないため、ここに並べる。
+# 単体で完結するよう bundler/inline で依存 gem を取得する。
 gemfile do
   source "https://rubygems.org"
   gem "tty-spinner"
@@ -61,16 +60,7 @@ end
 
 ARGS = parse_args(ARGV)
 
-# clean系・ui_only は pipeline.mode とは無関係だが、実際には Publisher（GCS操作）を
-# 経由するため gcs セクションだけは要求する。confirm_fetch/restore_fetch は
-# work/last_fetch.json のみを触り GCS も pipeline.mode も伴わないので検証を全てスキップする。
-# それ以外は各コンポーネントが実行中に MissingKeyError で落ちて中途半端に失敗するのを
-# 避けるため、起動直後に必要な config が揃っているか一括で検証する。Config.path= は代入した
-# 時点で即座に新しいパスから読み直す設計（lib/internal/config.rb 参照）なので、--config
-# 指定時の読み込みエラーもこのガードでまとめて拾えるよう同じ begin ブロック内に置く。
 begin
-  # cwd 基準で解決する（一般的な CLI の期待動作。__dir__ 基準だとスクリプト位置基準になり、
-  # リポジトリ外のディレクトリから相対パスを指定したときに意図と異なる場所を読んでしまう）。
   Config.path = File.expand_path(ARGS[:config]) if ARGS[:config]
 
   if ARGS[:clean] || ARGS[:clean_archive] || ARGS[:ui_only]
@@ -100,10 +90,6 @@ def episode_used_path(episode)       = File.join(DIST_DIR, "miyamai_news_#{episo
 # 読み仮名化前の人間可読な原稿。公開ページでは「文字起こし」として提示する。
 def episode_transcript_path(episode) = File.join(DIST_DIR, "miyamai_news_#{episode.date_tag}_#{episode.slot}.transcript.txt")
 
-# --digest-only は digest 相当、--script-only/--synthesize-only は synthesize 相当
-# （facts抽出・執筆まで進む）以上、--publish-only は publish 相当以上の config が
-# 検証されていないと実行できない。満たさなければ、必要な config が未検証のまま
-# 実行が進んで途中で失敗するのを防ぐためここで止める。
 def ensure_mode_allows!(required_mode)
   return if Config::MODE_ORDER.fetch(Config.mode) >= Config::MODE_ORDER.fetch(required_mode)
 
@@ -138,9 +124,6 @@ def main
     return
   end
 
-  # 番組コンテキスト（日付・slot）は実行時刻から Episode が導く。--date/--slot の明示
-  # 指定があればそれを尊重する（Episode 側で自動判定を上書き）。ただし収集基準時刻
-  # （now）は --date の影響を受けず常に実時刻を渡す（詳細は CLAUDE.md 参照）。
   episode = Episode.new(now: Time.now, date: args[:date]&.to_date, slot: args[:slot])
 
   FileUtils.mkdir_p(WORK_DIR)
@@ -150,17 +133,10 @@ def main
   if args[:publish_only]
     ensure_mode_allows!("publish")
     run_publish(episode)
-    # publish_only は新規 fetch をせず既存成果物を公開するだけなので、収集 window を
-    # 新しい時刻に進めてはいけない（fetch していない時刻で確定すると取りこぼす）。
-    # pending が残っていれば公開＝確定として昇格させ、無ければ何もしない。
     ScriptGenerator.record_used_news_history!(work_dir: WORK_DIR, episode_key: LastFetchStore.confirm!(work_dir: WORK_DIR))
     return
   end
 
-  # 前回 pending の確定/ロールバックは、収集の起点(since)を確定する直前＝新規 fetch が
-  # 実際に走る直前に ScriptGenerator が自分で尋ねる。既存 news スナップショットを再利用する
-  # 実行（例: --script-only の後にフラグなしで synthesize へ進む）は fetch しないので、確認は
-  # 出ない。auto_confirm は CI 等の非対話実行で確認を飛ばして自動確定するかどうか。
   generator = ScriptGenerator.new(work_dir: WORK_DIR, episode: episode, auto_confirm: args[:auto_confirm] || false)
 
   if args[:digest_only]
@@ -187,17 +163,13 @@ def main
   run_digest(generator)
   run_synthesize(episode, generator) if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
 
-  # publish 到達時のみ「公開＝確定」を即座に反映し、それ以外は pending 化に留める
-  # （収集 window の確定タイミングの詳細は CLAUDE.md「LastFetchStore / 収集 window」参照）。
+  # publish 到達時のみ「公開＝確定」を即座に反映し、それ以外は pending 化に留める。
   if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
     run_publish(episode)
     if generator.fetched_news?
       LastFetchStore.confirm_immediately!(work_dir: WORK_DIR, at: generator.collect_since_anchor)
-      # 公開＝確定した今回の回を紹介済みニュース履歴へ追記する（confirm_immediately! は
-      # pending を経由しないので episode_key を返さない。今回の episode から直接渡す）。
       ScriptGenerator.record_used_news_history!(work_dir: WORK_DIR, episode_key: generator.episode_key)
     else
-      # 既存 news の再利用でも、pending が残っていれば昇格した回を履歴へ追記する。
       ScriptGenerator.record_used_news_history!(work_dir: WORK_DIR, episode_key: LastFetchStore.confirm!(work_dir: WORK_DIR))
     end
   end
@@ -252,9 +224,6 @@ end
 # AI を二重に呼ばない。generator は run_digest が返したインスタンスを引き継ぎ、
 # 収集が起きたかどうかの判定（fetched_news?）を最初の呼び出し時点のまま保つ。
 def run_synthesize(episode, generator)
-  # BGM は config の assets.bgm_path。相対パス指定なら BASE_DIR 起点で解決する。
-  # index.html にクレジット表記を固定しているため（templates/index.html.erb 参照）、
-  # 差し替え可能にはしていない。
   bgm_path = File.expand_path(Config.assets.bgm_path, BASE_DIR)
   output_path = episode_mp3_path(episode)
   used_news_output = episode_used_path(episode)
@@ -264,8 +233,7 @@ def run_synthesize(episode, generator)
   voice_path = VoiceSynthesizer.new(work_dir: WORK_DIR, episode: episode).synthesize(tts_script_path)
   AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
 
-  # 使用ニュース一覧・文字起こし(読み仮名化前の台本)を mp3 と並べて成果物として残す
-  # （work/ 側はキャッシュとして温存）。
+  # 使用ニュース一覧・文字起こし(読み仮名化前の台本)を mp3 と並べて成果物として残す。
   FileUtils.cp(generator.used_news_file, used_news_output)
   FileUtils.cp(generator.script_file, transcript_output)
 
@@ -308,8 +276,6 @@ end
 
 # work/ の回ごとの中間ファイルを削除する。各コンポーネントが「自分が作る中間ファイルの
 # glob パターン」を申告するので、それに一致するものだけを消す（ホワイトリスト方式）。
-# 回をまたいで保持する状態（last_fetch.json / feed_cache/ ディレクトリ）はパターンに
-# 含まれないので残る。消すと過去に見た記事を新着として拾い直し、重複紹介が起きるため。
 def clean_work_dir
   patterns = ScriptGenerator.work_globs(WORK_DIR) + VoiceSynthesizer.work_globs(WORK_DIR) +
     Internal::EpisodeLogger.work_globs(WORK_DIR)
@@ -318,7 +284,7 @@ def clean_work_dir
 end
 
 # dist/ の各 mp3 のうち、GCS 上に同名が存在する（＝公開済みの）ものだけを削除する。
-# 未公開の回を誤って消さないための存在確認。used.txt/transcript.txt は対の mp3 とセットで扱う。
+# used.txt/transcript.txt は対の mp3 とセットで扱う。
 def clean_published_dist
   mp3s = Dir.glob(File.join(DIST_DIR, "miyamai_news_*.mp3"))
   return if mp3s.empty?

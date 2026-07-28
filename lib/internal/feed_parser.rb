@@ -24,7 +24,6 @@ module Internal
       end
 
       # 末尾スラッシュの有無だけ違う同じ記事の URL を同一視するための正規化。
-      # スキーム直後の "//" は対象外にする負の先読みで、"https://" 自体を壊さない。
       def normalize_link(link)
         link.strip.sub(%r{(?<!:)/+\z}, "")
       end

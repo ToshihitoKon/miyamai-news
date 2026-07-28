@@ -24,8 +24,6 @@ module Config
   MODE_ORDER = { "digest" => 0, "synthesize" => 1, "publish" => 2 }.freeze
 
   # 各 mode で新たに必須になる config のトップレベルセクション名の差分。
-  # セクションの要否は mode 次第で変わる運用ルールであり、型の責務ではないため、
-  # AppConfig 上は全セクションを任意属性にし、必須判定はここで別途行う。
   REQUIRED_SECTIONS_DELTA = {
     "digest" => %w[ai_agent program_details rss_feed_sources collect],
     "synthesize" => %w[voicepeak mixer assets],
@@ -70,9 +68,8 @@ module Config
         "missing config sections for pipeline.mode=#{target_mode}:\n" + missing.map { |s| "  - #{s}" }.join("\n")
     end
 
-    # gcs セクション単体の存在を検証する。--clean/--ui-only/--clean-archive は
-    # pipeline.mode に関わらず Publisher（GCS 操作）を使うため、mode 別の
-    # validate_for! では拾えない gcs 単体の欠落をここで見る。
+    # gcs セクション単体の存在を検証する。mode 別の validate_for! では拾えない
+    # gcs 単体の欠落をここで見る。
     def validate_gcs!
       return if gcs
 

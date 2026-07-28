@@ -14,7 +14,7 @@ require_relative "slot"
 #
 # now と date は 0:00-4:59 の実行でズレる（Slot.broadcast_date が前日 midnight 扱いに
 # して date を1日戻すため）。また --date で date を明示上書きする場合も、now は
-# 呼び出し側が常に実時刻を渡す契約になっている（詳細は CLAUDE.md 参照）。
+# 呼び出し側が常に実時刻を渡す契約になっている。
 class Episode
   attr_reader :now, :date, :slot
 

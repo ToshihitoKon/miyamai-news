@@ -4,13 +4,11 @@ require "rexml/document"
 require_relative "feed_parser"
 
 module Internal
-  # はてなブックマーク RSS(RDF) 固有の知識を隔離する。rss gem は hatena 名前空間の要素を
-  # 公開しないため、REXML で直接引く。
+  # はてなブックマーク RSS(RDF) 固有の知識を隔離する。
   module HatenaBookmarks
     class << self
       # フィード本文から link => { "bookmarks" => N } を作る。はてブ以外には
-      # hatena:bookmarkcount が無いので空ハッシュになる。文字列キーの理由は
-      # feed_cache.rb と共通（CLAUDE.md 参照）。
+      # hatena:bookmarkcount が無いので空ハッシュになる。
       def call(body)
         doc = REXML::Document.new(body)
         pairs = doc.get_elements("//item").filter_map do |item|
