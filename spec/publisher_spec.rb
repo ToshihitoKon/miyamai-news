@@ -235,6 +235,87 @@ RSpec.describe Publisher do
     end
   end
 
+  # updated_at は「publish を実行した時刻」ではなく「コンテンツが変わった時刻」を表す。
+  # ここが崩れると、内容が同じ再 publish や --ui-only で feed.xml の <updated> が動き、
+  # 購読者全員に誤って新着通知が飛ぶ。
+  describe "#update_archives updated_at semantics" do
+    let(:filename) { File.basename(mp3_path) }
+    let(:title) { "宮舞モカの技術ニュース 2026-07-14" }
+    let(:used_news) { File.read(used_path) }
+    let(:published_at) { "2026-07-14T01:23:45Z" }
+
+    def existing_row(title:, used_news:, updated_at: "2026-07-14T01:23:45Z")
+      ["2026-07-14", File.basename(mp3_path), title, used_news, updated_at]
+    end
+
+    # 既存台帳を GCS から取得したように見せる。cp のダウンロード先へ既存行を書き込む。
+    def stub_ledger(publisher, rows)
+      exists = !rows.empty?
+      status = instance_double(Process::Status, success?: exists)
+      err = exists ? "" : "One or more URLs matched no objects."
+      allow(Open3).to receive(:capture3).and_return(["", err, status])
+
+      allow(publisher).to receive(:system) do |*args, **_opts|
+        if args[0..2] == %w[gcloud storage cp] && args[3].to_s.end_with?("archives.csv")
+          CSV.open(args[4], "w") { |csv| rows.each { |r| csv << r } }
+        end
+        true
+      end
+    end
+
+    def updated_at_after_run(existing_row)
+      publisher = described_class.new(date: Date.new(2026, 7, 14), title: title)
+      stub_ledger(publisher, [existing_row])
+      rows = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      rows.find { |r| r[1] == File.basename(mp3_path) }[4]
+    end
+
+    it "keeps the existing updated_at when re-publishing identical title and used_news" do
+      row = existing_row(title: title, used_news: used_news, updated_at: published_at)
+
+      expect(updated_at_after_run(row)).to eq(published_at)
+    end
+
+    it "advances updated_at when used_news changed" do
+      row = existing_row(title: title, used_news: "## 別の内容\n", updated_at: published_at)
+
+      expect(updated_at_after_run(row)).not_to eq(published_at)
+    end
+
+    it "advances updated_at when the title changed" do
+      row = existing_row(title: "古いタイトル", used_news: used_news, updated_at: published_at)
+
+      expect(updated_at_after_run(row)).not_to eq(published_at)
+    end
+
+    it "assigns the current time for a brand-new episode" do
+      publisher = described_class.new(date: Date.new(2026, 7, 14), title: title)
+      stub_ledger(publisher, [])
+
+      rows = publisher.send(:update_archives, filename, used_news)
+
+      expect(rows.first[4]).to match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/)
+    end
+
+    # 過去に updated_at 列が空で記録された行から引き継ぐと <updated> が空になり
+    # Atom として壊れるので、その場合は現在時刻を入れる。
+    it "falls back to the current time when the existing updated_at is blank" do
+      row = existing_row(title: title, used_news: used_news, updated_at: "")
+
+      expect(updated_at_after_run(row)).to match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/)
+    end
+
+    it "does not move feed <updated> when re-publishing identical content" do
+      row = existing_row(title: title, used_news: used_news, updated_at: published_at)
+      publisher = described_class.new(date: Date.new(2026, 7, 14), title: title)
+      stub_ledger(publisher, [row])
+
+      rows = publisher.send(:update_archives, filename, used_news)
+
+      expect(publisher.send(:render_feed, rows)).to include("<updated>#{published_at}</updated>")
+    end
+  end
+
   describe "#render_feed_entry" do
     let(:publisher) { described_class.new(date: Date.new(2026, 7, 14)) }
 

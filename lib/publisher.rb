@@ -161,8 +161,10 @@ class Publisher
 
   def update_archives(filename, used_news = "")
     rows = fetch_existing_archives
+    previous = rows.find { |r| r[1] == filename }
     rows.reject! { |r| r[1] == filename }
-    rows << [date_for(filename), filename, @title, used_news, now_rfc3339]
+    rows << [date_for(filename), filename, @title, used_news,
+      updated_at_for(previous, used_news)]
     rows.sort_by! { |r| [r[0], r[4].to_s] }
     rows.reverse!
 
@@ -174,6 +176,14 @@ class Publisher
     upload_content("archives.csv", csv, content_type: "text/csv")
 
     rows
+  end
+
+  def updated_at_for(previous, used_news)
+    return now_rfc3339 unless previous
+    return now_rfc3339 unless previous[2] == @title && previous[3].to_s == used_news.to_s
+
+    prior = previous[4].to_s
+    prior.empty? ? now_rfc3339 : prior
   end
 
   def archive_episode_files(filename)

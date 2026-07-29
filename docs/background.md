@@ -187,12 +187,18 @@
   にすると購読者が新着を検知できなくなる。
 - `cover_image` / `icon_image` は本パイプラインからはアップロードしない。事前に
   手動で GCS バケットへアップロードしておく必要がある（README 参照）。
-- 既に公開済みの slot（同じ mp3 ファイル名）に対して再度 publish すると
-  `updated_at` が進み `<updated>` が動いてしまう。**これは避けるべき運用**であり、
-  UI 文言の修正など新しい回の公開を伴わない変更では必ず `--ui-only`
-  （`republish_ui`）を使うこと（「新規 episode の publish 以外のタイミングで
-  feed.xml を更新しない」という原則を、既存 slot への誤った再 publish でも
-  破らないように徹底する）。
+- `archives.csv` の `updated_at` 列は「publish を実行した時刻」ではなく
+  「**コンテンツが変わった時刻**」を表す。`update_archives` は既存行と
+  title / used_news を比較し、同一なら既存の `updated_at` を引き継ぐ。
+  異なるとき（および新規エピソード）のみ現在時刻を入れる。
+  `updated_at` は feed.xml の `<updated>` の源であり、ここが「実行時刻」だと
+  内容が同じ再 publish や `--ui-only` でも `<updated>` が動いて購読者全員に
+  誤った新着通知が飛ぶ。以前はこれを「既存 slot へ再 publish しない」という
+  運用ルールで回避していたが、値のセマンティクス自体を修正して解消した。
+- 既存の `updated_at` が空文字の行（過去に空で記録されたもの）からは引き継がず
+  現在時刻を入れる。空のまま引き継ぐと `<updated>` が空になり Atom として壊れる。
+- `updated_at` は `update_archives` の並び替えキー（`[date, updated_at]`）でもある
+  ため、引き継ぎは表示順の安定にも効く。
 
 ### LastFetchStore / 収集 window（last_fetch.json）
 
