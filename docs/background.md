@@ -500,9 +500,21 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `ai_agent.effort` は現状 `bin == "claude"` のときだけ `Internal::AiCli.run` が
   参照する。実装上対応しているのは claude のみだが、将来 effort に対応する別の
   AI CLI が増えたときに使い回す想定でこのフィールドを用意している。
-- `Config.validate_gcs!` は `pipeline.mode` に関わらず GCS を使う CLI 操作
-  （`--clean` / `--ui-only` / `--clean-archive`）のために独立して存在する。
-  mode 別の `validate_for!` では拾えない gcs セクション単体の欠落をここで検出する。
+- 公開先の検証は 2 種類ある。`Config.validate_gcs!` は R2/GCS のストレージだけを
+  触る操作（`--clean` / `--clean-archive`）用で、`Config.validate_publish_targets!`
+  は配信（Workers へのデプロイ）まで行う `--ui-only` 用に `gcs` + `cloudflare` の
+  両方を要求する。`--ui-only` を前者で通すと、index.html を生成しきってから
+  デプロイ段階で落ちる。
+- `cloudflare` セクションは `pipeline.mode: publish` の必須セクション
+  （`REQUIRED_SECTIONS_DELTA`）にも含める。publish は配信まで到達するため、
+  ストレージだけ設定済みで配信先が未設定という状態で起動させない。
+- R2 の S3 互換 API 認証情報（`R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`）と
+  wrangler の認証（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）は
+  config.yaml に置かず環境変数で渡す。config.yaml は「機密を持たないから git で
+  追跡してよい」という前提で運用しているため、ここに秘密鍵を書くと前提が崩れる。
+- `cloudflare.audio_prefix` は `wrangler.jsonc` の `assets.run_worker_first` と
+  揃える必要がある（片方だけ変えると mp3 が static assets 側にルーティングされ
+  404 になる）。デフォルトは `audio`。
 - `Config.path=` は代入した時点で即座に新しいパスから読み直す設計。`miyamai_news.rb`
   の CLI 起動時検証（後述「CLI 起動時の config 検証」節参照）は、`--config` 指定時の
   読み込みエラーもまとめて拾えるよう、`Config.path=` の代入と検証呼び出しを同じ
@@ -517,9 +529,11 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 
 ### miyamai_news.rb（CLIエントリポイント）
 
-- CLI 起動時の config 検証: `--clean`/`--clean-archive`/`--ui-only` は
-  `pipeline.mode` とは無関係だが、実際には Publisher（GCS操作）を経由するため
-  gcs セクションだけは要求する（`Config.validate_gcs!`）。`--confirm-fetch`/
+- CLI 起動時の config 検証: `--ui-only` は `pipeline.mode` とは無関係だが
+  配信（Workers デプロイ）まで到達するため `gcs` + `cloudflare` を要求する
+  （`Config.validate_publish_targets!`）。`--clean`/`--clean-archive` は
+  ストレージのみを触るので `gcs` だけ要求する（`Config.validate_gcs!`）。
+  `--confirm-fetch`/
   `--restore-fetch` は `work/last_fetch.json` のみを触り GCS も pipeline.mode も
   伴わないので検証を全てスキップする。それ以外は各コンポーネントが実行中に
   MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な

@@ -45,6 +45,24 @@ RSpec.describe Config do
       it "raises MissingKeyError for publish, listing the missing sections" do
         expect { Config.validate_for!("publish") }.to raise_error(Config::MissingKeyError, /gcs/)
       end
+
+      it "counts cloudflare among the publish-required sections" do
+        expect { Config.validate_for!("publish") }.to raise_error(Config::MissingKeyError, /cloudflare/)
+      end
+    end
+
+    # gcs だけ揃っていて cloudflare が無い config で publish を通してしまうと、
+    # 生成物を作りきってからデプロイ段階で落ちる。
+    it "raises MissingKeyError for publish when only cloudflare is absent" do
+      data = YAML.safe_load_file(default_path)
+      data.delete("cloudflare")
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "config.yaml")
+        File.write(path, YAML.dump(data))
+        Config.path = path
+
+        expect { Config.validate_for!("publish") }.to raise_error(Config::MissingKeyError, /cloudflare/)
+      end
     end
 
     it "raises MissingKeyError when a required section is entirely absent" do
@@ -101,9 +119,38 @@ RSpec.describe Config do
     end
   end
 
+  describe ".validate_publish_targets!" do
+    it "passes when both gcs and cloudflare are configured" do
+      expect { Config.validate_publish_targets! }.not_to raise_error
+    end
+
+    # --ui-only は mode 判定を通らないので、配信先の欠落をここで捕まえないと
+    # index.html を生成しきってからデプロイ段階で落ちる。
+    it "raises MissingKeyError listing every missing publish target" do
+      Config.path = File.expand_path("../fixtures/config_digest.yaml", __dir__)
+
+      expect { Config.validate_publish_targets! }
+        .to raise_error(Config::MissingKeyError, /gcs.*cloudflare/m)
+    end
+
+    it "raises MissingKeyError when only cloudflare is absent" do
+      data = YAML.safe_load_file(default_path)
+      data.delete("cloudflare")
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "config.yaml")
+        File.write(path, YAML.dump(data))
+        Config.path = path
+
+        expect { Config.validate_publish_targets! }
+          .to raise_error(Config::MissingKeyError, /cloudflare/)
+      end
+    end
+  end
+
   describe "section accessors" do
     it "exposes each top-level section as a typed struct" do
       expect(Config.gcs.bucket).to eq("your-bucket-name")
+      expect(Config.cloudflare.public_base).to eq("https://news.example.com")
       expect(Config.ai_agent.model_for(:selector)).to eq("claude-sonnet-5")
       expect(Config.program_details.categories.first.label).to eq("生成AI")
     end

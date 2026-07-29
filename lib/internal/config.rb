@@ -27,7 +27,7 @@ module Config
   REQUIRED_SECTIONS_DELTA = {
     "digest" => %w[ai_agent program_details rss_feed_sources collect],
     "synthesize" => %w[voicepeak mixer assets],
-    "publish" => %w[gcs],
+    "publish" => %w[gcs cloudflare],
   }.freeze
 
   class << self
@@ -46,6 +46,7 @@ module Config
     def mode = app_config.pipeline.mode
 
     def gcs = app_config.gcs
+    def cloudflare = app_config.cloudflare
     def assets = app_config.assets
     def voicepeak = app_config.voicepeak
     def ai_agent = app_config.ai_agent
@@ -74,6 +75,16 @@ module Config
       return if gcs
 
       raise MissingKeyError, "missing config section: gcs"
+    end
+
+    # 公開先（ストレージ + 配信）が揃っているか検証する。--ui-only のように
+    # mode 判定を通らずに publish 相当の書き込みを行う経路で使う。
+    def validate_publish_targets!
+      missing = %w[gcs cloudflare].reject { |section| public_send(section) }
+      return if missing.empty?
+
+      raise MissingKeyError,
+        "missing config sections for publishing:\n" + missing.map { |s| "  - #{s}" }.join("\n")
     end
 
     private

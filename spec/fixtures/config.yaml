@@ -14,6 +14,13 @@ gcs:
   # archives.csv で保持するエピソード数の上限。
   retention_episodes: 5
 
+# Cloudflare への公開まわり（Workers static assets + R2）。
+cloudflare:
+  account_id: test-account-id
+  worker_name: miyamai-news-test
+  bucket: test-bucket
+  public_base: https://news.example.com
+
 # 音声・ページに使うアセットのパス。
 assets:
   # 使用する BGM。絶対パス、または miyamai_news.rb からの相対パスで指定する。

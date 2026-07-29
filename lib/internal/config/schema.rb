@@ -19,6 +19,14 @@ module Internal
       attribute :retention_episodes, Types::Strict::Integer
     end
 
+    class Cloudflare < Base
+      attribute :account_id, Types::Strict::String
+      attribute :worker_name, Types::Strict::String
+      attribute :bucket, Types::Strict::String
+      attribute :public_base, Types::Strict::String
+      attribute? :audio_prefix, Types::Strict::String.default("audio")
+    end
+
     class Assets < Base
       attribute :bgm_path, Types::Strict::String
       attribute :cover_image, Types::Strict::String
@@ -100,6 +108,7 @@ module Internal
     class AppConfig < Base
       attribute(:pipeline, Pipeline.default { Pipeline.new({}) })
       attribute? :gcs, Gcs
+      attribute? :cloudflare, Cloudflare
       attribute? :assets, Assets
       attribute? :voicepeak, Voicepeak
       attribute? :ai_agent, AiAgent

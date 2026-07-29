@@ -10,6 +10,22 @@ gcs:
   # publish で保持・公開する話数。
   retention_episodes: 5
 
+# Cloudflare への公開まわり（Workers static assets + R2）。
+# R2 の S3 互換 API 認証情報は config には書かず、環境変数で渡す。
+#   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+# wrangler の認証も環境変数（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）。
+cloudflare:
+  account_id: your-account-id
+  # wrangler.jsonc の name と一致させる。
+  worker_name: miyamai-news
+  # 成果物を置く R2 バケット名。
+  bucket: miyamai-news
+  # 公開 URL のベース。カスタムドメインを設定して指定する。
+  public_base: https://news.example.com
+  # mp3 等のメディアを置くパスのプレフィックス（未指定時は audio）。
+  # wrangler.jsonc の assets.run_worker_first と揃える必要がある。
+  audio_prefix: audio
+
 assets:
   bgm_path: 古びた魔法書_気まぐれBGM工房.mp3
   # 再生ページ / Slack プレビュー用の横長バナー画像のオブジェクト名。
