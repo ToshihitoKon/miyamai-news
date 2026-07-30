@@ -27,7 +27,9 @@ mode:synthesize, publish の場合に追加で必要
 
 mode:publish の場合に追加で必要
 
-- gcloud
+- [wrangler](https://developers.cloudflare.com/workers/wrangler/) v4 以降
+- Cloudflare アカウント（Workers + R2）
+- gcloud（旧 GCS からの移行期間中のみ）
 
 ## Setup
 
@@ -35,10 +37,26 @@ mode:publish の場合に追加で必要
 cp config.sample.yaml config.yaml
 ```
 
-publish には config.yaml に設定する以下の素材を `gs://<gcs.bucket>/` へアップロードする必要がある。
+publish には以下の環境変数が必要。config.yaml には書かない（config.yaml は機密を
+持たない前提で運用しているため）。
 
-- `assets.cover_image`: 再生ページに利用するカバー画像
-- `assets.icon_image`: PWA 用のアイコン画像
+| 環境変数 | 用途 |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | `wrangler deploy` の認証 |
+| `CLOUDFLARE_ACCOUNT_ID` | 同上 |
+| `R2_ACCESS_KEY_ID` | R2 の S3 互換 API |
+| `R2_SECRET_ACCESS_KEY` | 同上 |
+
+R2 のトークンは Cloudflare ダッシュボードの R2 > API トークンから発行する
+（`Object Read & Write` が最小権限）。Secret Access Key はトークン値の SHA-256
+ハッシュで、発行直後しか表示されない。
+
+`assets.cover_image` / `assets.icon_image` はリポジトリルートに置く。publish 時に
+static assets のステージングへコピーされて配信されるので、手動アップロードは不要。
+
+カスタムドメインは `wrangler.jsonc` の `routes` に `custom_domain: true` で宣言すると
+`wrangler deploy` 時に DNS レコードと証明書が自動発行される。ただし**対象ホスト名に
+既存の CNAME レコードがあると失敗する**ので、先に削除しておく。
 
 
 synthesize には BGM 素材を用意し `assets.bgm_path` にパスをセットする必要がある。index.html.erb に記載している BGM は[猫きまぐれBGM工房](https://kim4gure.com/) 様「古びた魔法書」

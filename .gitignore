@@ -17,6 +17,10 @@
 # ツール類
 /.ruby-lsp/
 /.serena/cache/
+# wrangler のローカル状態と、dry-run 用のダミー assets ディレクトリ
+/.wrangler/
+/public/
+/node_modules/
 
 # Ruby バージョンはチームで共有する（グローバル gitignore の除外を上書き）
 !.tool-versions

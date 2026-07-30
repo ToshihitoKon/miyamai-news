@@ -13,129 +13,149 @@ RSpec.describe Publisher do
   let(:used_path) { File.join(work_dir, "miyamai_news_20260714_afternoon.used.txt") }
   let(:transcript_path) { File.join(work_dir, "miyamai_news_20260714_afternoon.transcript.txt") }
 
+  # R2 は S3 互換 API なので stub_responses でクライアントごと差し替える。
+  let(:s3) { Aws::S3::Client.new(stub_responses: true, region: "auto") }
+  let(:storage) { Internal::R2Storage.new(bucket: "test-bucket", client: s3) }
+
   before do
     File.write(mp3_path, "fake mp3")
     File.write(used_path, "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n")
     File.write(transcript_path, "宮舞モカです。\n")
+    # static assets のステージングは実ファイルの存在を要求する。
+    FileUtils.touch(Config.assets.icon_image)
+    FileUtils.touch(Config.assets.cover_image)
   end
 
   after { FileUtils.remove_entry(work_dir) }
 
-  describe "#run" do
-    def stub_gcloud_for_first_publish(publisher)
-      commands = []
-      contents = {}
-      # 初回公開シナリオ: archives.csv はまだ GCS に存在しない(object_exists? が false)。
-      no_objects_status = instance_double(Process::Status, success?: false)
-      allow(Open3).to receive(:capture3).and_return(["", "One or more URLs matched no objects.", no_objects_status])
+  def build_publisher(ledger: nil, **kwargs)
+    s3.stub_responses(:head_object, ledger.nil? ? "NotFound" : {})
+    s3.stub_responses(:get_object, { body: ledger.to_s }) unless ledger.nil?
+    s3.stub_responses(:put_object, {})
+    s3.stub_responses(:copy_object, { copy_object_result: {} })
+    s3.stub_responses(:delete_object, {})
+    described_class.new(date: Date.new(2026, 7, 14), storage: storage, **kwargs)
+  end
 
-      allow(publisher).to receive(:system) do |*args, **_opts|
-        commands << args.map(&:to_s).join(" ")
-        if args[0..2] == %w[gcloud storage cp] && args.last.to_s.match?(/\.used\.(txt|html)\z/)
-          contents[args.last.to_s.end_with?(".used.html") ? :used_html : :used_txt] = File.read(args[-2])
-        end
-        true
-      end
-      [commands, contents]
+  # wrangler は subprocess なので system を捕捉する。デプロイ直前のステージング
+  # ディレクトリの中身も記録する（バージョン単位デプロイなので、ここに無い
+  # ファイルは公開サイトから消える）。
+  def stub_wrangler(publisher)
+    calls = []
+    staged = []
+    allow(publisher).to receive(:system) do |*args|
+      calls << args.map(&:to_s).join(" ")
+      idx = args.index("--assets")
+      dir = idx && args[idx + 1]
+      staged.concat(Dir.children(dir)) if dir && Dir.exist?(dir)
+      true
     end
+    [calls, staged]
+  end
 
-    it "uploads mp3/used/used.html/transcript and writes archives/index/feed/manifest via gcloud storage, without a real gcloud" do
-      publisher = described_class.new(date: Date.new(2026, 7, 14))
-      commands, contents = stub_gcloud_for_first_publish(publisher)
+  def ledger_csv(rows) = CSV.generate { |csv| rows.each { |r| csv << r } }
+
+  describe "#run" do
+    it "uploads the episode files to R2 and deploys the site once" do
+      publisher = build_publisher
+      calls, = stub_wrangler(publisher)
+      put_keys = []
+      s3.stub_responses(:put_object, ->(ctx) { put_keys << ctx.params[:key]; {} })
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(Open3).to have_received(:capture3).with("gcloud", "storage", "ls", a_string_matching(/archives\.csv/))
-      expect(commands).to include(a_string_matching(/#{Regexp.escape(File.basename(mp3_path))}/))
-      expect(commands).to include(a_string_matching(/archives\.csv/))
-      expect(commands).to include(a_string_matching(/index\.html/))
-      expect(commands).to include(a_string_matching(/feed\.xml/))
-      expect(commands).to include(a_string_matching(/manifest\.json/))
-      expect(commands).to include(a_string_matching(/used\.html/))
-      expect(contents[:used_html]).to include('<div class="news-cat">生成AI</div>')
+      expect(put_keys).to include("audio/#{File.basename(mp3_path)}")
+      expect(put_keys).to include("audio/#{File.basename(used_path)}")
+      expect(put_keys).to include("audio/miyamai_news_20260714_afternoon.used.html")
+      expect(put_keys).to include("audio/#{File.basename(transcript_path)}")
+      expect(put_keys).to include("archives.csv")
+      expect(calls.count { |c| c.start_with?("wrangler deploy") }).to eq(1)
     end
 
-    it "aborts before any gcloud storage operation when used_news fails validation and repair" do
-      publisher = described_class.new(date: Date.new(2026, 7, 14))
+    # デプロイはバージョン単位なので、画像を含む全ファイルが毎回ステージングに
+    # 揃っていないと公開サイトから消える。
+    it "stages every static asset, not just the generated pages" do
+      publisher = build_publisher
+      _calls, staged = stub_wrangler(publisher)
+
+      publisher.run(mp3_path, used_path, transcript_path)
+
+      expect(staged).to include("index.html", "feed.xml", "manifest.json", "_headers")
+      expect(staged).to include(File.basename(Config.assets.icon_image))
+      expect(staged).to include(File.basename(Config.assets.cover_image))
+    end
+
+    it "aborts before touching R2 when used_news fails validation and repair" do
+      publisher = build_publisher
       File.write(used_path, "・タイトルだけの旧フォーマット\nhttps://example.com/a\n")
-      allow(UsedNewsFormatter).to receive(:run_fix_cli).and_return(nil) # 修復も失敗
-      commands = []
-      allow(publisher).to receive(:system) do |*args, **_opts|
-        commands << args.map(&:to_s).join(" ")
-        true
-      end
+      allow(UsedNewsFormatter).to receive(:run_fix_cli).and_return(nil)
+      put_called = false
+      s3.stub_responses(:put_object, ->(_ctx) { put_called = true; {} })
+      allow(publisher).to receive(:system).and_return(true)
 
       expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
-      expect(commands).to be_empty # mp3 含め何もアップロードされていない
+      expect(put_called).to be false
+      expect(publisher).not_to have_received(:system)
     end
 
-    it "does not validate used_news when used_txt_path is nil (no used news for this episode)" do
-      publisher = described_class.new(date: Date.new(2026, 7, 14))
-      _commands, = stub_gcloud_for_first_publish(publisher)
+    it "does not validate used_news when used_txt_path is nil" do
+      publisher = build_publisher
+      stub_wrangler(publisher)
       allow(UsedNewsFormatter).to receive(:ensure_valid!)
 
       publisher.run(mp3_path, nil, transcript_path)
 
       expect(UsedNewsFormatter).not_to have_received(:ensure_valid!)
     end
+
+    it "aborts the whole run when wrangler deploy fails" do
+      publisher = build_publisher
+      allow(publisher).to receive(:system).and_return(false)
+
+      expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
+    end
+  end
+
+  describe "#republish_ui" do
+    let(:existing) { [["2026-07-14", "miyamai_news_20260714_morning.mp3", "T", "", "2026-07-14T00:00:00Z"]] }
+
+    it "deploys the site without writing the ledger or episode files" do
+      publisher = build_publisher(ledger: ledger_csv(existing))
+      calls, staged = stub_wrangler(publisher)
+      put_keys = []
+      s3.stub_responses(:put_object, ->(ctx) { put_keys << ctx.params[:key]; {} })
+
+      publisher.republish_ui
+
+      expect(calls.count { |c| c.start_with?("wrangler deploy") }).to eq(1)
+      expect(put_keys).to be_empty
+      expect(staged).to include("index.html", "feed.xml", "manifest.json")
+    end
+
+    it "aborts when the ledger does not exist yet" do
+      publisher = build_publisher
+      allow(publisher).to receive(:system).and_return(true)
+
+      expect { publisher.republish_ui }.to raise_error(SystemExit)
+    end
   end
 
   describe "#upload_content" do
-    let(:publisher) { described_class.new(bucket: "test-bucket") }
-
-    it "passes gcloud a cp invocation with the content-type and the tempfile that holds the content" do
+    it "writes under the audio prefix with the given content type" do
+      publisher = build_publisher
       captured = nil
-      written = nil
-      allow(publisher).to receive(:system) do |*args, **_opts|
-        captured = args
-        # gcloud に渡す直前の一時ファイルの中身を確認する（cp 先ではなく cp 元）。
-        written = File.read(args[-2])
-        true
-      end
+      s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
 
-      publisher.send(:upload_content, "feed.xml", "<feed/>", content_type: "application/atom+xml; charset=utf-8")
+      publisher.send(:upload_content, "a.used.txt", "body", content_type: "text/plain; charset=utf-8")
 
-      expect(captured[0, 3]).to eq(%w[gcloud storage cp])
-      expect(captured).to include("--content-type=application/atom+xml; charset=utf-8")
-      expect(captured.last).to eq("gs://test-bucket/feed.xml")
-      expect(written).to eq("<feed/>")
-    end
-
-    it "adds --cache-control only when given" do
-      with_cc = nil
-      without_cc = nil
-      allow(publisher).to receive(:system) do |*args, **_opts|
-        with_cc.nil? ? (with_cc = args) : (without_cc = args)
-        true
-      end
-
-      publisher.send(:upload_content, "index.html", "<html/>",
-        content_type: "text/html; charset=utf-8", cache_control: "public, max-age=300")
-      publisher.send(:upload_content, "manifest.json", "{}",
-        content_type: "application/manifest+json; charset=utf-8")
-
-      expect(with_cc).to include("--cache-control=public, max-age=300")
-      expect(without_cc.none? { |a| a.start_with?("--cache-control") }).to be true
-    end
-
-    it "removes the tempfile after upload (no leftover)" do
-      tempfile_path = nil
-      allow(publisher).to receive(:system) do |*args, **_opts|
-        tempfile_path = args[-2]
-        true
-      end
-
-      publisher.send(:upload_content, "manifest.json", "{}", content_type: "application/manifest+json")
-
-      expect(tempfile_path).not_to be_nil
-      expect(File.exist?(tempfile_path)).to be false
+      expect(captured[:key]).to eq("audio/a.used.txt")
+      expect(captured[:content_type]).to eq("text/plain; charset=utf-8")
+      expect(captured[:body]).to eq("body")
     end
   end
 
   describe "#run with retention_episodes" do
-    # spec/fixtures/config.yaml の gcs.retention_episodes: 5 を前提に、
-    # 既存 archives.csv へ 5 件の過去回を仕込み、保持件数超過分が
-    # archived/ へ退避されることを検証する。
+    # spec/fixtures/config.yaml の gcs.retention_episodes: 5 が前提。
     let(:existing_rows) do
       (1..5).map do |n|
         date = Date.new(2026, 6, 1) + n
@@ -145,101 +165,108 @@ RSpec.describe Publisher do
     end
     let(:oldest_fname) { existing_rows.first[1] }
 
-    def stub_archives_exist(exists: true)
-      status = instance_double(Process::Status, success?: exists)
-      err = exists ? "" : "One or more URLs matched no objects."
-      allow(Open3).to receive(:capture3).and_return(["", err, status])
-    end
-
-    def stub_gcloud_with_existing_archives(publisher, existing_rows)
-      stub_archives_exist(exists: true)
-      commands = []
-      allow(publisher).to receive(:system) do |*args, **_opts|
-        commands << args.map(&:to_s).join(" ")
-
-        # fetch_existing_archives の `cp gs://.../archives.csv <local_csv>` 呼び出しを
-        # 検知し、ダウンロード先の一時ファイルへ既存台帳を書き込んでおく。
-        if args[0..2] == ["gcloud", "storage", "cp"] && args[3].to_s.end_with?("archives.csv")
-          CSV.open(args[4], "w") { |csv| existing_rows.each { |r| csv << r } }
-        end
-
-        true
-      end
-      commands
-    end
-
-    it "moves episodes beyond the retention limit to archived/ and drops them from archives.csv" do
-      publisher = described_class.new(date: Date.new(2026, 7, 14))
-      commands = stub_gcloud_with_existing_archives(publisher, existing_rows)
+    # 退避先が audio プレフィックス配下だと Worker が R2 から配信し続け、
+    # retention を超えた回が公開されたままになる。
+    it "moves expired episodes out of the audio prefix" do
+      publisher = build_publisher(ledger: ledger_csv(existing_rows))
+      stub_wrangler(publisher)
+      copies = []
+      s3.stub_responses(:copy_object, ->(ctx) { copies << ctx.params; { copy_object_result: {} } })
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(commands).to include(a_string_matching(/gcloud storage mv gs:\S*#{Regexp.escape(oldest_fname)} gs:\S*archived\/#{Regexp.escape(oldest_fname)}/))
-      expect(commands).to include(a_string_matching(/gcloud storage mv gs:\S*#{Regexp.escape(oldest_fname.sub(/\.mp3\z/, '.used.txt'))} gs:\S*archived\//))
-      expect(commands).to include(a_string_matching(/gcloud storage mv gs:\S*#{Regexp.escape(oldest_fname.sub(/\.mp3\z/, '.transcript.txt'))} gs:\S*archived\//))
+      moved = copies.map { |c| [c[:copy_source], c[:key]] }
+      expect(moved).to include(["test-bucket/audio/#{oldest_fname}", "archived/#{oldest_fname}"])
+      expect(copies.map { |c| c[:key] }).to all(start_with("archived/"))
     end
 
     it "does not move anything when within the retention limit" do
-      publisher = described_class.new(date: Date.new(2026, 7, 14))
-      stub_archives_exist(exists: false)
-      commands = []
-
-      allow(publisher).to receive(:system) do |*args, **_opts|
-        commands << args.map(&:to_s).join(" ")
-        true
-      end
+      publisher = build_publisher
+      stub_wrangler(publisher)
+      copied = false
+      s3.stub_responses(:copy_object, ->(_ctx) { copied = true; { copy_object_result: {} } })
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(commands).not_to include(a_string_matching(/gcloud storage mv/))
+      expect(copied).to be false
     end
 
-    it "aborts instead of overwriting the ledger when checking for it hits a transient gcloud failure" do
-      publisher = described_class.new(date: Date.new(2026, 7, 14))
-      status = instance_double(Process::Status, success?: false)
-      allow(Open3).to receive(:capture3).and_return(["", "gcloud crashed: connection reset", status])
+    it "aborts instead of overwriting the ledger when the existence check fails transiently" do
+      publisher = build_publisher
+      s3.stub_responses(:head_object, "InternalError")
       allow(publisher).to receive(:system).and_return(true)
 
-      expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(/transient failure/)
-      expect(publisher).not_to have_received(:system).with(*%w[gcloud storage cp], a_string_matching(/archives\.csv/))
+      expect { publisher.run(mp3_path, used_path, transcript_path) }
+        .to raise_error(Aws::S3::Errors::ServiceError)
+      expect(publisher).not_to have_received(:system)
     end
   end
 
   describe "#clean_archive" do
-    let(:publisher) { described_class.new }
-    let(:success_status) { instance_double(Process::Status, success?: true) }
-    let(:failure_status) { instance_double(Process::Status, success?: false) }
-
-    it "deletes everything under archived/ via gcloud storage rm" do
-      allow(Open3).to receive(:capture3).and_return(["", "", success_status])
+    it "deletes everything under the archived prefix" do
+      publisher = build_publisher
+      s3.stub_responses(:list_objects_v2, {
+        contents: [{ key: "archived/a.mp3" }, { key: "archived/b.mp3" }], is_truncated: false,
+      })
+      captured = nil
+      s3.stub_responses(:delete_objects, ->(ctx) { captured = ctx.params; {} })
 
       publisher.clean_archive
 
-      expect(Open3).to have_received(:capture3).with(
-        "gcloud", "storage", "rm", "--recursive", a_string_matching(%r{gs://\S*/archived/})
-      )
+      expect(captured[:delete][:objects].map { |o| o[:key] }).to eq(["archived/a.mp3", "archived/b.mp3"])
     end
 
-    it "does not abort when archived/ is empty (no matching objects)" do
-      err = "ERROR: (gcloud.storage.rm) The following URLs matched no objects or files:\n"
-      allow(Open3).to receive(:capture3).and_return(["", err, failure_status])
+    it "does not fail when the archived prefix is empty" do
+      publisher = build_publisher
+      s3.stub_responses(:list_objects_v2, { contents: [], is_truncated: false })
 
       expect { publisher.clean_archive }.not_to raise_error
     end
+  end
 
-    it "aborts on a transient gcloud failure instead of reporting success" do
-      err = "ERROR: gcloud crashed (ProxyError): Max retries exceeded\n"
-      allow(Open3).to receive(:capture3).and_return(["", err, failure_status])
+  describe "#object_exists?" do
+    it "returns true when the object is present" do
+      publisher = build_publisher
+      s3.stub_responses(:head_object, {})
 
-      expect { publisher.clean_archive }.to raise_error(SystemExit)
+      expect(publisher.object_exists?("foo.mp3")).to be true
+    end
+
+    it "returns false on genuine absence" do
+      publisher = build_publisher
+      s3.stub_responses(:head_object, "NotFound")
+
+      expect(publisher.object_exists?("foo.mp3")).to be false
+    end
+
+    # 確認失敗を「存在しない」と誤ると既存台帳を上書き消失させる。
+    it "raises instead of returning false on a transient failure" do
+      publisher = build_publisher
+      s3.stub_responses(:head_object, "InternalError")
+
+      expect { publisher.object_exists?("foo.mp3") }.to raise_error(Aws::S3::Errors::ServiceError)
     end
   end
 
-  # updated_at は「publish を実行した時刻」ではなく「コンテンツが変わった時刻」を表す。
-  # ここが崩れると、内容が同じ再 publish や --ui-only で feed.xml の <updated> が動き、
-  # 購読者全員に誤って新着通知が飛ぶ。
+  describe "#public_url" do
+    let(:publisher) { build_publisher }
+
+    it "serves the generated pages from the site root" do
+      expect(publisher.send(:public_url, "index.html")).to eq("https://news.example.com/index.html")
+      expect(publisher.send(:public_url, "feed.xml")).to eq("https://news.example.com/feed.xml")
+    end
+
+    # 再生ページの JS は mp3 URL の拡張子だけを差し替えて兄弟ファイルを引くため、
+    # mp3 とその派生物は同じ階層に並んでいる必要がある。
+    it "serves episode files from the audio prefix so sibling derivation works" do
+      mp3 = publisher.send(:public_url, "ep.mp3")
+
+      expect(mp3).to eq("https://news.example.com/audio/ep.mp3")
+      expect(mp3.sub(/\.mp3\z/, ".used.html")).to eq("https://news.example.com/audio/ep.used.html")
+    end
+  end
+
   describe "#update_archives updated_at semantics" do
-    let(:filename) { File.basename(mp3_path) }
     let(:title) { "宮舞モカの技術ニュース 2026-07-14" }
     let(:used_news) { File.read(used_path) }
     let(:published_at) { "2026-07-14T01:23:45Z" }
@@ -248,76 +275,53 @@ RSpec.describe Publisher do
       ["2026-07-14", File.basename(mp3_path), title, used_news, updated_at]
     end
 
-    # 既存台帳を GCS から取得したように見せる。cp のダウンロード先へ既存行を書き込む。
-    def stub_ledger(publisher, rows)
-      exists = !rows.empty?
-      status = instance_double(Process::Status, success?: exists)
-      err = exists ? "" : "One or more URLs matched no objects."
-      allow(Open3).to receive(:capture3).and_return(["", err, status])
-
-      allow(publisher).to receive(:system) do |*args, **_opts|
-        if args[0..2] == %w[gcloud storage cp] && args[3].to_s.end_with?("archives.csv")
-          CSV.open(args[4], "w") { |csv| rows.each { |r| csv << r } }
-        end
-        true
-      end
-    end
-
-    def updated_at_after_run(existing_row)
-      publisher = described_class.new(date: Date.new(2026, 7, 14), title: title)
-      stub_ledger(publisher, [existing_row])
+    def updated_at_after_run(row)
+      publisher = build_publisher(ledger: ledger_csv([row]), title: title)
       rows = publisher.send(:update_archives, File.basename(mp3_path), used_news)
       rows.find { |r| r[1] == File.basename(mp3_path) }[4]
     end
 
     it "keeps the existing updated_at when re-publishing identical title and used_news" do
-      row = existing_row(title: title, used_news: used_news, updated_at: published_at)
-
-      expect(updated_at_after_run(row)).to eq(published_at)
+      expect(updated_at_after_run(existing_row(title: title, used_news: used_news, updated_at: published_at)))
+        .to eq(published_at)
     end
 
     it "advances updated_at when used_news changed" do
-      row = existing_row(title: title, used_news: "## 別の内容\n", updated_at: published_at)
-
-      expect(updated_at_after_run(row)).not_to eq(published_at)
+      expect(updated_at_after_run(existing_row(title: title, used_news: "## 別の内容\n", updated_at: published_at)))
+        .not_to eq(published_at)
     end
 
     it "advances updated_at when the title changed" do
-      row = existing_row(title: "古いタイトル", used_news: used_news, updated_at: published_at)
-
-      expect(updated_at_after_run(row)).not_to eq(published_at)
+      expect(updated_at_after_run(existing_row(title: "古いタイトル", used_news: used_news, updated_at: published_at)))
+        .not_to eq(published_at)
     end
 
     it "assigns the current time for a brand-new episode" do
-      publisher = described_class.new(date: Date.new(2026, 7, 14), title: title)
-      stub_ledger(publisher, [])
+      publisher = build_publisher(title: title)
 
-      rows = publisher.send(:update_archives, filename, used_news)
+      rows = publisher.send(:update_archives, File.basename(mp3_path), used_news)
 
       expect(rows.first[4]).to match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/)
     end
 
-    # 過去に updated_at 列が空で記録された行から引き継ぐと <updated> が空になり
-    # Atom として壊れるので、その場合は現在時刻を入れる。
+    # 空のまま引き継ぐと <updated> が空になり Atom として壊れる。
     it "falls back to the current time when the existing updated_at is blank" do
-      row = existing_row(title: title, used_news: used_news, updated_at: "")
-
-      expect(updated_at_after_run(row)).to match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/)
+      expect(updated_at_after_run(existing_row(title: title, used_news: used_news, updated_at: "")))
+        .to match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/)
     end
 
     it "does not move feed <updated> when re-publishing identical content" do
       row = existing_row(title: title, used_news: used_news, updated_at: published_at)
-      publisher = described_class.new(date: Date.new(2026, 7, 14), title: title)
-      stub_ledger(publisher, [row])
+      publisher = build_publisher(ledger: ledger_csv([row]), title: title)
 
-      rows = publisher.send(:update_archives, filename, used_news)
+      rows = publisher.send(:update_archives, File.basename(mp3_path), used_news)
 
       expect(publisher.send(:render_feed, rows)).to include("<updated>#{published_at}</updated>")
     end
   end
 
   describe "#render_feed_entry" do
-    let(:publisher) { described_class.new(date: Date.new(2026, 7, 14)) }
+    let(:publisher) { build_publisher }
 
     def content_of(xml)
       xml[%r{<content type="html">(.*)</content>}m, 1]
@@ -403,7 +407,7 @@ RSpec.describe Publisher do
     # 番組名を PROGRAM_NAME の実値と別の文字列に差し替えて描画する。テンプレートが
     # 定数を参照せずリテラルをハードコードしていると、この値が反映されず検出できる。
     let(:program_name) { "テスト番組名XYZ" }
-    let(:publisher) { described_class.new(date: Date.new(2026, 7, 14)) }
+    let(:publisher) { build_publisher }
     let(:rows) do
       [["2026-07-14", "miyamai_news_20260714_afternoon.mp3", "回タイトル 2026-07-14", "", "2026-07-14T00:00:00Z"]]
     end
@@ -422,41 +426,6 @@ RSpec.describe Publisher do
       xml = publisher.send(:render_feed, rows)
 
       expect(xml).to include("<title>#{program_name}</title>")
-    end
-  end
-
-  describe "#object_exists?" do
-    let(:publisher) { described_class.new }
-    let(:success_status) { instance_double(Process::Status, success?: true) }
-    let(:failure_status) { instance_double(Process::Status, success?: false) }
-
-    it "returns true when gcloud storage ls succeeds" do
-      allow(Open3).to receive(:capture3).and_return(["", "", success_status])
-
-      expect(publisher.object_exists?("foo.mp3")).to be true
-      expect(Open3).to have_received(:capture3).with(
-        "gcloud", "storage", "ls", a_string_matching(%r{gs://.*/foo\.mp3})
-      )
-    end
-
-    it "returns false when gcloud reports no matching objects (genuine absence)" do
-      err = "ERROR: (gcloud.storage.ls) One or more URLs matched no objects.\n"
-      allow(Open3).to receive(:capture3).and_return(["", err, failure_status])
-
-      expect(publisher.object_exists?("foo.mp3")).to be false
-    end
-
-    it "raises instead of returning false on a transient gcloud failure" do
-      err = "ERROR: (gcloud.storage.ls) Your current active account does not have any valid credentials\n"
-      allow(Open3).to receive(:capture3).and_return(["", err, failure_status])
-
-      expect { publisher.object_exists?("foo.mp3") }.to raise_error(/transient failure/)
-    end
-
-    it "raises a descriptive error when gcloud itself is not installed" do
-      allow(Open3).to receive(:capture3).and_raise(Errno::ENOENT.new("gcloud"))
-
-      expect { publisher.object_exists?("foo.mp3") }.to raise_error(/gcloud not found/)
     end
   end
 end

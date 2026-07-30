@@ -4,22 +4,29 @@ require "date"
 require "csv"
 require "json"
 require "cgi"
-require "tempfile"
-require "open3"
+require "fileutils"
+require "tmpdir"
 require_relative "internal/config"
 require_relative "internal/template_renderer"
-require_relative "internal/command_error"
 require_relative "internal/used_news_markdown"
 require_relative "internal/used_news_formatter"
+require_relative "internal/r2_storage"
 require_relative "slot"
 
 class Publisher
   PROGRAM_NAME = "宮舞モカの技術ニュース"
 
-  def initialize(bucket: default_bucket, date: Date.today, title: nil)
+  # Workers static assets として配信するオブジェクト。これ以外は R2 に置く。
+  SITE_OBJECTS = ["index.html", "feed.xml", "manifest.json"].freeze
+
+  # 台帳。audio プレフィックスの外に置き、公開されないようにする。
+  ARCHIVES_OBJECT = "archives.csv"
+
+  def initialize(bucket: default_bucket, date: Date.today, title: nil, storage: nil)
     @bucket = bucket
     @date   = date
     @title  = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
+    @storage = storage
   end
 
   EPISODE_FILE_EXTENSIONS = [".mp3", ".used.txt", ".transcript.txt"].freeze
@@ -43,9 +50,7 @@ class Publisher
     end
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
     rows = update_archives(filename, used_news)
-    write_index(rows)
-    write_feed(rows)
-    write_manifest
+    deploy_site(rows)
 
     puts "done: #{public_url('index.html')}"
   end
@@ -54,75 +59,60 @@ class Publisher
     rows = fetch_existing_archives
     abort("archives.csv does not exist yet (nothing published)") if rows.empty?
 
-    write_index(rows)
-    write_manifest
+    deploy_site(rows)
 
     puts "done (UI only): #{public_url('index.html')}"
   end
 
   def object_exists?(object)
-    _out, err, status = Open3.capture3("gcloud", "storage", "ls", "gs://#{@bucket}/#{object}")
-    return true if status.success?
-    return false if err.include?("matched no objects")
-
-    raise "gcloud storage ls failed (not a \"no objects\" result, treating as a transient " \
-      "failure to avoid mistaking it for absence): #{Internal::CommandError.tail(err)}"
-  rescue Errno::ENOENT => e
-    raise "gcloud not found: #{e.message}"
+    storage.exist?(object)
   end
 
   def clean_archive
-    _out, err, status = Open3.capture3("gcloud", "storage", "rm", "--recursive", "gs://#{@bucket}/archived/**")
-    unless status.success? || err.include?("matched no objects")
-      abort("gcloud storage rm failed: #{Internal::CommandError.tail(err)}")
-    end
+    count = storage.delete_prefix("#{Internal::R2Storage::ARCHIVE_PREFIX}/")
 
-    puts "done: cleaned gs://#{@bucket}/archived/"
+    puts "done: cleaned #{count} object(s) under #{Internal::R2Storage::ARCHIVE_PREFIX}/"
   end
 
   private
 
-  def public_base = Config.gcs.public_base
-  def default_bucket = Config.gcs.bucket
+  def public_base = Config.cloudflare.public_base
+  def default_bucket = Config.cloudflare.bucket
   def retention_episodes = Config.gcs.retention_episodes
   def cover_image = Config.assets.cover_image
   def icon_image = Config.assets.icon_image
+  def audio_prefix = Config.cloudflare.audio_prefix
 
-  def public_url(object)
-    "#{public_base}/#{@bucket}/#{object}"
+  def storage
+    @storage ||= Internal::R2Storage.new(
+      bucket: @bucket,
+      account_id: Config.cloudflare.account_id,
+      audio_prefix: audio_prefix
+    )
   end
+
+  # static assets 配信のものはドメイン直下、それ以外（mp3 とその兄弟ファイル）は
+  # audio プレフィックス配下を指す。再生ページの JS が mp3 URL の拡張子だけを
+  # 差し替えて .used.html / .transcript.txt を引くため、両者は同じ階層に並ぶ。
+  def public_url(object)
+    return site_url(object) if SITE_OBJECTS.include?(object)
+
+    "#{public_base}/#{audio_prefix}/#{object}"
+  end
+
+  def site_url(object) = "#{public_base}/#{object}"
 
   def upload_content(object, content, content_type:, cache_control: nil)
-    Tempfile.create("miyamai") do |f|
-      f.write(content)
-      f.flush
-      args = ["cp", "--content-type=#{content_type}"]
-      args << "--cache-control=#{cache_control}" if cache_control
-      gcloud_storage(*args, f.path, "gs://#{@bucket}/#{object}")
-    end
-  end
-
-  def gcloud_storage(*args)
-    system("gcloud", "storage", *args) ||
-      abort("gcloud storage failed: #{["gcloud", "storage", *args].join(' ')}")
-  end
-
-  def gcloud_storage_mv(object)
-    args = ["mv", "gs://#{@bucket}/#{object}", "gs://#{@bucket}/archived/#{object}"]
-    system("gcloud", "storage", *args) ||
-      raise("gcloud storage mv failed: #{["gcloud", "storage", *args].join(' ')}")
+    storage.put(storage.audio_key(object), content,
+      content_type: content_type, cache_control: cache_control)
   end
 
   # --- mp3 ---------------------------------------------------------------
 
   def upload_mp3(local_path, filename)
     abort("mp3 not found: #{local_path}") unless File.exist?(local_path)
-    gcloud_storage(
-      "cp",
-      "--content-type=audio/mpeg",
-      "--content-disposition=inline",
-      local_path, "gs://#{@bucket}/#{filename}"
-    )
+    storage.put_file(storage.audio_key(filename), local_path,
+      content_type: "audio/mpeg", cache_control: "public, max-age=31536000, immutable")
   end
 
   # --- used news ---------------------------------------------------------
@@ -150,11 +140,8 @@ class Publisher
 
   def upload_transcript(local_path, object)
     abort("transcript not found: #{local_path}") unless File.exist?(local_path)
-    gcloud_storage(
-      "cp",
-      "--content-type=text/plain; charset=utf-8",
-      local_path, "gs://#{@bucket}/#{object}"
-    )
+    storage.put_file(storage.audio_key(object), local_path,
+      content_type: "text/plain; charset=utf-8")
   end
 
   # --- archives.csv ------------------------------------------------------
@@ -173,7 +160,7 @@ class Publisher
     expired_rows.each { |r| archive_episode_files(r[1]) }
 
     csv = CSV.generate { |out| rows.each { |r| out << r } }
-    upload_content("archives.csv", csv, content_type: "text/csv")
+    storage.put(ARCHIVES_OBJECT, csv, content_type: "text/csv")
 
     rows
   end
@@ -186,11 +173,13 @@ class Publisher
     prior.empty? ? now_rfc3339 : prior
   end
 
+  # 退避先は audio プレフィックスの外（archived/）。中に置くと Worker が R2 から
+  # 配信し続け、retention を超えた回が公開されたままになる。
   def archive_episode_files(filename)
     used_txt_object = filename.sub(/\.mp3\z/, ".used.txt")
     objects = self.class.episode_object_names(filename) + [self.class.used_news_html_object(used_txt_object)]
     objects.each do |object|
-      gcloud_storage_mv(object)
+      storage.move(storage.audio_key(object), storage.archive_key(object))
     rescue StandardError => e
       warn "archive skipped: #{e.message}"
     end
@@ -199,26 +188,57 @@ class Publisher
   def fetch_existing_archives
     return [] unless archives_exist?
 
-    Tempfile.create("miyamai_archives") do |f|
-      ok = system("gcloud", "storage", "cp", "gs://#{@bucket}/archives.csv", f.path,
-        out: File::NULL, err: File::NULL)
-      abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)") unless ok
-
-      CSV.read(f.path)
-    end
+    CSV.parse(storage.get(ARCHIVES_OBJECT))
+  rescue Internal::R2Storage::Missing
+    abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)")
   end
 
   def archives_exist?
-    object_exists?("archives.csv")
+    storage.exist?(ARCHIVES_OBJECT)
+  end
+
+  # --- Workers static assets へのデプロイ ---------------------------------
+
+  # Hosting のデプロイはバージョン単位で、ステージングに無いものは消える。
+  # そのため画像も含めた全ファイルを毎回書き出してから 1 回だけ deploy する。
+  def deploy_site(rows)
+    Dir.mktmpdir("miyamai_site") do |dir|
+      File.write(File.join(dir, "index.html"), render_html(rows))
+      File.write(File.join(dir, "feed.xml"), render_feed(rows))
+      File.write(File.join(dir, "manifest.json"), render_manifest)
+      stage_static_assets(dir)
+      write_headers(dir)
+      wrangler_deploy(dir)
+    end
+  end
+
+  def stage_static_assets(dir)
+    [icon_image, cover_image].each do |name|
+      abort("asset not found: #{name} (needed for the static assets deploy)") unless File.exist?(name)
+      FileUtils.cp(name, File.join(dir, File.basename(name)))
+    end
+  end
+
+  # feed.xml の Content-Type は拡張子ベースだと application/xml 系になるため
+  # _headers で上書きする。audio プレフィックス配下（Worker が返す経路）には
+  # _headers が適用されないので、そちらは Worker 側でヘッダーを付ける。
+  def write_headers(dir)
+    File.write(File.join(dir, "_headers"), <<~HEADERS)
+      /index.html
+        Cache-Control: public, max-age=300
+      /feed.xml
+        Cache-Control: public, max-age=300
+        Content-Type: application/atom+xml; charset=utf-8
+    HEADERS
+  end
+
+  def wrangler_deploy(dir)
+    args = ["deploy", "--assets", dir]
+    system("wrangler", *args) ||
+      abort("wrangler deploy failed: #{["wrangler", *args].join(' ')}")
   end
 
   # --- index.html --------------------------------------------------------
-
-  def write_index(rows)
-    upload_content("index.html", render_html(rows),
-      content_type: "text/html; charset=utf-8",
-      cache_control: "public, max-age=300")
-  end
 
   def render_html(rows)
     abort("no archives to render") if rows.empty?
@@ -236,19 +256,14 @@ class Publisher
       page_url: public_url("index.html"),
       feed_url: public_url("feed.xml"),
       manifest_url: public_url("manifest.json"),
-      icon_url: public_url(icon_image),
-      cover_url: public_url(cover_image),
+      icon_url: site_url(File.basename(icon_image)),
+      cover_url: site_url(File.basename(cover_image)),
       description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
       og_title: PROGRAM_NAME,
       options:)
   end
 
   # --- feed.xml (Atom) ---------------------------------------------------
-
-  def write_feed(rows)
-    upload_content("feed.xml", render_feed(rows),
-      content_type: "application/atom+xml; charset=utf-8")
-  end
 
   def render_feed(rows)
     abort("no archives to render") if rows.empty?
@@ -290,13 +305,8 @@ class Publisher
 
   # --- manifest.json (PWA) -----------------------------------------------
 
-  def write_manifest
-    upload_content("manifest.json", render_manifest,
-      content_type: "application/manifest+json; charset=utf-8")
-  end
-
   def render_manifest
-    TemplateRenderer.render("manifest.json", self, icon_url: public_url(icon_image))
+    TemplateRenderer.render("manifest.json", self, icon_url: site_url(File.basename(icon_image)))
   end
 
   def feed_datetime(date_str, updated_at = nil)

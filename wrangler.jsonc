@@ -1,0 +1,23 @@
+{
+  // Workers static assets（index.html / feed.xml / manifest.json / 画像）と
+  // R2（mp3 とその兄弟ファイル）を同一オリジンで配信する。
+  // assets.directory は publish 時に Publisher が --assets で上書きする。
+  "name": "miyamai-news",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./public",
+    // audio 配下だけ Worker が先に処理して R2 から返す。
+    // config.yaml の cloudflare.audio_prefix と揃える必要がある。
+    "run_worker_first": ["/audio/*"]
+  },
+  "r2_buckets": [
+    {
+      "binding": "AUDIO",
+      "bucket_name": "miyamai-news"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

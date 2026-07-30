@@ -15,6 +15,7 @@ gemfile do
   gem "rexml"
   gem "dry-struct"
   gem "dry-types"
+  gem "aws-sdk-s3"
 end
 
 require "time"

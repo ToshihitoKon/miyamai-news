@@ -156,29 +156,68 @@
 - 直後に文が続かない話題転換タグ（連続するタグなど）は、その pause 指定ごと
   静かに捨てられる（低頻度の許容済みエッジケース）。
 
-### Publisher / GCS（公開先の運用ルール）
+### Publisher / Cloudflare（公開先の運用ルール）
 
-- GCS のオブジェクト名は渡された mp3 ファイル名をそのまま使うこと。日付から
+配信は 2 系統に分かれる。`index.html` / `feed.xml` / `manifest.json` と画像は
+Workers static assets、mp3 とその兄弟ファイル（`.used.txt` / `.used.html` /
+`.transcript.txt`）と `archives.csv` は R2。両方を同一オリジンで配信するため
+CORS 設定は不要。
+
+- オブジェクト名は渡された mp3 ファイル名をそのまま使うこと。日付から
   組み立て直すと slot（朝/昼/夜/深夜）が落ち、同日複数回のエピソードが同名衝突して
   上書きし合う。
+- **mp3 とその兄弟ファイルは同じ `audio/` プレフィックス配下に揃える。**
+  再生ページの JS は mp3 URL の拡張子だけを差し替えて `.used.html` /
+  `.transcript.txt` を引くため（`templates/index.html.erb`）、階層が違うと
+  兄弟ファイルの URL が壊れる。
+- **retention 超過分の退避先は `audio/` の外（`archived/`）にする。**
+  `audio/` 配下に置くと `run_worker_first` の対象なので Worker が R2 から配信し
+  続け、公開を終えたはずの回が読めるままになる。
+- `archives.csv` も `audio/` の外に置く。台帳を公開オリジンから読めるようにする
+  必要はない。
 - `object_exists?` は「オブジェクトが存在しない」と「確認自体に失敗した」を
-  区別する。`gcloud storage ls` は「オブジェクトが無い」場合も他の失敗
-  （認証切れ・ネットワーク障害等）の場合も exit code 1 を返すため、メッセージ内容
-  で判定する。判定不能な失敗を「存在しない」扱いにすると、archives.csv を
-  「初回で台帳が無い」と誤認し、既存台帳を新規 1 行で上書きして過去エピソード
-  全履歴を消失させかねない。
+  区別する。R2 は S3 互換 API なので HeadObject の 404 と 403 / 5xx が例外クラス
+  として分かれ、文言マッチではなく型で判定できる。判定不能な失敗を「存在しない」
+  扱いにすると、archives.csv を「初回で台帳が無い」と誤認し、既存台帳を新規 1 行で
+  上書きして過去エピソード全履歴を消失させかねない。
+- **R2 にサーバーサイドの move / rename は無い。** 退避は CopyObject +
+  DeleteObject の 2 段構えで、copy の成功を確認してから delete する。途中で
+  失敗したときは「元が残る」方に倒す（二重に存在するだけなら次回リトライで
+  解消でき、公開物も壊れない）。逆順にすると復旧不能。退避先キーが決定的なので
+  リトライは冪等（元が無く退避先にあれば `:already_moved` で何もしない）。
 - `archived/` への退避は publish 時に自動で行われるが、実削除はされない。実削除は
-  `Publisher#clean_archive` を明示的に呼んだときだけ行われる。
-- `Publisher#run` 中に `gcloud storage` 操作が 1 つでも失敗したら即 abort する。
-  公開バケットが index.html/feed.xml/manifest.json/archives.csv/mp3 の間で
-  中途半端に不整合な状態のまま残らないようにするため。
-- `Publisher#run` は GCS への書き込みを一切始める前に
+  `Publisher#clean_archive` を明示的に呼んだときだけ行われる（ListObjectsV2 で
+  列挙して DeleteObjects でバッチ削除。`wrangler r2 object delete` は
+  プレフィックス指定に対応していない）。
+- **static assets のデプロイはバージョン単位で、ステージングに無いファイルは
+  公開サイトから消える。** そのため `run` / `republish_ui` のどちらも、画像を
+  含む全ファイルを毎回ステージングディレクトリへ書き出してから 1 回だけ
+  `wrangler deploy` する。画像だけ載せ忘れると初回の `--ui-only` でアートワークが
+  消える。
+- **`_headers` は `run_worker_first` のパス（`audio/*`）に適用されない。**
+  mp3 と兄弟ファイルの `Content-Type` は、Ruby 側が R2 の put 時に設定した値を
+  Worker が `writeHttpMetadata` で反映することで初めて正しくなる。どちらかが
+  欠けると `.used.html` が `application/octet-stream` で返るが、再生ページの JS は
+  fetch 失敗を握り潰して「ニュース一覧はありません」と表示するため、
+  **エラーにならず静かに壊れる**。
+- カスタムドメインの追加は `wrangler deploy` 時に自動で行われ、DNS レコードと
+  証明書も発行される。ただし**対象ホスト名に既存の CNAME レコードがあると失敗する**
+  ので、移行時は先に既存レコードを削除する必要がある。
+- Worker スクリプト（`src/index.js`）はこのリポジトリで唯一の JS 実行コードだが、
+  JS のテスト基盤（Vitest 等）は導入していない。動作確認はプレビュー URL への
+  `curl -I` と実機での再生確認で行う。
+- `Publisher#run` 中に R2 操作または `wrangler deploy` が 1 つでも失敗したら
+  即 abort する。公開物が index.html/feed.xml/manifest.json/archives.csv/mp3 の
+  間で中途半端に不整合な状態のまま残らないようにするため。R2 への書き込みを
+  すべて終えた後に `wrangler deploy` を 1 回だけ実行する順序にしているので、
+  ページが存在しないファイルを参照する瞬間が生じない。
+- `Publisher#run` はストレージへの書き込みを一切始める前に
   `UsedNewsFormatter.ensure_valid!` で used_news のフォーマットを確定させる
   （後述「used_news の表示フォーマット」節参照）。検証・修復に失敗すればここで
   abort し、mp3 を含め何もアップロードしない。「Publisher#run 中に 1 つでも
   失敗したら即 abort する」という上記原則の一部として扱う。
 - `.used.html`（used_news を事前に HTML 化したもの）は `dist/` に実体を持たない
-  GCS 専用の派生物であり、`EPISODE_FILE_EXTENSIONS`（`.mp3`/`.used.txt`/
+  ストレージ専用の派生物であり、`EPISODE_FILE_EXTENSIONS`（`.mp3`/`.used.txt`/
   `.transcript.txt` の3つ固定）には含めない。`archive_episode_files` では
   `.used.html` の退避を個別に fault-tolerant に行う（無ければ mv 失敗を警告に
   留めて継続する既存パターンを踏襲）。
