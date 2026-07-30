@@ -123,7 +123,7 @@ RSpec.describe Internal::Config do
       data = YAML.safe_load_file(File.expand_path("../../fixtures/config_digest.yaml", __dir__))
 
       cfg = described_class.new(data)
-      expect(cfg.gcs).to be_nil
+      expect(cfg.cloudflare).to be_nil
       expect(cfg.voicepeak).to be_nil
     end
 
@@ -135,7 +135,7 @@ RSpec.describe Internal::Config do
 
     it "raises Dry::Struct::Error when a section has the wrong type" do
       data = YAML.safe_load_file(File.expand_path("../../fixtures/config.yaml", __dir__))
-      data["gcs"]["bucket"] = ["not", "a", "string"]
+      data["cloudflare"]["bucket"] = ["not", "a", "string"]
 
       expect { described_class.new(data) }.to raise_error(Dry::Struct::Error)
     end

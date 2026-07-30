@@ -25,7 +25,7 @@ class Episode
     @slot = slot || Slot.for(now)
   end
 
-  # ファイル名・GCS オブジェクト名に使う日付タグ（例: 20260712）。
+  # ファイル名・オブジェクト名に使う日付タグ（例: 20260712）。
   def date_tag = @date.strftime("%Y%m%d")
 
   # 台本プロンプトに埋め込む表示用の日付（例: 2026年07月12日）。

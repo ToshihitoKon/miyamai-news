@@ -489,7 +489,7 @@ JS 側に同じ文法のパーサは存在しない（後述）。パーサ側�
 
 以前は Ruby（feed.xml 用）と JS（index.html 用）の両方に同じ Markdown サブセットの
 パーサを実装していたが、二重実装になるためやめた。現在は **Publisher が publish 時に
-`UsedNewsMarkdown.render` で used_news を HTML 化し、`.used.html` として GCS へ
+`UsedNewsMarkdown.render` で used_news を HTML 化し、`.used.html` としてストレージへ
 事前アップロードする**（`Publisher#upload_used_news_html`）。
 
 - `.used.html` は `UsedNewsMarkdown.render` が `ok` のときだけ作る。`ok=false`
@@ -504,22 +504,22 @@ JS 側に同じ文法のパーサは存在しない（後述）。パーサ側�
   ため。`.used.html` 側は「無ければ JS が `.used.txt` にフォールバックする」ため
   作らない、という判断）。
 - **旧フォーマットとの後方互換**: 移行前の `.used.txt`（`■` 見出し + `・タイトル` +
-  独立 URL 行）は `ok=false` になり、GCS 上にも `.used.html` は存在しない
+  独立 URL 行）は `ok=false` になり、ストレージ上にも `.used.html` は存在しない
   （今回の変更以降に publish された回でしか生成されない）。JS の 404 フォールバックが
-  これを吸収し、GCS に残る過去回は壊れず従来どおり表示される。
+  これを吸収し、ストレージに残る過去回は壊れず従来どおり表示される。
 
 #### フォーマット保証は Publisher の責務（ScriptGenerator ではない）
 
 used_news のフォーマットが厳密に正しいかどうかを検証・保証する責務は
 **`ScriptGenerator` ではなく `UsedNewsFormatter`**（`lib/internal/used_news_formatter.rb`）
-にあり、**Publisher が GCS への書き込みを始める前に呼ぶ**（`UsedNewsFormatter.ensure_valid!`）。
+にあり、**Publisher がストレージへの書き込みを始める前に呼ぶ**（`UsedNewsFormatter.ensure_valid!`）。
 
 - `ScriptGenerator` は「## カテゴリ / ### [タイトル](URL)」形式のそれっぽい
   Markdown を生成するだけで、前置き除去も含めてフォーマットには一切手を入れない
   （work/ の中間ファイルには AI が書いた生のテキストがそのまま残る）。
 - `UsedNewsFormatter.ensure_valid!(text)` は、前置き除去 → `UsedNewsMarkdown.render`
   で検証 → 崩れていれば軽量モデルで修復、の順に整えて返す。修復後もフォーマットが
-  直らなければ **`abort` し、`Publisher#run` 全体を止める**（GCS への書き込みは何も
+  直らなければ **`abort` し、`Publisher#run` 全体を止める**（ストレージへの書き込みは何も
   始まっていない状態で止まるよう、`Publisher#run` の先頭でこの検証を呼んでいる。
   「新規エピソードで壊れた used_news がそのまま公開される」事態を防ぐため。
   used_news が無い回（空文字列）は早期 return し、AI 呼び出し・abort を行わない）。
@@ -620,14 +620,12 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `ai_agent.effort` は現状 `bin == "claude"` のときだけ `Internal::AiCli.run` が
   参照する。実装上対応しているのは claude のみだが、将来 effort に対応する別の
   AI CLI が増えたときに使い回す想定でこのフィールドを用意している。
-- 公開先の検証は 2 種類ある。`Config.validate_gcs!` は R2/GCS のストレージだけを
-  触る操作（`--clean` / `--clean-archive`）用で、`Config.validate_publish_targets!`
-  は配信（Workers へのデプロイ）まで行う `--ui-only` 用に `gcs` + `cloudflare` の
-  両方を要求する。`--ui-only` を前者で通すと、index.html を生成しきってから
-  デプロイ段階で落ちる。
+- `Config.validate_publish_target!` は、mode 判定を通らずに公開先を触る CLI 操作
+  （`--ui-only` / `--clean` / `--clean-archive`）のために独立して存在する。
+  これを通さないと、生成物を作りきってからデプロイ段階で落ちる。
 - `cloudflare` セクションは `pipeline.mode: publish` の必須セクション
   （`REQUIRED_SECTIONS_DELTA`）にも含める。publish は配信まで到達するため、
-  ストレージだけ設定済みで配信先が未設定という状態で起動させない。
+  配信先が未設定という状態で起動させない。
 - R2 の S3 互換 API 認証情報（`R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`）と
   wrangler の認証（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）は
   config.yaml に置かず環境変数で渡す。config.yaml は「機密を持たないから git で
@@ -649,13 +647,11 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 
 ### miyamai_news.rb（CLIエントリポイント）
 
-- CLI 起動時の config 検証: `--ui-only` は `pipeline.mode` とは無関係だが
-  配信（Workers デプロイ）まで到達するため `gcs` + `cloudflare` を要求する
-  （`Config.validate_publish_targets!`）。`--clean`/`--clean-archive` は
-  ストレージのみを触るので `gcs` だけ要求する（`Config.validate_gcs!`）。
-  `--confirm-fetch`/
-  `--restore-fetch` は `work/last_fetch.json` のみを触り GCS も pipeline.mode も
-  伴わないので検証を全てスキップする。それ以外は各コンポーネントが実行中に
+- CLI 起動時の config 検証: `--ui-only`/`--clean`/`--clean-archive` は
+  `pipeline.mode` とは無関係だが公開先（R2・Workers）を触るため
+  `cloudflare` を要求する（`Config.validate_publish_target!`）。
+  `--confirm-fetch`/`--restore-fetch` は `work/last_fetch.json` のみを触り
+  公開先も pipeline.mode も伴わないので検証を全てスキップする。それ以外は各コンポーネントが実行中に
   MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な
   config が揃っているか一括で検証する（`Config.validate_for!`）。
 - `--config` のパス解決は cwd 基準（一般的な CLI の期待動作。`__dir__` 基準だと
@@ -674,7 +670,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   `--synthesize-only` は synthesize 相当、`--publish-only` は publish 相当以上の
   config が検証されていないと実行できないようにする。満たさなければ、必要な config が
   未検証のまま実行が進んで途中で失敗するのを防ぐためここで止める。
-- `clean_published_dist` は、GCS 上に同名オブジェクトが存在する（＝公開済みの）mp3 の
+- `clean_published_dist` は、ストレージ上に同名オブジェクトが存在する（＝公開済みの）mp3 の
   みを削除する。未公開の回を誤って消さないための存在確認。
 
 ### 再生ページの JS（templates/index.html.erb）
@@ -702,7 +698,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   二重に扱ってしまう。`normalize_link` がスキーム直後の "//" を対象外にする負の
   先読みを使っているのは、"https://" 自体を末尾スラッシュ除去で壊さないため。
 - `Episode#now`（収集基準時刻）と `Episode#date`/`date_tag`/`slot`（番組の日付・
-  slot。ファイル名・GCS オブジェクト名・ログパス・Publisher のアーカイブ表示に使う）
+  slot。ファイル名・ストレージのオブジェクト名・ログパス・Publisher のアーカイブ表示に使う）
   は独立した概念で、混同しないこと。`now` の消費者は `ScriptGenerator` 経由で
   `FeedCache`（`seen_at` 記録）・`LastFetchStore`（`since` 判定の起点）のみ。
   `miyamai_news.rb` は `--date`/`--slot` 指定時に `date:`/`slot:` は明示上書きするが、

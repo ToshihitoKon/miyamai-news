@@ -13,11 +13,6 @@ module Internal
       attribute :mode, Types::Strict::String.default("digest")
     end
 
-    class Gcs < Base
-      attribute :bucket, Types::Strict::String
-      attribute :public_base, Types::Strict::String
-    end
-
     class Cloudflare < Base
       attribute :account_id, Types::Strict::String
       attribute :worker_name, Types::Strict::String
@@ -107,7 +102,6 @@ module Internal
     # config.yaml 全体を表す構造体。必須判定は Config.validate_for! が行う。
     class AppConfig < Base
       attribute(:pipeline, Pipeline.default { Pipeline.new({}) })
-      attribute? :gcs, Gcs
       attribute? :cloudflare, Cloudflare
       attribute? :assets, Assets
       attribute? :voicepeak, Voicepeak

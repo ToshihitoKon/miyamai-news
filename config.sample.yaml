@@ -2,12 +2,7 @@
 pipeline:
   mode: digest # RSS収集, AIによるカテゴリ別選別, facts抽出(ニュース要約)
   # mode: synthesize # digest + 音声合成・BGM合成。dist/ に mp3 を書き出す。
-  # mode: publish    # synthesize + GCS への publish
-
-# 旧公開先。移行期間中のみ残す。
-gcs:
-  bucket: your-bucket-name
-  public_base: https://storage.googleapis.com
+  # mode: publish    # synthesize + Cloudflare への publish
 
 # Cloudflare への公開まわり（Workers static assets + R2）。
 # R2 の S3 互換 API 認証情報は config には書かず、環境変数で渡す。

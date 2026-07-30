@@ -4,7 +4,7 @@ require "yaml"
 require_relative "config/schema"
 
 # config.yaml を dry-struct で型付き構造体（AppConfig）にロードし、
-# セクション名のメソッド（例: Config.gcs.bucket）で設定値を引くローダー。
+# セクション名のメソッド（例: Config.cloudflare.bucket）で設定値を引くローダー。
 # 環境依存値をここに集約する（セットアップは README 参照）。
 module Config
   # config.yaml はプロジェクトルート（lib/internal/ の二つ上）に置く。
@@ -18,16 +18,16 @@ module Config
   class InvalidConfigError < StandardError; end
 
   # pipeline.mode の3段階と、その到達順序。値が大きいほど後段まで進む。
-  #   digest:     RSS収集 → AI選別 → facts抽出まで。外部ツール・GCSに依存しない。
+  #   digest:     RSS収集 → AI選別 → facts抽出まで。外部ツール・公開先に依存しない。
   #   synthesize: digest の続きから音声合成・BGM合成まで。
-  #   publish:    synthesize の続きから GCS publish まで（フルパイプライン）。
+  #   publish:    synthesize の続きから公開まで（フルパイプライン）。
   MODE_ORDER = { "digest" => 0, "synthesize" => 1, "publish" => 2 }.freeze
 
   # 各 mode で新たに必須になる config のトップレベルセクション名の差分。
   REQUIRED_SECTIONS_DELTA = {
     "digest" => %w[ai_agent program_details rss_feed_sources collect],
     "synthesize" => %w[voicepeak mixer assets],
-    "publish" => %w[gcs cloudflare],
+    "publish" => %w[cloudflare],
   }.freeze
 
   class << self
@@ -45,7 +45,6 @@ module Config
 
     def mode = app_config.pipeline.mode
 
-    def gcs = app_config.gcs
     def cloudflare = app_config.cloudflare
     def assets = app_config.assets
     def voicepeak = app_config.voicepeak
@@ -69,22 +68,12 @@ module Config
         "missing config sections for pipeline.mode=#{target_mode}:\n" + missing.map { |s| "  - #{s}" }.join("\n")
     end
 
-    # gcs セクション単体の存在を検証する。mode 別の validate_for! では拾えない
-    # gcs 単体の欠落をここで見る。
-    def validate_gcs!
-      return if gcs
+    # 公開先の設定が揃っているか検証する。mode 判定を通らずに公開先を触る
+    # CLI 操作（--ui-only / --clean / --clean-archive）で使う。
+    def validate_publish_target!
+      return if cloudflare
 
-      raise MissingKeyError, "missing config section: gcs"
-    end
-
-    # 公開先（ストレージ + 配信）が揃っているか検証する。--ui-only のように
-    # mode 判定を通らずに publish 相当の書き込みを行う経路で使う。
-    def validate_publish_targets!
-      missing = %w[gcs cloudflare].reject { |section| public_send(section) }
-      return if missing.empty?
-
-      raise MissingKeyError,
-        "missing config sections for publishing:\n" + missing.map { |s| "  - #{s}" }.join("\n")
+      raise MissingKeyError, "missing config section: cloudflare"
     end
 
     private

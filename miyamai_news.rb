@@ -64,10 +64,8 @@ ARGS = parse_args(ARGV)
 begin
   Config.path = File.expand_path(ARGS[:config]) if ARGS[:config]
 
-  if ARGS[:ui_only]
-    Config.validate_publish_targets!
-  elsif ARGS[:clean] || ARGS[:clean_archive]
-    Config.validate_gcs!
+  if ARGS[:ui_only] || ARGS[:clean] || ARGS[:clean_archive]
+    Config.validate_publish_target!
   elsif !ARGS[:confirm_fetch] && !ARGS[:restore_fetch]
     Config.validate_for!(Config.mode)
   end
@@ -286,7 +284,7 @@ def clean_work_dir
   warn "reset work dir: #{WORK_DIR}"
 end
 
-# dist/ の各 mp3 のうち、GCS 上に同名が存在する（＝公開済みの）ものだけを削除する。
+# dist/ の各 mp3 のうち、公開先に同名が存在する（＝公開済みの）ものだけを削除する。
 # used.txt/transcript.txt は対の mp3 とセットで扱う。
 def clean_published_dist
   mp3s = Dir.glob(File.join(DIST_DIR, "miyamai_news_*.mp3"))

@@ -5,12 +5,6 @@
 pipeline:
   mode: publish
 
-# GCS への公開まわり。
-gcs:
-  # 成果物を置く GCS バケット名。
-  bucket: your-bucket-name
-  # 公開 URL のベース。通常はこのままでよい。
-  public_base: https://storage.googleapis.com
 
 # Cloudflare への公開まわり（Workers static assets + R2）。
 cloudflare:
