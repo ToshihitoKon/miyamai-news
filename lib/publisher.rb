@@ -91,7 +91,7 @@ class Publisher
   def upload_mp3(local_path, filename)
     abort("mp3 not found: #{local_path}") unless File.exist?(local_path)
     @site.upload_episode_file(filename, local_path,
-      content_type: "episodes/mpeg", cache_control: "public, max-age=31536000, immutable")
+      content_type: "audio/mpeg", cache_control: "public, max-age=31536000, immutable")
   end
 
   # --- used news ---------------------------------------------------------

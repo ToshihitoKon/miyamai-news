@@ -27,7 +27,7 @@ abort("usage: #{$PROGRAM_NAME} --from <gcs-bucket> [--apply]") unless SOURCE_BUC
 EPISODE_SUFFIXES = [".mp3", ".used.txt", ".used.html", ".transcript.txt"].freeze
 
 CONTENT_TYPES = {
-  ".mp3" => "episodes/mpeg",
+  ".mp3" => "audio/mpeg",
   ".used.txt" => "text/plain; charset=utf-8",
   ".used.html" => "text/html; charset=utf-8",
   ".transcript.txt" => "text/plain; charset=utf-8",

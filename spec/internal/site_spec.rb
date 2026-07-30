@@ -109,11 +109,11 @@ RSpec.describe Internal::Site do
         path = File.join(dir, "ep.mp3")
         File.write(path, "fake mp3")
 
-        site.upload_episode_file("ep.mp3", path, content_type: "episodes/mpeg")
+        site.upload_episode_file("ep.mp3", path, content_type: "audio/mpeg")
       end
 
       expect(captured[:key]).to eq("episodes/ep.mp3")
-      expect(captured[:content_type]).to eq("episodes/mpeg")
+      expect(captured[:content_type]).to eq("audio/mpeg")
     end
   end
 

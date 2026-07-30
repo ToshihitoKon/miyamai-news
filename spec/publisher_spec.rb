@@ -143,6 +143,40 @@ RSpec.describe Publisher do
     end
   end
 
+  # Content-Type は R2 のメタデータとして保存され Worker がそのまま返すため、
+  # 誤った値でも配信は 200 で通り、再生や表示だけが静かに壊れる。
+  describe "content types" do
+    it "stores each episode file with a valid, correct media type" do
+      publisher = build_publisher
+      seen = {}
+      s3.stub_responses(:put_object, ->(ctx) { seen[ctx.params[:key]] = ctx.params[:content_type]; {} })
+
+      publisher.run(mp3_path, used_path, transcript_path)
+
+      base = "episodes/miyamai_news_20260714_afternoon"
+      expect(seen["#{base}.mp3"]).to eq("audio/mpeg")
+      expect(seen["#{base}.used.html"]).to start_with("text/html")
+      expect(seen["#{base}.used.txt"]).to start_with("text/plain")
+      expect(seen["#{base}.transcript.txt"]).to start_with("text/plain")
+      expect(seen["archives.csv"]).to eq("text/csv")
+    end
+
+    # プレフィックス名が MIME タイプへ紛れ込む一括置換の事故を防ぐ
+    # （episodes/mpeg のような値は IANA のトップレベル型に無い）。
+    it "never uses a storage prefix as a media type" do
+      publisher = build_publisher
+      types = []
+      s3.stub_responses(:put_object, ->(ctx) { types << ctx.params[:content_type]; {} })
+
+      publisher.run(mp3_path, used_path, transcript_path)
+
+      valid_toplevel = %w[application audio font image model multipart text video]
+      types.compact.each do |type|
+        expect(valid_toplevel).to include(type.split("/").first)
+      end
+    end
+  end
+
   describe "#upload_content" do
     it "writes under the episode prefix with the given content type" do
       publisher = build_publisher
