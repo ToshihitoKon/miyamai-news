@@ -136,6 +136,27 @@ RSpec.describe Internal::R2Storage do
     end
   end
 
+  # クライアントは遅延生成なので、@client を直接参照するメソッドがあると
+  # 注入なしの実運用経路だけ nil で落ちる（spec は常に注入するので気づけない）。
+  describe "lazy client wiring" do
+    it "builds the client on first use for every request method" do
+      ENV["R2_ACCESS_KEY_ID"] = "test-key"
+      ENV["R2_SECRET_ACCESS_KEY"] = "test-secret"
+      lazy = described_class.new(bucket: "b", account_id: "acct")
+
+      # 認証情報だけ用意して、各メソッドが nil 参照で落ちないことを見る。
+      # 実際の通信は行わないので接続エラーで止まる分には問題ない。
+      %i[list exist?].each do |method|
+        lazy.public_send(method, "prefix/")
+      rescue Aws::S3::Errors::ServiceError, Seahorse::Client::NetworkingError
+        nil # 通信段階まで到達していればクライアントは組み立てられている
+      end
+    ensure
+      ENV.delete("R2_ACCESS_KEY_ID")
+      ENV.delete("R2_SECRET_ACCESS_KEY")
+    end
+  end
+
   describe "#delete_prefix" do
     it "deletes every listed key and reports the count" do
       client.stub_responses(:list_objects_v2, {

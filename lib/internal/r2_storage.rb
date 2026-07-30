@@ -72,7 +72,7 @@ module Internal
       keys = []
       token = nil
       loop do
-        res = @client.list_objects_v2(bucket: @bucket, prefix: prefix, continuation_token: token)
+        res = client.list_objects_v2(bucket: @bucket, prefix: prefix, continuation_token: token)
         keys.concat(res.contents.map(&:key))
         break unless res.is_truncated
 
