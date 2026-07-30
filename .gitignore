@@ -17,6 +17,11 @@
 # ツール類
 /.ruby-lsp/
 /.serena/cache/
+# wrangler のローカル状態
+/.wrangler/
+/node_modules/
+# 配信物は publish が一時ディレクトリへ生成する（リポジトリには持たない）
+/public/
 
 # Ruby バージョンはチームで共有する（グローバル gitignore の除外を上書き）
 !.tool-versions

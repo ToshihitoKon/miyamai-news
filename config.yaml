@@ -2,9 +2,17 @@ pipeline:
   mode: publish
 
 gcs:
-  bucket: nidodm-miyamai-news
+  bucket: nidodm-miyamai-news-no
   public_base: https://storage.googleapis.com
   retention_episodes: 8
+
+cloudflare:
+  account_id: a7c21e337559181c8411558d71429de0
+  worker_name: miyamai-news
+  bucket: miyamai-news
+  public_base: https://miyamai-news.temama.soy
+  retention_episodes: 8
+  episode_prefix: episodes
 
 assets:
   bgm_path: 古びた魔法書_気まぐれBGM工房.mp3

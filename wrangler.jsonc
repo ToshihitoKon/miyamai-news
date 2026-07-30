@@ -1,0 +1,32 @@
+{
+  // Workers static assets（index.html / feed.xml / manifest.json / 画像）と
+  // R2（mp3 とその兄弟ファイル）を同一オリジンで配信する。
+  // 配信物は publish が一時ディレクトリへ生成し --assets で渡す。
+  "name": "miyamai-news",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-01",
+  // directory を書かないのは、素の `wrangler deploy` でサイトを壊さないため。
+  // 配信物は publish が生成するので、常に --assets <ステージング> で渡す。
+  "assets": {
+    // episodes / assets 配下だけ Worker が先に処理して R2 から返す。
+    // episodes は config.yaml の cloudflare.episode_prefix と揃える必要がある。
+    "run_worker_first": ["/episodes/*", "/assets/*"]
+  },
+  "r2_buckets": [
+    {
+      "binding": "EPISODES",
+      "bucket_name": "miyamai-news"
+    }
+  ],
+  // deploy 時に DNS レコードと証明書が自動発行される。
+  // config.yaml の cloudflare.public_base と揃える必要がある。
+  "routes": [
+    {
+      "pattern": "miyamai-news.temama.soy",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

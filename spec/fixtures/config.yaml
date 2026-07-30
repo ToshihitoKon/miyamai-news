@@ -11,6 +11,13 @@ gcs:
   bucket: your-bucket-name
   # 公開 URL のベース。通常はこのままでよい。
   public_base: https://storage.googleapis.com
+
+# Cloudflare への公開まわり（Workers static assets + R2）。
+cloudflare:
+  account_id: test-account-id
+  worker_name: miyamai-news-test
+  bucket: test-bucket
+  public_base: https://news.example.com
   # archives.csv で保持するエピソード数の上限。
   retention_episodes: 5
 

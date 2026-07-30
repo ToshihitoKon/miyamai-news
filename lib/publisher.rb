@@ -4,22 +4,26 @@ require "date"
 require "csv"
 require "json"
 require "cgi"
-require "tempfile"
-require "open3"
+require "fileutils"
+require "tmpdir"
 require_relative "internal/config"
 require_relative "internal/template_renderer"
-require_relative "internal/command_error"
 require_relative "internal/used_news_markdown"
 require_relative "internal/used_news_formatter"
+require_relative "internal/site"
 require_relative "slot"
 
 class Publisher
   PROGRAM_NAME = "宮舞モカの技術ニュース"
 
-  def initialize(bucket: default_bucket, date: Date.today, title: nil)
-    @bucket = bucket
-    @date   = date
-    @title  = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
+  # feed 自身の <id> に使う発行日。フィードの同一性を表すので、
+  # 一度決めたら変えない（変えると購読者が別フィードとして扱う）。
+  FEED_ID_DATE = "2026-07-31"
+
+  def initialize(date: Date.today, title: nil, site: nil)
+    @date  = date
+    @title = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
+    @site  = site || Internal::Site.from_config
   end
 
   EPISODE_FILE_EXTENSIONS = [".mp3", ".used.txt", ".transcript.txt"].freeze
@@ -43,9 +47,7 @@ class Publisher
     end
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
     rows = update_archives(filename, used_news)
-    write_index(rows)
-    write_feed(rows)
-    write_manifest
+    deploy_site(rows)
 
     puts "done: #{public_url('index.html')}"
   end
@@ -54,75 +56,42 @@ class Publisher
     rows = fetch_existing_archives
     abort("archives.csv does not exist yet (nothing published)") if rows.empty?
 
-    write_index(rows)
-    write_manifest
+    deploy_site(rows)
 
     puts "done (UI only): #{public_url('index.html')}"
   end
 
   def object_exists?(object)
-    _out, err, status = Open3.capture3("gcloud", "storage", "ls", "gs://#{@bucket}/#{object}")
-    return true if status.success?
-    return false if err.include?("matched no objects")
-
-    raise "gcloud storage ls failed (not a \"no objects\" result, treating as a transient " \
-      "failure to avoid mistaking it for absence): #{Internal::CommandError.tail(err)}"
-  rescue Errno::ENOENT => e
-    raise "gcloud not found: #{e.message}"
+    @site.episode_file_exist?(object)
   end
 
   def clean_archive
-    _out, err, status = Open3.capture3("gcloud", "storage", "rm", "--recursive", "gs://#{@bucket}/archived/**")
-    unless status.success? || err.include?("matched no objects")
-      abort("gcloud storage rm failed: #{Internal::CommandError.tail(err)}")
-    end
+    count = @site.purge_retired
 
-    puts "done: cleaned gs://#{@bucket}/archived/"
+    puts "done: cleaned #{count} retired object(s)"
   end
 
   private
 
-  def public_base = Config.gcs.public_base
-  def default_bucket = Config.gcs.bucket
-  def retention_episodes = Config.gcs.retention_episodes
+  def retention_episodes = @site.retention_episodes
   def cover_image = Config.assets.cover_image
   def icon_image = Config.assets.icon_image
 
-  def public_url(object)
-    "#{public_base}/#{@bucket}/#{object}"
-  end
+  def public_url(object) = @site.url_for(object)
+  def site_url(object) = @site.page_url(object)
+  def asset_url(name) = @site.asset_url(File.basename(name))
 
   def upload_content(object, content, content_type:, cache_control: nil)
-    Tempfile.create("miyamai") do |f|
-      f.write(content)
-      f.flush
-      args = ["cp", "--content-type=#{content_type}"]
-      args << "--cache-control=#{cache_control}" if cache_control
-      gcloud_storage(*args, f.path, "gs://#{@bucket}/#{object}")
-    end
-  end
-
-  def gcloud_storage(*args)
-    system("gcloud", "storage", *args) ||
-      abort("gcloud storage failed: #{["gcloud", "storage", *args].join(' ')}")
-  end
-
-  def gcloud_storage_mv(object)
-    args = ["mv", "gs://#{@bucket}/#{object}", "gs://#{@bucket}/archived/#{object}"]
-    system("gcloud", "storage", *args) ||
-      raise("gcloud storage mv failed: #{["gcloud", "storage", *args].join(' ')}")
+    @site.write_episode_file(object, content,
+      content_type: content_type, cache_control: cache_control)
   end
 
   # --- mp3 ---------------------------------------------------------------
 
   def upload_mp3(local_path, filename)
     abort("mp3 not found: #{local_path}") unless File.exist?(local_path)
-    gcloud_storage(
-      "cp",
-      "--content-type=audio/mpeg",
-      "--content-disposition=inline",
-      local_path, "gs://#{@bucket}/#{filename}"
-    )
+    @site.upload_episode_file(filename, local_path,
+      content_type: "audio/mpeg", cache_control: "public, max-age=31536000, immutable")
   end
 
   # --- used news ---------------------------------------------------------
@@ -150,11 +119,8 @@ class Publisher
 
   def upload_transcript(local_path, object)
     abort("transcript not found: #{local_path}") unless File.exist?(local_path)
-    gcloud_storage(
-      "cp",
-      "--content-type=text/plain; charset=utf-8",
-      local_path, "gs://#{@bucket}/#{object}"
-    )
+    @site.upload_episode_file(object, local_path,
+      content_type: "text/plain; charset=utf-8")
   end
 
   # --- archives.csv ------------------------------------------------------
@@ -173,7 +139,7 @@ class Publisher
     expired_rows.each { |r| archive_episode_files(r[1]) }
 
     csv = CSV.generate { |out| rows.each { |r| out << r } }
-    upload_content("archives.csv", csv, content_type: "text/csv")
+    @site.write_ledger(csv)
 
     rows
   end
@@ -190,7 +156,7 @@ class Publisher
     used_txt_object = filename.sub(/\.mp3\z/, ".used.txt")
     objects = self.class.episode_object_names(filename) + [self.class.used_news_html_object(used_txt_object)]
     objects.each do |object|
-      gcloud_storage_mv(object)
+      @site.retire_episode_file(object)
     rescue StandardError => e
       warn "archive skipped: #{e.message}"
     end
@@ -199,26 +165,31 @@ class Publisher
   def fetch_existing_archives
     return [] unless archives_exist?
 
-    Tempfile.create("miyamai_archives") do |f|
-      ok = system("gcloud", "storage", "cp", "gs://#{@bucket}/archives.csv", f.path,
-        out: File::NULL, err: File::NULL)
-      abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)") unless ok
-
-      CSV.read(f.path)
-    end
+    CSV.parse(@site.read_ledger)
+  rescue Internal::Site::LedgerMissing
+    abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)")
   end
 
   def archives_exist?
-    object_exists?("archives.csv")
+    @site.ledger_exist?
+  end
+
+  # --- サイトの反映 ------------------------------------------------------
+
+  # 反映はディレクトリ単位で、ここに無いファイルは公開サイトから消える。
+  # 生成ページを毎回すべて書き出してから 1 回だけ反映する。
+  def deploy_site(rows)
+    Dir.mktmpdir("miyamai_site") do |dir|
+      File.write(File.join(dir, "index.html"), render_html(rows))
+      File.write(File.join(dir, "feed.xml"), render_feed(rows))
+      File.write(File.join(dir, "manifest.json"), render_manifest)
+      @site.deploy(dir)
+    rescue Internal::Site::DeployFailed => e
+      abort(e.message)
+    end
   end
 
   # --- index.html --------------------------------------------------------
-
-  def write_index(rows)
-    upload_content("index.html", render_html(rows),
-      content_type: "text/html; charset=utf-8",
-      cache_control: "public, max-age=300")
-  end
 
   def render_html(rows)
     abort("no archives to render") if rows.empty?
@@ -236,19 +207,14 @@ class Publisher
       page_url: public_url("index.html"),
       feed_url: public_url("feed.xml"),
       manifest_url: public_url("manifest.json"),
-      icon_url: public_url(icon_image),
-      cover_url: public_url(cover_image),
+      icon_url: asset_url(icon_image),
+      cover_url: asset_url(cover_image),
       description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
       og_title: PROGRAM_NAME,
       options:)
   end
 
   # --- feed.xml (Atom) ---------------------------------------------------
-
-  def write_feed(rows)
-    upload_content("feed.xml", render_feed(rows),
-      content_type: "application/atom+xml; charset=utf-8")
-  end
 
   def render_feed(rows)
     abort("no archives to render") if rows.empty?
@@ -259,6 +225,7 @@ class Publisher
 
     TemplateRenderer.render("feed.xml", self,
       program_name: PROGRAM_NAME,
+      feed_id: feed_id,
       feed_url: public_url("feed.xml"),
       page_url: public_url("index.html"),
       updated: feed_datetime(rows.first[0], rows.first[4]),
@@ -272,10 +239,14 @@ class Publisher
     TemplateRenderer.render("feed_entry.xml", self,
       title:,
       entry_url: public_url("index.html"),
-      entry_id: public_url(fname),
+      entry_id: entry_id(fname),
       updated: feed_datetime(date, updated_at),
       content: used_news.strip.empty? ? "" : h(used_news_html(used_news))).chomp
   end
+
+  def feed_id = @site.tag_uri(FEED_ID_DATE, "feed")
+
+  def entry_id(fname) = @site.tag_uri(date_for(fname), File.basename(fname, ".mp3"))
 
   def used_news_html(used_news)
     result = UsedNewsMarkdown.render(used_news)
@@ -290,13 +261,8 @@ class Publisher
 
   # --- manifest.json (PWA) -----------------------------------------------
 
-  def write_manifest
-    upload_content("manifest.json", render_manifest,
-      content_type: "application/manifest+json; charset=utf-8")
-  end
-
   def render_manifest
-    TemplateRenderer.render("manifest.json", self, icon_url: public_url(icon_image))
+    TemplateRenderer.render("manifest.json", self, icon_url: asset_url(icon_image))
   end
 
   def feed_datetime(date_str, updated_at = nil)

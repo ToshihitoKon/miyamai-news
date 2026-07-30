@@ -156,37 +156,157 @@
 - 直後に文が続かない話題転換タグ（連続するタグなど）は、その pause 指定ごと
   静かに捨てられる（低頻度の許容済みエッジケース）。
 
-### Publisher / GCS（公開先の運用ルール）
+### Publisher / Internal::Site（公開先の運用ルール）
 
-- GCS のオブジェクト名は渡された mp3 ファイル名をそのまま使うこと。日付から
+公開されているサイトそのものを `Internal::Site`（`lib/internal/site.rb`）が表す。
+`Publisher` は「エピソード資材を置く」「台帳を読み書きする」「サイトを反映する」
+という語彙でしかサイトを触らず、**ストレージの種類・キー構成・デプロイ手段・
+ベンダー名を一切知らない**。`Site` の下に `Internal::R2Storage`（S3 互換 API の
+オブジェクト操作）が入る 3 層構成。
+
+- `Publisher` … 何を公開するか（台本・台帳・ページの内容）
+- `Internal::Site` … サイトの状態と操作（キー構成・公開 URL・保持件数・反映）
+- `Internal::R2Storage` … オブジェクトストレージの操作
+
+「publish 先」ではなく「サイト」と捉えているのは、この層が書き込み
+（publish）だけでなく台帳の読み取り・退避・保持件数といったサイトの
+ライフサイクル全体を受け持つため。
+
+`Publisher` が `Config` から直接読むのは `assets`（画像）だけで、公開先の設定は
+`Internal::Site.from_config` が `cloudflare` セクションからまとめて読む。
+`retention_episodes` は「保持する話数」という公開ポリシーなので、ストレージの
+設定ではなく `Site` が持つ。
+
+`Internal` 名前空間の中では `Config` が `Internal::Config`（dry-struct のスキーマ）に
+解決されてしまうため、設定ローダーを参照するときは `::Config` と書く必要がある。
+
+配信は 2 系統に分かれる。`index.html` / `feed.xml` / `manifest.json` は Workers
+static assets、それ以外（mp3 とその兄弟ファイル・画像・`archives.csv`）は R2。
+両方を同一オリジンで配信するため CORS 設定は不要。
+
+R2 のキー構成:
+
+| プレフィックス | 中身 | 退避対象 |
+| --- | --- | --- |
+| `episodes/` | mp3 と兄弟ファイル | ○（retention 超過分） |
+| `assets/` | 画像などの恒久素材 | ×（消えるとサイトの画像が壊れる） |
+| `archived/` | 退避済みエピソード | — |
+| `archives.csv` | 台帳（公開経路の外） | — |
+
+- **画像は R2 の `assets/` に置き、リポジトリにも配信成果物にも実体を持たない。**
+  立ち絵などの版権素材を Git 管理下に置かずに済ませるため。`*.png` / `*.webp` は
+  `.gitignore` 済みなので、static assets 方式だと publish する各環境に実体を手で
+  配置する必要があった。
+- 画像の `Cache-Control` は `max-age=3600`（`Site::ASSET_CACHE_CONTROL`）。
+  ほとんど変わらないので長めに寝かせる。差し替えは 1 時間待つか、ファイル名を
+  変えて参照を切り替える。
+
+- オブジェクト名は渡された mp3 ファイル名をそのまま使うこと。日付から
   組み立て直すと slot（朝/昼/夜/深夜）が落ち、同日複数回のエピソードが同名衝突して
   上書きし合う。
+- **mp3 とその兄弟ファイルは同じ `episodes/` プレフィックス配下に揃える。**
+  再生ページの JS は mp3 URL の拡張子だけを差し替えて `.used.html` /
+  `.transcript.txt` を引くため（`templates/index.html.erb`）、階層が違うと
+  兄弟ファイルの URL が壊れる。
+- **retention 超過分の退避先は `episodes/` の外（`archived/`）にする。**
+  `episodes/` 配下に置くと `run_worker_first` の対象なので Worker が R2 から配信し
+  続け、公開を終えたはずの回が読めるままになる。
+- `archives.csv` も `episodes/` の外に置く。台帳を公開オリジンから読めるようにする
+  必要はない。ただし**プレフィックスの外に置くだけでは非公開にならない**:
+  static assets に無いパスは Worker にフォールバックするため、`/archives.csv` が
+  Worker へ届き R2 のルート直下から返ってしまう。Worker 側で配信可能な
+  プレフィックス（`SERVABLE_PREFIXES`）を明示的に許可制にして塞ぐ。
 - `object_exists?` は「オブジェクトが存在しない」と「確認自体に失敗した」を
-  区別する。`gcloud storage ls` は「オブジェクトが無い」場合も他の失敗
-  （認証切れ・ネットワーク障害等）の場合も exit code 1 を返すため、メッセージ内容
-  で判定する。判定不能な失敗を「存在しない」扱いにすると、archives.csv を
-  「初回で台帳が無い」と誤認し、既存台帳を新規 1 行で上書きして過去エピソード
-  全履歴を消失させかねない。
+  区別する。R2 は S3 互換 API なので HeadObject の 404 と 403 / 5xx が例外クラス
+  として分かれ、文言マッチではなく型で判定できる。判定不能な失敗を「存在しない」
+  扱いにすると、archives.csv を「初回で台帳が無い」と誤認し、既存台帳を新規 1 行で
+  上書きして過去エピソード全履歴を消失させかねない。
+- **R2 にサーバーサイドの move / rename は無い。** 退避は CopyObject +
+  DeleteObject の 2 段構えで、copy の成功を確認してから delete する。途中で
+  失敗したときは「元が残る」方に倒す（二重に存在するだけなら次回リトライで
+  解消でき、公開物も壊れない）。逆順にすると復旧不能。退避先キーが決定的なので
+  リトライは冪等（元が無く退避先にあれば `:already_moved` で何もしない）。
 - `archived/` への退避は publish 時に自動で行われるが、実削除はされない。実削除は
-  `Publisher#clean_archive` を明示的に呼んだときだけ行われる。
-- `Publisher#run` 中に `gcloud storage` 操作が 1 つでも失敗したら即 abort する。
-  公開バケットが index.html/feed.xml/manifest.json/archives.csv/mp3 の間で
-  中途半端に不整合な状態のまま残らないようにするため。
-- `Publisher#run` は GCS への書き込みを一切始める前に
+  `Publisher#clean_archive` を明示的に呼んだときだけ行われる（ListObjectsV2 で
+  列挙して DeleteObjects でバッチ削除。`wrangler r2 object delete` は
+  プレフィックス指定に対応していない）。
+- **素の `wrangler deploy` を使わない。** `wrangler.jsonc` に
+  `assets.directory` を書くと、そのディレクトリの中身で公開サイト全体が
+  置き換わる（デプロイはバージョン単位なので、生成済みの index.html /
+  feed.xml が消える）。Worker のコードだけ直したい場合も同じ。
+  `directory` を書かないことで素の deploy はエラーで止まり、
+  `--assets <ステージング>` を渡す publish 経路だけが通るようにしている。
+  Worker の変更を反映したいときも `--ui-only` を使う。
+- **static assets のデプロイはバージョン単位で、ステージングに無いファイルは
+  公開サイトから消える。** そのため `run` / `republish_ui` のどちらも、画像を
+  含む全ファイルを毎回ステージングディレクトリへ書き出してから 1 回だけ
+  `wrangler deploy` する。画像だけ載せ忘れると初回の `--ui-only` でアートワークが
+  消える。
+- **`_headers` は `run_worker_first` のパス（`episodes/*`）に適用されない。**
+  mp3 と兄弟ファイルの `Content-Type` は、Ruby 側が R2 の put 時に設定した値を
+  Worker が `writeHttpMetadata` で反映することで初めて正しくなる。どちらかが
+  欠けると `.used.html` が `application/octet-stream` で返るが、再生ページの JS は
+  fetch 失敗を握り潰して「ニュース一覧はありません」と表示するため、
+  **エラーにならず静かに壊れる**。
+- カスタムドメインの追加は `wrangler deploy` 時に自動で行われ、DNS レコードと
+  証明書も発行される。ただし**対象ホスト名に既存の CNAME レコードがあると失敗する**
+  ので、移行時は先に既存レコードを削除する必要がある。
+- static assets は `html_handling` の既定（`auto-trailing-slash`）により
+  **`/index.html` を `/` へ 307 リダイレクトする**。そのため公開 URL としては
+  正規形の `/` を使う（`Site#page_url`）。リダイレクトされる URL を feed の
+  `<link>` や `og:url` に載せると、購読者とクローラが毎回余計な往復をする。
+- static assets のデフォルト応答ヘッダーは実測で
+  `cache-control: public, max-age=0, must-revalidate`。ETag による再検証前提
+  なので、更新がすぐ届く一方で毎回条件付きリクエストが飛ぶ。
+- Worker スクリプト（`src/index.js`）はこのリポジトリで唯一の JS 実行コードだが、
+  JS のテスト基盤（Vitest 等）は導入していない。動作確認はプレビュー URL への
+  `curl -I` と実機での再生確認で行う。配布されるファイルなのでコメントは書かず、
+  以下に意図を記録する。
+- Worker は資材プレフィックス（`episodes/*`）へのリクエストだけを処理する。
+  それ以外は static assets 側が返すので Worker には到達しない。
+- `get` に `onlyIf: request.headers` と `range: request.headers` をそのまま渡し、
+  条件付きリクエストと Range を R2 側に解釈させる。音声のシークが Range に
+  依存するため、`accept-ranges` と 206 応答時の `content-range` が要る。
+- `writeHttpMetadata` は R2 オブジェクトのメタデータでヘッダーを上書きするため、
+  `cache-control` の既定値を入れるのは必ずその後。順序を逆にすると R2 側に
+  設定した値を握り潰す。
+- `body` を持たない応答は条件付きリクエストが不成立だったケース。`If-Match` /
+  `If-Unmodified-Since` が付いていたときだけ 412 を返し、それ以外は 304。
+- **206 を返すのはリクエストに `Range` があったときだけ**にする。`get` に
+  `range: request.headers` を渡すと、`Range` が無くても R2 は `object.range` に
+  オブジェクト全体を表す値を入れて返すため、`object.range` の有無だけで分岐すると
+  **全リクエストが 206 になる**。Slack などのクローラーは 206 を画像として扱わず、
+  OGP 展開が黙って壊れる。
+- `Publisher#run` 中に R2 操作または `wrangler deploy` が 1 つでも失敗したら
+  即 abort する。公開物が index.html/feed.xml/manifest.json/archives.csv/mp3 の
+  間で中途半端に不整合な状態のまま残らないようにするため。R2 への書き込みを
+  すべて終えた後に `wrangler deploy` を 1 回だけ実行する順序にしているので、
+  ページが存在しないファイルを参照する瞬間が生じない。
+- `Publisher#run` はストレージへの書き込みを一切始める前に
   `UsedNewsFormatter.ensure_valid!` で used_news のフォーマットを確定させる
   （後述「used_news の表示フォーマット」節参照）。検証・修復に失敗すればここで
   abort し、mp3 を含め何もアップロードしない。「Publisher#run 中に 1 つでも
   失敗したら即 abort する」という上記原則の一部として扱う。
 - `.used.html`（used_news を事前に HTML 化したもの）は `dist/` に実体を持たない
-  GCS 専用の派生物であり、`EPISODE_FILE_EXTENSIONS`（`.mp3`/`.used.txt`/
+  ストレージ専用の派生物であり、`EPISODE_FILE_EXTENSIONS`（`.mp3`/`.used.txt`/
   `.transcript.txt` の3つ固定）には含めない。`archive_episode_files` では
   `.used.html` の退避を個別に fault-tolerant に行う（無ければ mv 失敗を警告に
   留めて継続する既存パターンを踏襲）。
-- Atom entry の `<id>` はエピソードごとの mp3 URL のままにすること（index.html に
-  しない）。`<id>` は RSS リーダー側の新着重複判定キーであり、全エントリを同じ id
-  にすると購読者が新着を検知できなくなる。
-- `cover_image` / `icon_image` は本パイプラインからはアップロードしない。事前に
-  手動で GCS バケットへアップロードしておく必要がある（README 参照）。
+- Atom の `<id>` は RFC 4151 の tag URI（`tag:<host>,<date>:<specific>`）を使う。
+  `<id>` は RSS リーダー側の新着重複判定キーなので、**配信 URL を入れてはいけない**。
+  URL を入れるとドメインやパス構成を変えた時点で全エントリの id が変わり、
+  購読者に全エピソードが新着として再通知される。以前は mp3 URL を使っていたが、
+  これは「feed.xml を動かさない key」として選ばれただけで、配信先から独立させる
+  方が正しい。
+  - entry: `tag:<host>,<エピソードの日付>:<mp3 のベース名>`。ベース名に slot が
+    含まれるので、同日複数回でも衝突しない。
+  - feed 自身: `tag:<host>,<Publisher::FEED_ID_DATE>:feed`。フィードの同一性を
+    表すので日付は固定値で、**一度決めたら変えない**（変えると購読者が別フィード
+    として扱う）。
+  - `rel="self"` の href は実際の配信 URL のままにする（こちらは取得先なので
+    tag URI にはしない）。
+- `cover_image` / `icon_image` は publish 時に static assets のステージングへ
+  コピーされて配信される。手動アップロードは不要。
 - `archives.csv` の `updated_at` 列は「publish を実行した時刻」ではなく
   「**コンテンツが変わった時刻**」を表す。`update_archives` は既存行と
   title / used_news を比較し、同一なら既存の `updated_at` を引き継ぐ。
@@ -500,9 +620,21 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `ai_agent.effort` は現状 `bin == "claude"` のときだけ `Internal::AiCli.run` が
   参照する。実装上対応しているのは claude のみだが、将来 effort に対応する別の
   AI CLI が増えたときに使い回す想定でこのフィールドを用意している。
-- `Config.validate_gcs!` は `pipeline.mode` に関わらず GCS を使う CLI 操作
-  （`--clean` / `--ui-only` / `--clean-archive`）のために独立して存在する。
-  mode 別の `validate_for!` では拾えない gcs セクション単体の欠落をここで検出する。
+- 公開先の検証は 2 種類ある。`Config.validate_gcs!` は R2/GCS のストレージだけを
+  触る操作（`--clean` / `--clean-archive`）用で、`Config.validate_publish_targets!`
+  は配信（Workers へのデプロイ）まで行う `--ui-only` 用に `gcs` + `cloudflare` の
+  両方を要求する。`--ui-only` を前者で通すと、index.html を生成しきってから
+  デプロイ段階で落ちる。
+- `cloudflare` セクションは `pipeline.mode: publish` の必須セクション
+  （`REQUIRED_SECTIONS_DELTA`）にも含める。publish は配信まで到達するため、
+  ストレージだけ設定済みで配信先が未設定という状態で起動させない。
+- R2 の S3 互換 API 認証情報（`R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`）と
+  wrangler の認証（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）は
+  config.yaml に置かず環境変数で渡す。config.yaml は「機密を持たないから git で
+  追跡してよい」という前提で運用しているため、ここに秘密鍵を書くと前提が崩れる。
+- `cloudflare.episode_prefix` は `wrangler.jsonc` の `assets.run_worker_first` と
+  揃える必要がある（片方だけ変えると mp3 が static assets 側にルーティングされ
+  404 になる）。デフォルトは `episodes`。
 - `Config.path=` は代入した時点で即座に新しいパスから読み直す設計。`miyamai_news.rb`
   の CLI 起動時検証（後述「CLI 起動時の config 検証」節参照）は、`--config` 指定時の
   読み込みエラーもまとめて拾えるよう、`Config.path=` の代入と検証呼び出しを同じ
@@ -517,9 +649,11 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 
 ### miyamai_news.rb（CLIエントリポイント）
 
-- CLI 起動時の config 検証: `--clean`/`--clean-archive`/`--ui-only` は
-  `pipeline.mode` とは無関係だが、実際には Publisher（GCS操作）を経由するため
-  gcs セクションだけは要求する（`Config.validate_gcs!`）。`--confirm-fetch`/
+- CLI 起動時の config 検証: `--ui-only` は `pipeline.mode` とは無関係だが
+  配信（Workers デプロイ）まで到達するため `gcs` + `cloudflare` を要求する
+  （`Config.validate_publish_targets!`）。`--clean`/`--clean-archive` は
+  ストレージのみを触るので `gcs` だけ要求する（`Config.validate_gcs!`）。
+  `--confirm-fetch`/
   `--restore-fetch` は `work/last_fetch.json` のみを触り GCS も pipeline.mode も
   伴わないので検証を全てスキップする。それ以外は各コンポーネントが実行中に
   MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な

@@ -4,11 +4,28 @@ pipeline:
   # mode: synthesize # digest + 音声合成・BGM合成。dist/ に mp3 を書き出す。
   # mode: publish    # synthesize + GCS への publish
 
+# 旧公開先。移行期間中のみ残す。
 gcs:
   bucket: your-bucket-name
   public_base: https://storage.googleapis.com
-  # publish で保持・公開する話数。
+
+# Cloudflare への公開まわり（Workers static assets + R2）。
+# R2 の S3 互換 API 認証情報は config には書かず、環境変数で渡す。
+#   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+# wrangler の認証も環境変数（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）。
+cloudflare:
+  account_id: your-account-id
+  # wrangler.jsonc の name と一致させる。
+  worker_name: miyamai-news
+  # 成果物を置く R2 バケット名。
+  bucket: miyamai-news
+  # 公開 URL のベース。カスタムドメインを設定して指定する。
+  public_base: https://news.example.com
+  # publish で保持・公開する話数。超過分は退避される。
   retention_episodes: 5
+  # エピソード資材（mp3 とその兄弟ファイル）を置くパスのプレフィックス（未指定時は episodes）。
+  # wrangler.jsonc の assets.run_worker_first と揃える必要がある。
+  episode_prefix: episodes
 
 assets:
   bgm_path: 古びた魔法書_気まぐれBGM工房.mp3

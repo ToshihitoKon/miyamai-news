@@ -69,6 +69,29 @@ RSpec.describe Internal::Config do
     end
   end
 
+  describe Internal::Config::Cloudflare do
+    def build(**overrides)
+      described_class.new({
+        account_id: "acct", worker_name: "miyamai-news",
+        bucket: "miyamai-news", public_base: "https://news.example.com",
+        retention_episodes: 5,
+      }.merge(overrides))
+    end
+
+    it "defaults episode_prefix to episodes when absent" do
+      expect(build.episode_prefix).to eq("episodes")
+    end
+
+    it "keeps an explicit episode_prefix" do
+      expect(build(episode_prefix: "media").episode_prefix).to eq("media")
+    end
+
+    it "requires public_base" do
+      expect { described_class.new(account_id: "a", worker_name: "w", bucket: "b") }
+        .to raise_error(Dry::Struct::Error, /public_base/)
+    end
+  end
+
   describe Internal::Config::Category do
     it "requires both label and description" do
       expect { described_class.new(label: "AI") }.to raise_error(Dry::Struct::Error, /description/)
