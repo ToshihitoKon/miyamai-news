@@ -16,20 +16,20 @@ RSpec.describe "wrangler.jsonc" do
   end
 
   it "routes the asset prefix to the worker" do
-    expect(wrangler.dig("assets", "run_worker_first")).to eq(["/audio/*"])
+    expect(wrangler.dig("assets", "run_worker_first")).to eq(["/episodes/*"])
   end
 
-  # run_worker_first と audio_prefix がずれると、mp3 が static assets 側に
+  # run_worker_first と episode_prefix がずれると、mp3 が static assets 側に
   # ルーティングされて 404 になる。
-  it "keeps run_worker_first in sync with the sample config's audio_prefix" do
+  it "keeps run_worker_first in sync with the sample config's episode_prefix" do
     sample = YAML.safe_load_file(File.expand_path("../config.sample.yaml", __dir__))
-    prefix = sample.dig("cloudflare", "audio_prefix")
+    prefix = sample.dig("cloudflare", "episode_prefix")
 
     expect(wrangler.dig("assets", "run_worker_first")).to eq(["/#{prefix}/*"])
   end
 
-  it "binds the worker to an R2 bucket as AUDIO" do
-    expect(wrangler["r2_buckets"].map { |b| b["binding"] }).to include("AUDIO")
+  it "binds the worker to an R2 bucket as EPISODES" do
+    expect(wrangler["r2_buckets"].map { |b| b["binding"] }).to include("EPISODES")
   end
 
   it "declares a custom domain route" do

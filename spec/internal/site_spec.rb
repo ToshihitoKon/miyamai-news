@@ -34,7 +34,7 @@ RSpec.describe Internal::Site do
     it "keeps episode files and their siblings on the same path level" do
       mp3 = site.url_for("ep.mp3")
 
-      expect(mp3).to eq("https://news.example.com/audio/ep.mp3")
+      expect(mp3).to eq("https://news.example.com/episodes/ep.mp3")
       expect(mp3.sub(/\.mp3\z/, ".used.html")).to eq(site.url_for("ep.used.html"))
     end
   end
@@ -50,7 +50,7 @@ RSpec.describe Internal::Site do
       uri = site.tag_uri("2026-07-14", "ep")
 
       expect(uri).not_to include("https://")
-      expect(uri).not_to include("/audio/")
+      expect(uri).not_to include("/episodes/")
     end
   end
 
@@ -61,7 +61,7 @@ RSpec.describe Internal::Site do
 
       site.write_episode_file("ep.used.txt", "body", content_type: "text/plain")
 
-      expect(captured[:key]).to eq("audio/ep.used.txt")
+      expect(captured[:key]).to eq("episodes/ep.used.txt")
       expect(captured[:content_type]).to eq("text/plain")
       expect(captured[:body]).to eq("body")
     end
@@ -76,11 +76,11 @@ RSpec.describe Internal::Site do
         path = File.join(dir, "ep.mp3")
         File.write(path, "fake mp3")
 
-        site.upload_episode_file("ep.mp3", path, content_type: "audio/mpeg")
+        site.upload_episode_file("ep.mp3", path, content_type: "episodes/mpeg")
       end
 
-      expect(captured[:key]).to eq("audio/ep.mp3")
-      expect(captured[:content_type]).to eq("audio/mpeg")
+      expect(captured[:key]).to eq("episodes/ep.mp3")
+      expect(captured[:content_type]).to eq("episodes/mpeg")
     end
   end
 
@@ -95,9 +95,9 @@ RSpec.describe Internal::Site do
 
       site.retire_episode_file("ep.mp3")
 
-      expect(captured[:copy_source]).to eq("test-bucket/audio/ep.mp3")
+      expect(captured[:copy_source]).to eq("test-bucket/episodes/ep.mp3")
       expect(captured[:key]).to eq("archived/ep.mp3")
-      expect(captured[:key]).not_to start_with("audio/")
+      expect(captured[:key]).not_to start_with("episodes/")
     end
   end
 

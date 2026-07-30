@@ -27,7 +27,7 @@ module Internal
         public_base: cf.public_base,
         retention_episodes: cf.retention_episodes,
         storage: R2Storage.new(
-          bucket: cf.bucket, account_id: cf.account_id, audio_prefix: cf.audio_prefix
+          bucket: cf.bucket, account_id: cf.account_id, episode_prefix: cf.episode_prefix
         )
       )
     end
@@ -49,7 +49,7 @@ module Internal
     def url_for(object)
       return page_url(object) if PAGE_OBJECTS.include?(object)
 
-      "#{@public_base}/#{@storage.audio_key(object)}"
+      "#{@public_base}/#{@storage.episode_key(object)}"
     end
 
     # index.html は配信側が "/" へ 307 リダイレクトするため、正規形の "/" を返す。
@@ -74,22 +74,22 @@ module Internal
 
     # ローカルファイルをそのまま送る（mp3・transcript のような実体があるもの）。
     def upload_episode_file(object, path, content_type:, cache_control: nil)
-      @storage.put_file(@storage.audio_key(object), path,
+      @storage.put_file(@storage.episode_key(object), path,
         content_type: content_type, cache_control: cache_control)
     end
 
     # メモリ上で組み立てた内容を書き込む（used.txt・used.html のような生成物）。
     def write_episode_file(object, content, content_type:, cache_control: nil)
-      @storage.put(@storage.audio_key(object), content,
+      @storage.put(@storage.episode_key(object), content,
         content_type: content_type, cache_control: cache_control)
     end
 
-    def episode_file_exist?(object) = @storage.exist?(@storage.audio_key(object))
+    def episode_file_exist?(object) = @storage.exist?(@storage.episode_key(object))
 
     # 退避先は資材プレフィックスの外。中に置くと公開経路に残り、保持件数を
     # 超えた回が読めるままになる。
     def retire_episode_file(object)
-      @storage.move(@storage.audio_key(object), @storage.archive_key(object))
+      @storage.move(@storage.episode_key(object), @storage.archive_key(object))
     end
 
     def purge_retired = @storage.delete_prefix(@storage.archive_prefix)

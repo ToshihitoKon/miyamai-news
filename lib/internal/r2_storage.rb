@@ -9,22 +9,22 @@ module Internal
   class R2Storage
     include ObjectStorage
 
-    # 退避先プレフィックス。audio_prefix の外に置く。
+    # 退避先プレフィックス。episode_prefix の外に置く。
     ARCHIVE_PREFIX = "archived"
 
-    def initialize(bucket:, account_id: nil, client: nil, audio_prefix: "audio")
+    def initialize(bucket:, account_id: nil, client: nil, episode_prefix: "episodes")
       @bucket = bucket
-      @audio_prefix = audio_prefix
+      @episode_prefix = episode_prefix
       @account_id = account_id
       @client = client
     end
 
-    attr_reader :bucket, :audio_prefix
+    attr_reader :bucket, :episode_prefix
 
     # エピソード関連ファイル（mp3 / used / transcript）の R2 キー。
     # 再生ページの JS が mp3 URL の拡張子だけを差し替えて兄弟ファイルを引くため、
     # 同一プレフィックス配下に揃える。
-    def audio_key(object) = "#{@audio_prefix}/#{object}"
+    def episode_key(object) = "#{@episode_prefix}/#{object}"
 
     def archive_key(object) = "#{ARCHIVE_PREFIX}/#{object}"
 

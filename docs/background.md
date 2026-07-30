@@ -188,14 +188,14 @@ CORS 設定は不要。
 - オブジェクト名は渡された mp3 ファイル名をそのまま使うこと。日付から
   組み立て直すと slot（朝/昼/夜/深夜）が落ち、同日複数回のエピソードが同名衝突して
   上書きし合う。
-- **mp3 とその兄弟ファイルは同じ `audio/` プレフィックス配下に揃える。**
+- **mp3 とその兄弟ファイルは同じ `episodes/` プレフィックス配下に揃える。**
   再生ページの JS は mp3 URL の拡張子だけを差し替えて `.used.html` /
   `.transcript.txt` を引くため（`templates/index.html.erb`）、階層が違うと
   兄弟ファイルの URL が壊れる。
-- **retention 超過分の退避先は `audio/` の外（`archived/`）にする。**
-  `audio/` 配下に置くと `run_worker_first` の対象なので Worker が R2 から配信し
+- **retention 超過分の退避先は `episodes/` の外（`archived/`）にする。**
+  `episodes/` 配下に置くと `run_worker_first` の対象なので Worker が R2 から配信し
   続け、公開を終えたはずの回が読めるままになる。
-- `archives.csv` も `audio/` の外に置く。台帳を公開オリジンから読めるようにする
+- `archives.csv` も `episodes/` の外に置く。台帳を公開オリジンから読めるようにする
   必要はない。
 - `object_exists?` は「オブジェクトが存在しない」と「確認自体に失敗した」を
   区別する。R2 は S3 互換 API なので HeadObject の 404 と 403 / 5xx が例外クラス
@@ -216,7 +216,7 @@ CORS 設定は不要。
   含む全ファイルを毎回ステージングディレクトリへ書き出してから 1 回だけ
   `wrangler deploy` する。画像だけ載せ忘れると初回の `--ui-only` でアートワークが
   消える。
-- **`_headers` は `run_worker_first` のパス（`audio/*`）に適用されない。**
+- **`_headers` は `run_worker_first` のパス（`episodes/*`）に適用されない。**
   mp3 と兄弟ファイルの `Content-Type` は、Ruby 側が R2 の put 時に設定した値を
   Worker が `writeHttpMetadata` で反映することで初めて正しくなる。どちらかが
   欠けると `.used.html` が `application/octet-stream` で返るが、再生ページの JS は
@@ -236,7 +236,7 @@ CORS 設定は不要。
   JS のテスト基盤（Vitest 等）は導入していない。動作確認はプレビュー URL への
   `curl -I` と実機での再生確認で行う。配布されるファイルなのでコメントは書かず、
   以下に意図を記録する。
-- Worker は資材プレフィックス（`audio/*`）へのリクエストだけを処理する。
+- Worker は資材プレフィックス（`episodes/*`）へのリクエストだけを処理する。
   それ以外は static assets 側が返すので Worker には到達しない。
 - `get` に `onlyIf: request.headers` と `range: request.headers` をそのまま渡し、
   条件付きリクエストと Range を R2 側に解釈させる。音声のシークが Range に
@@ -600,9 +600,9 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   wrangler の認証（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）は
   config.yaml に置かず環境変数で渡す。config.yaml は「機密を持たないから git で
   追跡してよい」という前提で運用しているため、ここに秘密鍵を書くと前提が崩れる。
-- `cloudflare.audio_prefix` は `wrangler.jsonc` の `assets.run_worker_first` と
+- `cloudflare.episode_prefix` は `wrangler.jsonc` の `assets.run_worker_first` と
   揃える必要がある（片方だけ変えると mp3 が static assets 側にルーティングされ
-  404 になる）。デフォルトは `audio`。
+  404 になる）。デフォルトは `episodes`。
 - `Config.path=` は代入した時点で即座に新しいパスから読み直す設計。`miyamai_news.rb`
   の CLI 起動時検証（後述「CLI 起動時の config 検証」節参照）は、`--config` 指定時の
   読み込みエラーもまとめて拾えるよう、`Config.path=` の代入と検証呼び出しを同じ

@@ -27,7 +27,7 @@ abort("usage: #{$PROGRAM_NAME} --from <gcs-bucket> [--apply]") unless SOURCE_BUC
 EPISODE_SUFFIXES = [".mp3", ".used.txt", ".used.html", ".transcript.txt"].freeze
 
 CONTENT_TYPES = {
-  ".mp3" => "audio/mpeg",
+  ".mp3" => "episodes/mpeg",
   ".used.txt" => "text/plain; charset=utf-8",
   ".used.html" => "text/html; charset=utf-8",
   ".transcript.txt" => "text/plain; charset=utf-8",
@@ -63,7 +63,7 @@ kept = CSV.parse(ledger_csv).map { |r| r[1] }.compact
 puts "GCS 台帳: #{kept.size} 件"
 
 # R2 の現状を 1 度だけ引いて、以降はローカルで突き合わせる。
-present = (storage.list("#{storage.audio_prefix}/") + storage.list(storage.archive_prefix)).to_set
+present = (storage.list("#{storage.episode_prefix}/") + storage.list(storage.archive_prefix)).to_set
 puts "R2 既存:  #{present.size} 件"
 
 copies = []
@@ -76,8 +76,8 @@ moves = []
 
   mp3 = name.sub(/#{Regexp.escape(suffix)}\z/, ".mp3")
   retired = !kept.include?(mp3)
-  dest = retired ? storage.archive_key(name) : storage.audio_key(name)
-  other = retired ? storage.audio_key(name) : storage.archive_key(name)
+  dest = retired ? storage.archive_key(name) : storage.episode_key(name)
+  other = retired ? storage.episode_key(name) : storage.archive_key(name)
 
   if present.include?(dest)
     next # 既に正しい場所にある

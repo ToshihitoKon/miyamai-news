@@ -9,7 +9,7 @@ export default {
 
     const key = decodeURIComponent(new URL(request.url).pathname.slice(1));
 
-    const object = await env.AUDIO.get(key, {
+    const object = await env.EPISODES.get(key, {
       onlyIf: request.headers,
       range: request.headers,
     });

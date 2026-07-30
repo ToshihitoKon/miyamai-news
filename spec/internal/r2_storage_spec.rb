@@ -7,22 +7,22 @@ RSpec.describe Internal::R2Storage do
   let(:client) { Aws::S3::Client.new(stub_responses: true, region: "auto") }
   let(:storage) { described_class.new(bucket: "test-bucket", client: client) }
 
-  describe "#audio_key / #archive_key" do
-    it "places episode files under the audio prefix" do
-      expect(storage.audio_key("ep.mp3")).to eq("audio/ep.mp3")
+  describe "#episode_key / #archive_key" do
+    it "places episode files under the episode prefix" do
+      expect(storage.episode_key("ep.mp3")).to eq("episodes/ep.mp3")
     end
 
-    it "honours a custom audio prefix" do
-      custom = described_class.new(bucket: "b", client: client, audio_prefix: "media")
+    it "honours a custom episode prefix" do
+      custom = described_class.new(bucket: "b", client: client, episode_prefix: "media")
 
-      expect(custom.audio_key("ep.mp3")).to eq("media/ep.mp3")
+      expect(custom.episode_key("ep.mp3")).to eq("media/ep.mp3")
     end
 
-    # 退避先を audio プレフィックス配下にすると Worker が R2 から配信し続けてしまい、
+    # 退避先を episodes プレフィックス配下にすると Worker が R2 から配信し続けてしまい、
     # retention を超えたエピソードが公開されたままになる。
-    it "places archived files outside the audio prefix" do
+    it "places archived files outside the episode prefix" do
       expect(storage.archive_key("ep.mp3")).to eq("archived/ep.mp3")
-      expect(storage.archive_key("ep.mp3")).not_to start_with("audio/")
+      expect(storage.archive_key("ep.mp3")).not_to start_with("episodes/")
     end
   end
 
@@ -98,7 +98,7 @@ RSpec.describe Internal::R2Storage do
       client.stub_responses(:copy_object, ->(_ctx) { calls << :copy; { copy_object_result: {} } })
       client.stub_responses(:delete_object, ->(_ctx) { calls << :delete; {} })
 
-      storage.move("audio/ep.mp3", "archived/ep.mp3")
+      storage.move("episodes/ep.mp3", "archived/ep.mp3")
 
       expect(calls).to eq(%i[copy delete])
     end
@@ -109,7 +109,7 @@ RSpec.describe Internal::R2Storage do
       client.stub_responses(:copy_object, "InternalError")
       client.stub_responses(:delete_object, ->(_ctx) { deleted = true; {} })
 
-      expect { storage.move("audio/ep.mp3", "archived/ep.mp3") }.to raise_error(Aws::S3::Errors::ServiceError)
+      expect { storage.move("episodes/ep.mp3", "archived/ep.mp3") }.to raise_error(Aws::S3::Errors::ServiceError)
       expect(deleted).to be false
     end
 
@@ -119,9 +119,9 @@ RSpec.describe Internal::R2Storage do
       client.stub_responses(:copy_object, ->(ctx) { captured = ctx.params; { copy_object_result: {} } })
       client.stub_responses(:delete_object, {})
 
-      storage.move("audio/ep.mp3", "archived/ep.mp3")
+      storage.move("episodes/ep.mp3", "archived/ep.mp3")
 
-      expect(captured[:copy_source]).to eq("test-bucket/audio/ep.mp3")
+      expect(captured[:copy_source]).to eq("test-bucket/episodes/ep.mp3")
     end
 
     # 退避済み（元が無く退避先にある）なら再実行しても何もしない。
@@ -131,7 +131,7 @@ RSpec.describe Internal::R2Storage do
       client.stub_responses(:head_object, ->(_ctx) { responses.shift })
       client.stub_responses(:copy_object, ->(_ctx) { calls << :copy; { copy_object_result: {} } })
 
-      expect(storage.move("audio/ep.mp3", "archived/ep.mp3")).to eq(:already_moved)
+      expect(storage.move("episodes/ep.mp3", "archived/ep.mp3")).to eq(:already_moved)
       expect(calls).to be_empty
     end
   end

@@ -24,7 +24,7 @@ module Internal
       attribute :bucket, Types::Strict::String
       attribute :public_base, Types::Strict::String
       attribute :retention_episodes, Types::Strict::Integer
-      attribute? :audio_prefix, Types::Strict::String.default("audio")
+      attribute? :episode_prefix, Types::Strict::String.default("episodes")
     end
 
     class Assets < Base

@@ -23,9 +23,9 @@ cloudflare:
   public_base: https://news.example.com
   # publish で保持・公開する話数。超過分は退避される。
   retention_episodes: 5
-  # mp3 等のメディアを置くパスのプレフィックス（未指定時は audio）。
+  # エピソード資材（mp3 とその兄弟ファイル）を置くパスのプレフィックス（未指定時は episodes）。
   # wrangler.jsonc の assets.run_worker_first と揃える必要がある。
-  audio_prefix: audio
+  episode_prefix: episodes
 
 assets:
   bgm_path: 古びた魔法書_気まぐれBGM工房.mp3

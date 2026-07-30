@@ -78,12 +78,12 @@ RSpec.describe Internal::Config do
       }.merge(overrides))
     end
 
-    it "defaults audio_prefix to audio when absent" do
-      expect(build.audio_prefix).to eq("audio")
+    it "defaults episode_prefix to episodes when absent" do
+      expect(build.episode_prefix).to eq("episodes")
     end
 
-    it "keeps an explicit audio_prefix" do
-      expect(build(audio_prefix: "media").audio_prefix).to eq("media")
+    it "keeps an explicit episode_prefix" do
+      expect(build(episode_prefix: "media").episode_prefix).to eq("media")
     end
 
     it "requires public_base" do

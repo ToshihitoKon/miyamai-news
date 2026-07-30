@@ -65,10 +65,10 @@ RSpec.describe Publisher do
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(put_keys).to include("audio/#{File.basename(mp3_path)}")
-      expect(put_keys).to include("audio/#{File.basename(used_path)}")
-      expect(put_keys).to include("audio/miyamai_news_20260714_afternoon.used.html")
-      expect(put_keys).to include("audio/#{File.basename(transcript_path)}")
+      expect(put_keys).to include("episodes/#{File.basename(mp3_path)}")
+      expect(put_keys).to include("episodes/#{File.basename(used_path)}")
+      expect(put_keys).to include("episodes/miyamai_news_20260714_afternoon.used.html")
+      expect(put_keys).to include("episodes/#{File.basename(transcript_path)}")
       expect(put_keys).to include("archives.csv")
       expect(deployed.size).to eq(1)
     end
@@ -138,14 +138,14 @@ RSpec.describe Publisher do
   end
 
   describe "#upload_content" do
-    it "writes under the audio prefix with the given content type" do
+    it "writes under the episode prefix with the given content type" do
       publisher = build_publisher
       captured = nil
       s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
 
       publisher.send(:upload_content, "a.used.txt", "body", content_type: "text/plain; charset=utf-8")
 
-      expect(captured[:key]).to eq("audio/a.used.txt")
+      expect(captured[:key]).to eq("episodes/a.used.txt")
       expect(captured[:content_type]).to eq("text/plain; charset=utf-8")
       expect(captured[:body]).to eq("body")
     end
@@ -162,9 +162,9 @@ RSpec.describe Publisher do
     end
     let(:oldest_fname) { existing_rows.first[1] }
 
-    # 退避先が audio プレフィックス配下だと Worker が R2 から配信し続け、
+    # 退避先が episodes プレフィックス配下だと Worker が R2 から配信し続け、
     # retention を超えた回が公開されたままになる。
-    it "moves expired episodes out of the audio prefix" do
+    it "moves expired episodes out of the episode prefix" do
       publisher = build_publisher(ledger: ledger_csv(existing_rows))
       copies = []
       s3.stub_responses(:copy_object, ->(ctx) { copies << ctx.params; { copy_object_result: {} } })
@@ -172,7 +172,7 @@ RSpec.describe Publisher do
       publisher.run(mp3_path, used_path, transcript_path)
 
       moved = copies.map { |c| [c[:copy_source], c[:key]] }
-      expect(moved).to include(["test-bucket/audio/#{oldest_fname}", "archived/#{oldest_fname}"])
+      expect(moved).to include(["test-bucket/episodes/#{oldest_fname}", "archived/#{oldest_fname}"])
       expect(copies.map { |c| c[:key] }).to all(start_with("archived/"))
     end
 
@@ -259,11 +259,11 @@ RSpec.describe Publisher do
 
     # 再生ページの JS は mp3 URL の拡張子だけを差し替えて兄弟ファイルを引くため、
     # mp3 とその派生物は同じ階層に並んでいる必要がある。
-    it "serves episode files from the audio prefix so sibling derivation works" do
+    it "serves episode files from the episode prefix so sibling derivation works" do
       mp3 = publisher.send(:public_url, "ep.mp3")
 
-      expect(mp3).to eq("https://news.example.com/audio/ep.mp3")
-      expect(mp3.sub(/\.mp3\z/, ".used.html")).to eq("https://news.example.com/audio/ep.used.html")
+      expect(mp3).to eq("https://news.example.com/episodes/ep.mp3")
+      expect(mp3.sub(/\.mp3\z/, ".used.html")).to eq("https://news.example.com/episodes/ep.used.html")
     end
   end
 

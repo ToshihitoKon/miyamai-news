@@ -141,6 +141,6 @@ midnight は日付をまたぐため、0〜5時に実行した回は前日の深
 ### (publish) 過去記事の自動アーカイブについて
 
 publish のたびに `cloudflare.retention_episodes` を超えた古い回は一覧から外れ、R2 上の実ファイルは
-削除されず `archived/` プレフィックス配下へ退避される（配信対象の `audio/` の外なので、
+削除されず `archived/` プレフィックス配下へ退避される（配信対象の `episodes/` の外なので、
 退避した時点で公開経路からは読めなくなる）。
 `--clean-archive` を実行することで、`archived/` 以下のファイルを削除できる。
