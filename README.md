@@ -42,14 +42,23 @@ publish には以下の環境変数が必要。config.yaml には書かない（
 
 | 環境変数 | 用途 |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | `wrangler deploy` の認証 |
-| `CLOUDFLARE_ACCOUNT_ID` | 同上 |
 | `R2_ACCESS_KEY_ID` | R2 の S3 互換 API |
 | `R2_SECRET_ACCESS_KEY` | 同上 |
 
 R2 のトークンは Cloudflare ダッシュボードの R2 > API トークンから発行する
 （`Object Read & Write` が最小権限）。Secret Access Key はトークン値の SHA-256
 ハッシュで、発行直後しか表示されない。
+
+[envchain](https://github.com/sorah/envchain) に入れておくと、シェルに export した
+まま放置せずに済む。
+
+```bash
+envchain --set cloudflare R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY
+envchain cloudflare ruby miyamai_news.rb
+```
+
+`wrangler deploy` の認証は `wrangler login`（対話ログイン）で済ませる場合は環境変数
+不要。CI 等から流す場合のみ `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` を渡す。
 
 `assets.cover_image` / `assets.icon_image` はリポジトリルートに置く。publish 時に
 static assets のステージングへコピーされて配信されるので、手動アップロードは不要。

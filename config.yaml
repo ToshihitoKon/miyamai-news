@@ -6,6 +6,14 @@ gcs:
   public_base: https://storage.googleapis.com
   retention_episodes: 8
 
+cloudflare:
+  account_id: a7c21e337559181c8411558d71429de0
+  worker_name: miyamai-news
+  bucket: miyamai-news
+  public_base: https://miyamai-news.temama.soy
+  retention_episodes: 8
+  audio_prefix: audio
+
 assets:
   bgm_path: 古びた魔法書_気まぐれBGM工房.mp3
   cover_image: miyamai_news.webp

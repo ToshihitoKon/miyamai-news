@@ -17,6 +17,14 @@
       "bucket_name": "miyamai-news"
     }
   ],
+  // deploy 時に DNS レコードと証明書が自動発行される。
+  // config.yaml の cloudflare.public_base と揃える必要がある。
+  "routes": [
+    {
+      "pattern": "miyamai-news.temama.soy",
+      "custom_domain": true
+    }
+  ],
   "observability": {
     "enabled": true
   }
