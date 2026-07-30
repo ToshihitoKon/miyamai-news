@@ -6,6 +6,8 @@
   "main": "src/index.js",
   "compatibility_date": "2026-07-01",
   "assets": {
+    // publish 時は Publisher が --assets でステージングを渡すのでこの値は
+    // 使われない。素の `wrangler deploy` を通すためのプレースホルダ。
     "directory": "./public",
     // audio 配下だけ Worker が先に処理して R2 から返す。
     // config.yaml の cloudflare.audio_prefix と揃える必要がある。
