@@ -18,6 +18,10 @@ module Internal
 
     LEDGER_OBJECT = "archives.csv"
 
+    # 素材はほとんど変わらないので長めに寝かせる。差し替えたい場合は
+    # 1 時間待つか、ファイル名を変えて参照を切り替える。
+    ASSET_CACHE_CONTROL = "public, max-age=3600"
+
     DeployFailed = Class.new(StandardError)
     LedgerMissing = Class.new(StandardError)
 
@@ -60,6 +64,17 @@ module Internal
 
       "#{@public_base}/#{object}"
     end
+
+    # 画像などの恒久素材。R2 に置くのでリポジトリにも配信物にも実体を持たない
+    # （版権素材を Git 管理下に置かずに済む）。
+    def asset_url(object) = "#{@public_base}/#{@storage.asset_key(object)}"
+
+    def upload_asset(object, path, content_type:)
+      @storage.put_file(@storage.asset_key(object), path,
+        content_type: content_type, cache_control: ASSET_CACHE_CONTROL)
+    end
+
+    def asset_exist?(object) = @storage.exist?(@storage.asset_key(object))
 
     # --- 安定 ID -----------------------------------------------------------
 

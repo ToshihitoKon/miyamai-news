@@ -54,6 +54,39 @@ RSpec.describe Internal::Site do
     end
   end
 
+  # 版権素材を Git にもデプロイ成果物にも含めないため、画像は R2 に置いて
+  # Worker 経由で配信する。
+  describe "assets" do
+    it "serves assets from their own prefix, outside the episode prefix" do
+      url = site.asset_url("cover.webp")
+
+      expect(url).to eq("https://news.example.com/assets/cover.webp")
+      expect(url).not_to include("/episodes/")
+    end
+
+    it "uploads assets with a long cache lifetime" do
+      captured = nil
+      s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
+
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "cover.webp")
+        File.write(path, "binary")
+        site.upload_asset("cover.webp", path, content_type: "image/webp")
+      end
+
+      expect(captured[:key]).to eq("assets/cover.webp")
+      expect(captured[:content_type]).to eq("image/webp")
+      expect(captured[:cache_control]).to eq(described_class::ASSET_CACHE_CONTROL)
+    end
+
+    # 退避されるとサイトの画像が消えるので、エピソードのプレフィックスとは
+    # 別に保つ。
+    it "keeps assets out of the retention lifecycle" do
+      expect(site.asset_url("cover.webp")).not_to include("/episodes/")
+      expect(site.asset_url("cover.webp")).not_to include("/archived/")
+    end
+  end
+
   describe "#write_episode_file" do
     it "writes in-memory content beneath the episode-asset prefix" do
       captured = nil

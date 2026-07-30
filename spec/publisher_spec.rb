@@ -35,9 +35,6 @@ RSpec.describe Publisher do
     File.write(mp3_path, "fake mp3")
     File.write(used_path, "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n")
     File.write(transcript_path, "宮舞モカです。\n")
-    # static assets のステージングは実ファイルの存在を要求する。
-    FileUtils.touch(Config.assets.icon_image)
-    FileUtils.touch(Config.assets.cover_image)
   end
 
   after { FileUtils.remove_entry(work_dir) }
@@ -73,16 +70,25 @@ RSpec.describe Publisher do
       expect(deployed.size).to eq(1)
     end
 
-    # デプロイはバージョン単位なので、画像を含む全ファイルが毎回ステージングに
+    # デプロイはバージョン単位なので、生成ページが毎回すべてステージングに
     # 揃っていないと公開サイトから消える。
-    it "stages every static asset, not just the generated pages" do
+    it "stages every generated page" do
       publisher = build_publisher
 
       publisher.run(mp3_path, used_path, transcript_path)
 
       expect(staged_files).to include("index.html", "feed.xml", "manifest.json", "_headers")
-      expect(staged_files).to include(File.basename(Config.assets.icon_image))
-      expect(staged_files).to include(File.basename(Config.assets.cover_image))
+    end
+
+    # 画像は R2 に置くので、手元に実体が無くても publish できる必要がある
+    # （版権素材をリポジトリに置かないため）。
+    it "does not require the artwork to exist locally" do
+      FileUtils.rm_f(Config.assets.icon_image)
+      FileUtils.rm_f(Config.assets.cover_image)
+      publisher = build_publisher
+
+      expect { publisher.run(mp3_path, used_path, transcript_path) }.not_to raise_error
+      expect(staged_files).not_to include(File.basename(Config.assets.icon_image))
     end
 
     it "aborts before touching R2 when used_news fails validation and repair" do

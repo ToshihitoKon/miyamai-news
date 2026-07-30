@@ -12,6 +12,9 @@ module Internal
     # 退避先プレフィックス。episode_prefix の外に置く。
     ARCHIVE_PREFIX = "archived"
 
+    # 画像などの恒久素材。エピソードと違い retention の退避対象にしない。
+    ASSET_PREFIX = "assets"
+
     def initialize(bucket:, account_id: nil, client: nil, episode_prefix: "episodes")
       @bucket = bucket
       @episode_prefix = episode_prefix
@@ -29,6 +32,8 @@ module Internal
     def archive_key(object) = "#{ARCHIVE_PREFIX}/#{object}"
 
     def archive_prefix = "#{ARCHIVE_PREFIX}/"
+
+    def asset_key(object) = "#{ASSET_PREFIX}/#{object}"
 
     def put(key, body, content_type:, cache_control: nil)
       params = { bucket: @bucket, key: key, body: body, content_type: content_type }

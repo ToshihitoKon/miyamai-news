@@ -3,6 +3,7 @@
 require "spec_helper"
 require "json"
 require "internal/config"
+require "internal/r2_storage"
 
 # wrangler.jsonc と config.yaml は同じ前提（資材プレフィックス・公開ホスト）を
 # 別々に持っている。片方だけ変えると本番でしか気づけない壊れ方をするので、
@@ -15,8 +16,8 @@ RSpec.describe "wrangler.jsonc" do
     JSON.parse(stripped)
   end
 
-  it "routes the asset prefix to the worker" do
-    expect(wrangler.dig("assets", "run_worker_first")).to eq(["/episodes/*"])
+  it "routes both R2-backed prefixes to the worker" do
+    expect(wrangler.dig("assets", "run_worker_first")).to contain_exactly("/episodes/*", "/assets/*")
   end
 
   # run_worker_first と episode_prefix がずれると、mp3 が static assets 側に
@@ -25,7 +26,13 @@ RSpec.describe "wrangler.jsonc" do
     sample = YAML.safe_load_file(File.expand_path("../config.sample.yaml", __dir__))
     prefix = sample.dig("cloudflare", "episode_prefix")
 
-    expect(wrangler.dig("assets", "run_worker_first")).to eq(["/#{prefix}/*"])
+    expect(wrangler.dig("assets", "run_worker_first")).to include("/#{prefix}/*")
+  end
+
+  # 画像は R2 の assets/ にあるので、Worker が通らないと配信されない。
+  it "routes the asset prefix used by Site" do
+    expect(wrangler.dig("assets", "run_worker_first"))
+      .to include("/#{Internal::R2Storage::ASSET_PREFIX}/*")
   end
 
   it "binds the worker to an R2 bucket as EPISODES" do

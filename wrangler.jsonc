@@ -9,9 +9,9 @@
     // publish 時は Publisher が --assets でステージングを渡すのでこの値は
     // 使われない。素の `wrangler deploy` を通すためのプレースホルダ。
     "directory": "./public",
-    // episodes 配下だけ Worker が先に処理して R2 から返す。
-    // config.yaml の cloudflare.episode_prefix と揃える必要がある。
-    "run_worker_first": ["/episodes/*"]
+    // episodes / assets 配下だけ Worker が先に処理して R2 から返す。
+    // episodes は config.yaml の cloudflare.episode_prefix と揃える必要がある。
+    "run_worker_first": ["/episodes/*", "/assets/*"]
   },
   "r2_buckets": [
     {

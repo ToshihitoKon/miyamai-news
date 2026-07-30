@@ -180,10 +180,26 @@
 `Internal` 名前空間の中では `Config` が `Internal::Config`（dry-struct のスキーマ）に
 解決されてしまうため、設定ローダーを参照するときは `::Config` と書く必要がある。
 
-配信は 2 系統に分かれる。`index.html` / `feed.xml` / `manifest.json` と画像は
-Workers static assets、mp3 とその兄弟ファイル（`.used.txt` / `.used.html` /
-`.transcript.txt`）と `archives.csv` は R2。両方を同一オリジンで配信するため
-CORS 設定は不要。
+配信は 2 系統に分かれる。`index.html` / `feed.xml` / `manifest.json` は Workers
+static assets、それ以外（mp3 とその兄弟ファイル・画像・`archives.csv`）は R2。
+両方を同一オリジンで配信するため CORS 設定は不要。
+
+R2 のキー構成:
+
+| プレフィックス | 中身 | 退避対象 |
+| --- | --- | --- |
+| `episodes/` | mp3 と兄弟ファイル | ○（retention 超過分） |
+| `assets/` | 画像などの恒久素材 | ×（消えるとサイトの画像が壊れる） |
+| `archived/` | 退避済みエピソード | — |
+| `archives.csv` | 台帳（公開経路の外） | — |
+
+- **画像は R2 の `assets/` に置き、リポジトリにも配信成果物にも実体を持たない。**
+  立ち絵などの版権素材を Git 管理下に置かずに済ませるため。`*.png` / `*.webp` は
+  `.gitignore` 済みなので、static assets 方式だと publish する各環境に実体を手で
+  配置する必要があった。
+- 画像の `Cache-Control` は `max-age=3600`（`Site::ASSET_CACHE_CONTROL`）。
+  ほとんど変わらないので長めに寝かせる。差し替えは 1 時間待つか、ファイル名を
+  変えて参照を切り替える。
 
 - オブジェクト名は渡された mp3 ファイル名をそのまま使うこと。日付から
   組み立て直すと slot（朝/昼/夜/深夜）が落ち、同日複数回のエピソードが同名衝突して

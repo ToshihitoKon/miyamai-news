@@ -60,8 +60,13 @@ envchain cloudflare ruby miyamai_news.rb
 `wrangler deploy` の認証は `wrangler login`（対話ログイン）で済ませる場合は環境変数
 不要。CI 等から流す場合のみ `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` を渡す。
 
-`assets.cover_image` / `assets.icon_image` はリポジトリルートに置く。publish 時に
-static assets のステージングへコピーされて配信されるので、手動アップロードは不要。
+`assets.cover_image` / `assets.icon_image` は R2 の `assets/` プレフィックスへ
+アップロードしておく。版権素材をリポジトリに置かずに済ませるためで、publish 時に
+手元へ実体がある必要はない。
+
+```sh
+envchain cloudflare ruby scripts/upload_assets.rb --file miyamai_news.webp --file miyamai_news_icon.png
+```
 
 カスタムドメインは `wrangler.jsonc` の `routes` に `custom_domain: true` で宣言すると
 `wrangler deploy` 時に DNS レコードと証明書が自動発行される。ただし**対象ホスト名に

@@ -79,6 +79,7 @@ class Publisher
 
   def public_url(object) = @site.url_for(object)
   def site_url(object) = @site.page_url(object)
+  def asset_url(name) = @site.asset_url(File.basename(name))
 
   def upload_content(object, content, content_type:, cache_control: nil)
     @site.write_episode_file(object, content,
@@ -176,23 +177,15 @@ class Publisher
   # --- サイトの反映 ------------------------------------------------------
 
   # 反映はディレクトリ単位で、ここに無いファイルは公開サイトから消える。
-  # そのため画像も含めた全ファイルを毎回書き出してから 1 回だけ反映する。
+  # 生成ページを毎回すべて書き出してから 1 回だけ反映する。
   def deploy_site(rows)
     Dir.mktmpdir("miyamai_site") do |dir|
       File.write(File.join(dir, "index.html"), render_html(rows))
       File.write(File.join(dir, "feed.xml"), render_feed(rows))
       File.write(File.join(dir, "manifest.json"), render_manifest)
-      stage_static_assets(dir)
       @site.deploy(dir)
     rescue Internal::Site::DeployFailed => e
       abort(e.message)
-    end
-  end
-
-  def stage_static_assets(dir)
-    [icon_image, cover_image].each do |name|
-      abort("asset not found: #{name} (needed for the site deploy)") unless File.exist?(name)
-      FileUtils.cp(name, File.join(dir, File.basename(name)))
     end
   end
 
@@ -214,8 +207,8 @@ class Publisher
       page_url: public_url("index.html"),
       feed_url: public_url("feed.xml"),
       manifest_url: public_url("manifest.json"),
-      icon_url: site_url(File.basename(icon_image)),
-      cover_url: site_url(File.basename(cover_image)),
+      icon_url: asset_url(icon_image),
+      cover_url: asset_url(cover_image),
       description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
       og_title: PROGRAM_NAME,
       options:)
@@ -269,7 +262,7 @@ class Publisher
   # --- manifest.json (PWA) -----------------------------------------------
 
   def render_manifest
-    TemplateRenderer.render("manifest.json", self, icon_url: site_url(File.basename(icon_image)))
+    TemplateRenderer.render("manifest.json", self, icon_url: asset_url(icon_image))
   end
 
   def feed_datetime(date_str, updated_at = nil)
