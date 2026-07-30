@@ -86,7 +86,8 @@ RSpec.describe Internal::R2Storage do
     it "raises Missing when the key does not exist" do
       client.stub_responses(:get_object, "NoSuchKey")
 
-      expect { storage.get("archives.csv") }.to raise_error(described_class::Missing, /archives\.csv/)
+      expect { storage.get("archives.csv") }
+        .to raise_error(Internal::ObjectStorage::ObjectNotFound, /archives\.csv/)
     end
   end
 

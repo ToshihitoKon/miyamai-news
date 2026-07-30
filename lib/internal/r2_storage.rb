@@ -1,15 +1,16 @@
 # frozen_string_literal: true
 
 require "aws-sdk-s3"
+require_relative "object_storage"
 
 module Internal
   # R2（S3 互換 API）上のオブジェクト操作をまとめる。
   # Publisher からストレージ操作の詳細を隠し、S3 クライアントを差し替え可能にする。
   class R2Storage
+    include ObjectStorage
+
     # 退避先プレフィックス。audio_prefix の外に置く。
     ARCHIVE_PREFIX = "archived"
-
-    Missing = Class.new(StandardError)
 
     def initialize(bucket:, account_id: nil, client: nil, audio_prefix: "audio")
       @bucket = bucket
@@ -44,7 +45,7 @@ module Internal
     def get(key)
       client.get_object(bucket: @bucket, key: key).body.read
     rescue Aws::S3::Errors::NoSuchKey, Aws::S3::Errors::NotFound
-      raise Missing, "object not found: #{key}"
+      raise ObjectNotFound, "object not found: #{key}"
     end
 
     # 「存在しない」と「確認できなかった」を区別する。判定不能を「存在しない」と

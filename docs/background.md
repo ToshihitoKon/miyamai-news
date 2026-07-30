@@ -227,7 +227,17 @@ CORS 設定は不要。
   ので、移行時は先に既存レコードを削除する必要がある。
 - Worker スクリプト（`src/index.js`）はこのリポジトリで唯一の JS 実行コードだが、
   JS のテスト基盤（Vitest 等）は導入していない。動作確認はプレビュー URL への
-  `curl -I` と実機での再生確認で行う。
+  `curl -I` と実機での再生確認で行う。配布されるファイルなのでコメントは書かず、
+  以下に意図を記録する。
+- Worker は資材プレフィックス（`audio/*`）へのリクエストだけを処理する。
+  それ以外は static assets 側が返すので Worker には到達しない。
+- `get` に `onlyIf: request.headers` と `range: request.headers` をそのまま渡し、
+  条件付きリクエストと Range を R2 側に解釈させる。音声のシークが Range に
+  依存するため、`accept-ranges` と 206 応答時の `content-range` が要る。
+- `writeHttpMetadata` は R2 オブジェクトのメタデータでヘッダーを上書きするため、
+  `cache-control` の既定値を入れるのは必ずその後。順序を逆にすると R2 側に
+  設定した値を握り潰す。
+- `body` を持たない応答は条件付きリクエストが不成立だったケース。
 - `Publisher#run` 中に R2 操作または `wrangler deploy` が 1 つでも失敗したら
   即 abort する。公開物が index.html/feed.xml/manifest.json/archives.csv/mp3 の
   間で中途半端に不整合な状態のまま残らないようにするため。R2 への書き込みを

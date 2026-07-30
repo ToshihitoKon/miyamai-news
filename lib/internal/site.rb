@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "config"
+require_relative "object_storage"
 require_relative "r2_storage"
 
 module Internal
@@ -52,12 +53,14 @@ module Internal
 
     # --- エピソード資材 ----------------------------------------------------
 
-    def put_episode_file(object, path, content_type:, cache_control: nil)
+    # ローカルファイルをそのまま送る（mp3・transcript のような実体があるもの）。
+    def upload_episode_file(object, path, content_type:, cache_control: nil)
       @storage.put_file(@storage.audio_key(object), path,
         content_type: content_type, cache_control: cache_control)
     end
 
-    def put_episode_content(object, content, content_type:, cache_control: nil)
+    # メモリ上で組み立てた内容を書き込む（used.txt・used.html のような生成物）。
+    def write_episode_file(object, content, content_type:, cache_control: nil)
       @storage.put(@storage.audio_key(object), content,
         content_type: content_type, cache_control: cache_control)
     end
@@ -78,7 +81,7 @@ module Internal
 
     def read_ledger
       @storage.get(LEDGER_OBJECT)
-    rescue R2Storage::Missing => e
+    rescue ObjectStorage::ObjectNotFound => e
       raise LedgerMissing, e.message
     end
 

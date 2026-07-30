@@ -77,7 +77,7 @@ class Publisher
   def site_url(object) = @site.page_url(object)
 
   def upload_content(object, content, content_type:, cache_control: nil)
-    @site.put_episode_content(object, content,
+    @site.write_episode_file(object, content,
       content_type: content_type, cache_control: cache_control)
   end
 
@@ -85,7 +85,7 @@ class Publisher
 
   def upload_mp3(local_path, filename)
     abort("mp3 not found: #{local_path}") unless File.exist?(local_path)
-    @site.put_episode_file(filename, local_path,
+    @site.upload_episode_file(filename, local_path,
       content_type: "audio/mpeg", cache_control: "public, max-age=31536000, immutable")
   end
 
@@ -114,7 +114,7 @@ class Publisher
 
   def upload_transcript(local_path, object)
     abort("transcript not found: #{local_path}") unless File.exist?(local_path)
-    @site.put_episode_file(object, local_path,
+    @site.upload_episode_file(object, local_path,
       content_type: "text/plain; charset=utf-8")
   end
 

@@ -1,10 +1,3 @@
-// audio プレフィックス配下（mp3 と、再生ページが拡張子を差し替えて引く
-// .used.html / .used.txt / .transcript.txt）を R2 から返す。
-// それ以外のパスは static assets が処理するのでここには来ない。
-//
-// _headers は run_worker_first のパスに適用されないため、Content-Type と
-// Cache-Control はここで付ける。Content-Type は R2 オブジェクトのメタデータ
-// （Ruby 側が put 時に設定）を writeHttpMetadata で反映する。
 export default {
   async fetch(request, env) {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -30,7 +23,6 @@ export default {
       headers.set('cache-control', 'public, max-age=300');
     }
 
-    // body を持たない = If-None-Match 等の条件が不成立。
     const hasBody = 'body' in object;
     if (!hasBody) {
       return new Response(undefined, { status: object.size === undefined ? 412 : 304, headers });

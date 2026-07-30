@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "tmpdir"
 require "internal/site"
 
 RSpec.describe Internal::Site do
@@ -33,15 +34,33 @@ RSpec.describe Internal::Site do
     end
   end
 
-  describe "#put_episode_content" do
-    it "writes beneath the episode-asset prefix" do
+  describe "#write_episode_file" do
+    it "writes in-memory content beneath the episode-asset prefix" do
       captured = nil
       s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
 
-      site.put_episode_content("ep.used.txt", "body", content_type: "text/plain")
+      site.write_episode_file("ep.used.txt", "body", content_type: "text/plain")
 
       expect(captured[:key]).to eq("audio/ep.used.txt")
       expect(captured[:content_type]).to eq("text/plain")
+      expect(captured[:body]).to eq("body")
+    end
+  end
+
+  describe "#upload_episode_file" do
+    it "uploads a local file beneath the episode-asset prefix" do
+      captured = nil
+      s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
+
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "ep.mp3")
+        File.write(path, "fake mp3")
+
+        site.upload_episode_file("ep.mp3", path, content_type: "audio/mpeg")
+      end
+
+      expect(captured[:key]).to eq("audio/ep.mp3")
+      expect(captured[:content_type]).to eq("audio/mpeg")
     end
   end
 
