@@ -225,6 +225,13 @@ CORS 設定は不要。
 - カスタムドメインの追加は `wrangler deploy` 時に自動で行われ、DNS レコードと
   証明書も発行される。ただし**対象ホスト名に既存の CNAME レコードがあると失敗する**
   ので、移行時は先に既存レコードを削除する必要がある。
+- static assets は `html_handling` の既定（`auto-trailing-slash`）により
+  **`/index.html` を `/` へ 307 リダイレクトする**。そのため公開 URL としては
+  正規形の `/` を使う（`Site#page_url`）。リダイレクトされる URL を feed の
+  `<link>` や `og:url` に載せると、購読者とクローラが毎回余計な往復をする。
+- static assets のデフォルト応答ヘッダーは実測で
+  `cache-control: public, max-age=0, must-revalidate`。ETag による再検証前提
+  なので、更新がすぐ届く一方で毎回条件付きリクエストが飛ぶ。
 - Worker スクリプト（`src/index.js`）はこのリポジトリで唯一の JS 実行コードだが、
   JS のテスト基盤（Vitest 等）は導入していない。動作確認はプレビュー URL への
   `curl -I` と実機での再生確認で行う。配布されるファイルなのでコメントは書かず、

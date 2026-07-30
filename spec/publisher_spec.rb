@@ -246,8 +246,15 @@ RSpec.describe Publisher do
     let(:publisher) { build_publisher }
 
     it "serves the generated pages from the site root" do
-      expect(publisher.send(:public_url, "index.html")).to eq("https://news.example.com/index.html")
+      expect(publisher.send(:public_url, "index.html")).to eq("https://news.example.com/")
       expect(publisher.send(:public_url, "feed.xml")).to eq("https://news.example.com/feed.xml")
+    end
+
+    # feed の <link> や og:url にリダイレクトされる URL を載せない。
+    it "never emits the redirecting /index.html form in the rendered feed" do
+      rows = [["2026-07-14", "miyamai_news_20260714_afternoon.mp3", "T", "", "2026-07-14T00:00:00Z"]]
+
+      expect(publisher.send(:render_feed, rows)).not_to include("/index.html")
     end
 
     # 再生ページの JS は mp3 URL の拡張子だけを差し替えて兄弟ファイルを引くため、

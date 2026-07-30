@@ -19,9 +19,14 @@ RSpec.describe Internal::Site do
 
   describe "#url_for" do
     it "serves generated pages from the site root" do
-      described_class::PAGE_OBJECTS.each do |page|
-        expect(site.url_for(page)).to eq("https://news.example.com/#{page}")
-      end
+      expect(site.url_for("feed.xml")).to eq("https://news.example.com/feed.xml")
+      expect(site.url_for("manifest.json")).to eq("https://news.example.com/manifest.json")
+    end
+
+    # static assets 側が /index.html を "/" へ 307 リダイレクトするので、
+    # 正規形を返さないと feed の link や og:url が毎回リダイレクトを挟む。
+    it "returns the canonical root for index.html instead of the redirecting form" do
+      expect(site.url_for("index.html")).to eq("https://news.example.com/")
     end
 
     # 再生ページの JS は mp3 URL の拡張子だけを差し替えて兄弟ファイルを引くため、

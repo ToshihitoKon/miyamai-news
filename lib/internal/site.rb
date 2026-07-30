@@ -11,8 +11,10 @@ module Internal
   # Publisher はこのインターフェース越しにだけサイトを触り、ストレージの種類や
   # キー構成・デプロイ手段を知らない。
   class Site
+    INDEX_OBJECT = "index.html"
+
     # 生成ページとして配信するオブジェクト。これ以外はエピソード資材として扱う。
-    PAGE_OBJECTS = ["index.html", "feed.xml", "manifest.json"].freeze
+    PAGE_OBJECTS = [INDEX_OBJECT, "feed.xml", "manifest.json"].freeze
 
     LEDGER_OBJECT = "archives.csv"
 
@@ -50,7 +52,14 @@ module Internal
       "#{@public_base}/#{@storage.audio_key(object)}"
     end
 
-    def page_url(object) = "#{@public_base}/#{object}"
+    # index.html は配信側が "/" へ 307 リダイレクトするため、正規形の "/" を返す。
+    # リダイレクトされる URL を feed の link や og:url に載せると、購読者と
+    # クローラが毎回余計な往復をする。
+    def page_url(object)
+      return "#{@public_base}/" if object == INDEX_OBJECT
+
+      "#{@public_base}/#{object}"
+    end
 
     # --- 安定 ID -----------------------------------------------------------
 
