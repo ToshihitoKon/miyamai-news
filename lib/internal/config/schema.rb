@@ -16,7 +16,6 @@ module Internal
     class Gcs < Base
       attribute :bucket, Types::Strict::String
       attribute :public_base, Types::Strict::String
-      attribute :retention_episodes, Types::Strict::Integer
     end
 
     class Cloudflare < Base
@@ -24,6 +23,7 @@ module Internal
       attribute :worker_name, Types::Strict::String
       attribute :bucket, Types::Strict::String
       attribute :public_base, Types::Strict::String
+      attribute :retention_episodes, Types::Strict::Integer
       attribute? :audio_prefix, Types::Strict::String.default("audio")
     end
 

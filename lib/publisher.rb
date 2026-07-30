@@ -10,23 +10,16 @@ require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/used_news_markdown"
 require_relative "internal/used_news_formatter"
-require_relative "internal/r2_storage"
+require_relative "publish_target"
 require_relative "slot"
 
 class Publisher
   PROGRAM_NAME = "宮舞モカの技術ニュース"
 
-  # Workers static assets として配信するオブジェクト。これ以外は R2 に置く。
-  SITE_OBJECTS = ["index.html", "feed.xml", "manifest.json"].freeze
-
-  # 台帳。audio プレフィックスの外に置き、公開されないようにする。
-  ARCHIVES_OBJECT = "archives.csv"
-
-  def initialize(bucket: default_bucket, date: Date.today, title: nil, storage: nil)
-    @bucket = bucket
+  def initialize(date: Date.today, title: nil, target: nil)
     @date   = date
     @title  = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
-    @storage = storage
+    @target = target || PublishTarget.from_config
   end
 
   EPISODE_FILE_EXTENSIONS = [".mp3", ".used.txt", ".transcript.txt"].freeze
@@ -65,45 +58,26 @@ class Publisher
   end
 
   def object_exists?(object)
-    storage.exist?(object)
+    @target.episode_file_exist?(object)
   end
 
   def clean_archive
-    count = storage.delete_prefix("#{Internal::R2Storage::ARCHIVE_PREFIX}/")
+    count = @target.purge_retired
 
-    puts "done: cleaned #{count} object(s) under #{Internal::R2Storage::ARCHIVE_PREFIX}/"
+    puts "done: cleaned #{count} retired object(s)"
   end
 
   private
 
-  def public_base = Config.cloudflare.public_base
-  def default_bucket = Config.cloudflare.bucket
-  def retention_episodes = Config.gcs.retention_episodes
+  def retention_episodes = @target.retention_episodes
   def cover_image = Config.assets.cover_image
   def icon_image = Config.assets.icon_image
-  def audio_prefix = Config.cloudflare.audio_prefix
 
-  def storage
-    @storage ||= Internal::R2Storage.new(
-      bucket: @bucket,
-      account_id: Config.cloudflare.account_id,
-      audio_prefix: audio_prefix
-    )
-  end
-
-  # static assets 配信のものはドメイン直下、それ以外（mp3 とその兄弟ファイル）は
-  # audio プレフィックス配下を指す。再生ページの JS が mp3 URL の拡張子だけを
-  # 差し替えて .used.html / .transcript.txt を引くため、両者は同じ階層に並ぶ。
-  def public_url(object)
-    return site_url(object) if SITE_OBJECTS.include?(object)
-
-    "#{public_base}/#{audio_prefix}/#{object}"
-  end
-
-  def site_url(object) = "#{public_base}/#{object}"
+  def public_url(object) = @target.url_for(object)
+  def site_url(object) = @target.page_url(object)
 
   def upload_content(object, content, content_type:, cache_control: nil)
-    storage.put(storage.audio_key(object), content,
+    @target.put_episode_content(object, content,
       content_type: content_type, cache_control: cache_control)
   end
 
@@ -111,7 +85,7 @@ class Publisher
 
   def upload_mp3(local_path, filename)
     abort("mp3 not found: #{local_path}") unless File.exist?(local_path)
-    storage.put_file(storage.audio_key(filename), local_path,
+    @target.put_episode_file(filename, local_path,
       content_type: "audio/mpeg", cache_control: "public, max-age=31536000, immutable")
   end
 
@@ -140,7 +114,7 @@ class Publisher
 
   def upload_transcript(local_path, object)
     abort("transcript not found: #{local_path}") unless File.exist?(local_path)
-    storage.put_file(storage.audio_key(object), local_path,
+    @target.put_episode_file(object, local_path,
       content_type: "text/plain; charset=utf-8")
   end
 
@@ -160,7 +134,7 @@ class Publisher
     expired_rows.each { |r| archive_episode_files(r[1]) }
 
     csv = CSV.generate { |out| rows.each { |r| out << r } }
-    storage.put(ARCHIVES_OBJECT, csv, content_type: "text/csv")
+    @target.write_ledger(csv)
 
     rows
   end
@@ -173,13 +147,11 @@ class Publisher
     prior.empty? ? now_rfc3339 : prior
   end
 
-  # 退避先は audio プレフィックスの外（archived/）。中に置くと Worker が R2 から
-  # 配信し続け、retention を超えた回が公開されたままになる。
   def archive_episode_files(filename)
     used_txt_object = filename.sub(/\.mp3\z/, ".used.txt")
     objects = self.class.episode_object_names(filename) + [self.class.used_news_html_object(used_txt_object)]
     objects.each do |object|
-      storage.move(storage.audio_key(object), storage.archive_key(object))
+      @target.retire_episode_file(object)
     rescue StandardError => e
       warn "archive skipped: #{e.message}"
     end
@@ -188,54 +160,36 @@ class Publisher
   def fetch_existing_archives
     return [] unless archives_exist?
 
-    CSV.parse(storage.get(ARCHIVES_OBJECT))
-  rescue Internal::R2Storage::Missing
+    CSV.parse(@target.read_ledger)
+  rescue PublishTarget::LedgerMissing
     abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)")
   end
 
   def archives_exist?
-    storage.exist?(ARCHIVES_OBJECT)
+    @target.ledger_exist?
   end
 
-  # --- Workers static assets へのデプロイ ---------------------------------
+  # --- サイトの反映 ------------------------------------------------------
 
-  # Hosting のデプロイはバージョン単位で、ステージングに無いものは消える。
-  # そのため画像も含めた全ファイルを毎回書き出してから 1 回だけ deploy する。
+  # 反映はディレクトリ単位で、ここに無いファイルは公開サイトから消える。
+  # そのため画像も含めた全ファイルを毎回書き出してから 1 回だけ反映する。
   def deploy_site(rows)
     Dir.mktmpdir("miyamai_site") do |dir|
       File.write(File.join(dir, "index.html"), render_html(rows))
       File.write(File.join(dir, "feed.xml"), render_feed(rows))
       File.write(File.join(dir, "manifest.json"), render_manifest)
       stage_static_assets(dir)
-      write_headers(dir)
-      wrangler_deploy(dir)
+      @target.publish_site(dir)
+    rescue PublishTarget::DeployFailed => e
+      abort(e.message)
     end
   end
 
   def stage_static_assets(dir)
     [icon_image, cover_image].each do |name|
-      abort("asset not found: #{name} (needed for the static assets deploy)") unless File.exist?(name)
+      abort("asset not found: #{name} (needed for the site deploy)") unless File.exist?(name)
       FileUtils.cp(name, File.join(dir, File.basename(name)))
     end
-  end
-
-  # feed.xml の Content-Type は拡張子ベースだと application/xml 系になるため
-  # _headers で上書きする。audio プレフィックス配下（Worker が返す経路）には
-  # _headers が適用されないので、そちらは Worker 側でヘッダーを付ける。
-  def write_headers(dir)
-    File.write(File.join(dir, "_headers"), <<~HEADERS)
-      /index.html
-        Cache-Control: public, max-age=300
-      /feed.xml
-        Cache-Control: public, max-age=300
-        Content-Type: application/atom+xml; charset=utf-8
-    HEADERS
-  end
-
-  def wrangler_deploy(dir)
-    args = ["deploy", "--assets", dir]
-    system("wrangler", *args) ||
-      abort("wrangler deploy failed: #{["wrangler", *args].join(' ')}")
   end
 
   # --- index.html --------------------------------------------------------

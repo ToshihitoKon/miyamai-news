@@ -16,6 +16,20 @@ RSpec.describe Publisher do
   # R2 は S3 互換 API なので stub_responses でクライアントごと差し替える。
   let(:s3) { Aws::S3::Client.new(stub_responses: true, region: "auto") }
   let(:storage) { Internal::R2Storage.new(bucket: "test-bucket", client: s3) }
+  # サイトの反映は subprocess を起動せず、渡されたディレクトリだけ記録する。
+  let(:deployed) { [] }
+  let(:deploy_result) { [true] }
+  let(:target) do
+    PublishTarget.new(
+      public_base: "https://news.example.com",
+      retention_episodes: 5,
+      storage: storage,
+      deployer: ->(dir) {
+        deployed << { dir: dir, files: Dir.exist?(dir) ? Dir.children(dir) : [] }
+        deploy_result.first
+      }
+    )
+  end
 
   before do
     File.write(mp3_path, "fake mp3")
@@ -34,31 +48,18 @@ RSpec.describe Publisher do
     s3.stub_responses(:put_object, {})
     s3.stub_responses(:copy_object, { copy_object_result: {} })
     s3.stub_responses(:delete_object, {})
-    described_class.new(date: Date.new(2026, 7, 14), storage: storage, **kwargs)
-  end
-
-  # wrangler は subprocess なので system を捕捉する。デプロイ直前のステージング
-  # ディレクトリの中身も記録する（バージョン単位デプロイなので、ここに無い
-  # ファイルは公開サイトから消える）。
-  def stub_wrangler(publisher)
-    calls = []
-    staged = []
-    allow(publisher).to receive(:system) do |*args|
-      calls << args.map(&:to_s).join(" ")
-      idx = args.index("--assets")
-      dir = idx && args[idx + 1]
-      staged.concat(Dir.children(dir)) if dir && Dir.exist?(dir)
-      true
-    end
-    [calls, staged]
+    described_class.new(date: Date.new(2026, 7, 14), target: target, **kwargs)
   end
 
   def ledger_csv(rows) = CSV.generate { |csv| rows.each { |r| csv << r } }
 
+  # 反映されたステージングの中身（バージョン単位反映なので、ここに無い
+  # ファイルは公開サイトから消える）。
+  def staged_files = deployed.flat_map { |d| d[:files] }
+
   describe "#run" do
     it "uploads the episode files to R2 and deploys the site once" do
       publisher = build_publisher
-      calls, = stub_wrangler(publisher)
       put_keys = []
       s3.stub_responses(:put_object, ->(ctx) { put_keys << ctx.params[:key]; {} })
 
@@ -69,20 +70,19 @@ RSpec.describe Publisher do
       expect(put_keys).to include("audio/miyamai_news_20260714_afternoon.used.html")
       expect(put_keys).to include("audio/#{File.basename(transcript_path)}")
       expect(put_keys).to include("archives.csv")
-      expect(calls.count { |c| c.start_with?("wrangler deploy") }).to eq(1)
+      expect(deployed.size).to eq(1)
     end
 
     # デプロイはバージョン単位なので、画像を含む全ファイルが毎回ステージングに
     # 揃っていないと公開サイトから消える。
     it "stages every static asset, not just the generated pages" do
       publisher = build_publisher
-      _calls, staged = stub_wrangler(publisher)
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(staged).to include("index.html", "feed.xml", "manifest.json", "_headers")
-      expect(staged).to include(File.basename(Config.assets.icon_image))
-      expect(staged).to include(File.basename(Config.assets.cover_image))
+      expect(staged_files).to include("index.html", "feed.xml", "manifest.json", "_headers")
+      expect(staged_files).to include(File.basename(Config.assets.icon_image))
+      expect(staged_files).to include(File.basename(Config.assets.cover_image))
     end
 
     it "aborts before touching R2 when used_news fails validation and repair" do
@@ -91,16 +91,14 @@ RSpec.describe Publisher do
       allow(UsedNewsFormatter).to receive(:run_fix_cli).and_return(nil)
       put_called = false
       s3.stub_responses(:put_object, ->(_ctx) { put_called = true; {} })
-      allow(publisher).to receive(:system).and_return(true)
 
       expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
       expect(put_called).to be false
-      expect(publisher).not_to have_received(:system)
+      expect(deployed).to be_empty
     end
 
     it "does not validate used_news when used_txt_path is nil" do
       publisher = build_publisher
-      stub_wrangler(publisher)
       allow(UsedNewsFormatter).to receive(:ensure_valid!)
 
       publisher.run(mp3_path, nil, transcript_path)
@@ -108,9 +106,9 @@ RSpec.describe Publisher do
       expect(UsedNewsFormatter).not_to have_received(:ensure_valid!)
     end
 
-    it "aborts the whole run when wrangler deploy fails" do
+    it "aborts the whole run when the site deploy fails" do
       publisher = build_publisher
-      allow(publisher).to receive(:system).and_return(false)
+      deploy_result[0] = false
 
       expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
     end
@@ -121,22 +119,21 @@ RSpec.describe Publisher do
 
     it "deploys the site without writing the ledger or episode files" do
       publisher = build_publisher(ledger: ledger_csv(existing))
-      calls, staged = stub_wrangler(publisher)
       put_keys = []
       s3.stub_responses(:put_object, ->(ctx) { put_keys << ctx.params[:key]; {} })
 
       publisher.republish_ui
 
-      expect(calls.count { |c| c.start_with?("wrangler deploy") }).to eq(1)
+      expect(deployed.size).to eq(1)
       expect(put_keys).to be_empty
-      expect(staged).to include("index.html", "feed.xml", "manifest.json")
+      expect(staged_files).to include("index.html", "feed.xml", "manifest.json")
     end
 
     it "aborts when the ledger does not exist yet" do
       publisher = build_publisher
-      allow(publisher).to receive(:system).and_return(true)
 
       expect { publisher.republish_ui }.to raise_error(SystemExit)
+      expect(deployed).to be_empty
     end
   end
 
@@ -169,7 +166,6 @@ RSpec.describe Publisher do
     # retention を超えた回が公開されたままになる。
     it "moves expired episodes out of the audio prefix" do
       publisher = build_publisher(ledger: ledger_csv(existing_rows))
-      stub_wrangler(publisher)
       copies = []
       s3.stub_responses(:copy_object, ->(ctx) { copies << ctx.params; { copy_object_result: {} } })
 
@@ -182,7 +178,6 @@ RSpec.describe Publisher do
 
     it "does not move anything when within the retention limit" do
       publisher = build_publisher
-      stub_wrangler(publisher)
       copied = false
       s3.stub_responses(:copy_object, ->(_ctx) { copied = true; { copy_object_result: {} } })
 
@@ -194,11 +189,10 @@ RSpec.describe Publisher do
     it "aborts instead of overwriting the ledger when the existence check fails transiently" do
       publisher = build_publisher
       s3.stub_responses(:head_object, "InternalError")
-      allow(publisher).to receive(:system).and_return(true)
 
       expect { publisher.run(mp3_path, used_path, transcript_path) }
         .to raise_error(Aws::S3::Errors::ServiceError)
-      expect(publisher).not_to have_received(:system)
+      expect(deployed).to be_empty
     end
   end
 

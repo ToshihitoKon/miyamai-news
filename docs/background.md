@@ -156,7 +156,22 @@
 - 直後に文が続かない話題転換タグ（連続するタグなど）は、その pause 指定ごと
   静かに捨てられる（低頻度の許容済みエッジケース）。
 
-### Publisher / Cloudflare（公開先の運用ルール）
+### Publisher / PublishTarget（公開先の運用ルール）
+
+公開先の知識は `PublishTarget`（`lib/publish_target.rb`）に閉じている。`Publisher`
+は「エピソード資材を置く」「台帳を読み書きする」「サイトを反映する」という
+語彙でしか公開先を触らず、**ストレージの種類・キー構成・デプロイ手段・
+ベンダー名を一切知らない**。`PublishTarget` の下に `Internal::R2Storage`
+（S3 互換 API のオブジェクト操作）が入る 3 層構成。
+
+- `Publisher` … 何を公開するか（台本・台帳・ページの内容）
+- `PublishTarget` … どこへどう公開するか（キー構成・公開 URL・反映手段）
+- `Internal::R2Storage` … オブジェクトストレージの操作
+
+`Publisher` が `Config` から直接読むのは `assets`（画像）だけで、公開先の設定は
+`PublishTarget.from_config` が `cloudflare` セクションからまとめて読む。
+`retention_episodes` は「保持する話数」という公開ポリシーなので、ストレージの
+設定ではなく `PublishTarget` が持つ。
 
 配信は 2 系統に分かれる。`index.html` / `feed.xml` / `manifest.json` と画像は
 Workers static assets、mp3 とその兄弟ファイル（`.used.txt` / `.used.html` /

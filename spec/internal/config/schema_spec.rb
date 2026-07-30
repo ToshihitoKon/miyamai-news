@@ -74,6 +74,7 @@ RSpec.describe Internal::Config do
       described_class.new({
         account_id: "acct", worker_name: "miyamai-news",
         bucket: "miyamai-news", public_base: "https://news.example.com",
+        retention_episodes: 5,
       }.merge(overrides))
     end
 
