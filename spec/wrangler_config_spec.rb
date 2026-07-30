@@ -35,6 +35,13 @@ RSpec.describe "wrangler.jsonc" do
       .to include("/#{Internal::R2Storage::ASSET_PREFIX}/*")
   end
 
+  # directory があると素の `wrangler deploy` が通ってしまい、そのディレクトリの
+  # 中身で公開サイト全体が置き換わる（デプロイはバージョン単位なので、生成済みの
+  # index.html / feed.xml が消える）。未設定なら wrangler がエラーで止まる。
+  it "omits assets.directory so a bare deploy cannot replace the site" do
+    expect(wrangler["assets"]).not_to have_key("directory")
+  end
+
   it "binds the worker to an R2 bucket as EPISODES" do
     expect(wrangler["r2_buckets"].map { |b| b["binding"] }).to include("EPISODES")
   end

@@ -212,7 +212,10 @@ R2 のキー構成:
   `episodes/` 配下に置くと `run_worker_first` の対象なので Worker が R2 から配信し
   続け、公開を終えたはずの回が読めるままになる。
 - `archives.csv` も `episodes/` の外に置く。台帳を公開オリジンから読めるようにする
-  必要はない。
+  必要はない。ただし**プレフィックスの外に置くだけでは非公開にならない**:
+  static assets に無いパスは Worker にフォールバックするため、`/archives.csv` が
+  Worker へ届き R2 のルート直下から返ってしまう。Worker 側で配信可能な
+  プレフィックス（`SERVABLE_PREFIXES`）を明示的に許可制にして塞ぐ。
 - `object_exists?` は「オブジェクトが存在しない」と「確認自体に失敗した」を
   区別する。R2 は S3 互換 API なので HeadObject の 404 と 403 / 5xx が例外クラス
   として分かれ、文言マッチではなく型で判定できる。判定不能な失敗を「存在しない」
@@ -227,6 +230,13 @@ R2 のキー構成:
   `Publisher#clean_archive` を明示的に呼んだときだけ行われる（ListObjectsV2 で
   列挙して DeleteObjects でバッチ削除。`wrangler r2 object delete` は
   プレフィックス指定に対応していない）。
+- **素の `wrangler deploy` を使わない。** `wrangler.jsonc` に
+  `assets.directory` を書くと、そのディレクトリの中身で公開サイト全体が
+  置き換わる（デプロイはバージョン単位なので、生成済みの index.html /
+  feed.xml が消える）。Worker のコードだけ直したい場合も同じ。
+  `directory` を書かないことで素の deploy はエラーで止まり、
+  `--assets <ステージング>` を渡す publish 経路だけが通るようにしている。
+  Worker の変更を反映したいときも `--ui-only` を使う。
 - **static assets のデプロイはバージョン単位で、ステージングに無いファイルは
   公開サイトから消える。** そのため `run` / `republish_ui` のどちらも、画像を
   含む全ファイルを毎回ステージングディレクトリへ書き出してから 1 回だけ
@@ -260,7 +270,13 @@ R2 のキー構成:
 - `writeHttpMetadata` は R2 オブジェクトのメタデータでヘッダーを上書きするため、
   `cache-control` の既定値を入れるのは必ずその後。順序を逆にすると R2 側に
   設定した値を握り潰す。
-- `body` を持たない応答は条件付きリクエストが不成立だったケース。
+- `body` を持たない応答は条件付きリクエストが不成立だったケース。`If-Match` /
+  `If-Unmodified-Since` が付いていたときだけ 412 を返し、それ以外は 304。
+- **206 を返すのはリクエストに `Range` があったときだけ**にする。`get` に
+  `range: request.headers` を渡すと、`Range` が無くても R2 は `object.range` に
+  オブジェクト全体を表す値を入れて返すため、`object.range` の有無だけで分岐すると
+  **全リクエストが 206 になる**。Slack などのクローラーは 206 を画像として扱わず、
+  OGP 展開が黙って壊れる。
 - `Publisher#run` 中に R2 操作または `wrangler deploy` が 1 つでも失敗したら
   即 abort する。公開物が index.html/feed.xml/manifest.json/archives.csv/mp3 の
   間で中途半端に不整合な状態のまま残らないようにするため。R2 への書き込みを

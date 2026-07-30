@@ -1,3 +1,5 @@
+const SERVABLE_PREFIXES = ['episodes/', 'assets/'];
+
 export default {
   async fetch(request, env) {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -8,6 +10,9 @@ export default {
     }
 
     const key = decodeURIComponent(new URL(request.url).pathname.slice(1));
+
+    const servable = SERVABLE_PREFIXES.some((p) => key.startsWith(p));
+    if (!servable) return new Response('Not Found', { status: 404 });
 
     const object = await env.EPISODES.get(key, {
       onlyIf: request.headers,
@@ -23,12 +28,14 @@ export default {
       headers.set('cache-control', 'public, max-age=300');
     }
 
-    const hasBody = 'body' in object;
-    if (!hasBody) {
-      return new Response(undefined, { status: object.size === undefined ? 412 : 304, headers });
+    if (!('body' in object)) {
+      const precondition =
+        request.headers.has('if-match') || request.headers.has('if-unmodified-since');
+      return new Response(undefined, { status: precondition ? 412 : 304, headers });
     }
 
-    if (object.range && 'offset' in object.range) {
+    const ranged = request.headers.has('range') && object.range;
+    if (ranged) {
       const offset = object.range.offset ?? 0;
       const length = object.range.length ?? object.size - offset;
       headers.set('content-range', `bytes ${offset}-${offset + length - 1}/${object.size}`);
