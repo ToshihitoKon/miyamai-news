@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 require "spec_helper"
-require "publish_target"
+require "internal/site"
 
-RSpec.describe PublishTarget do
+RSpec.describe Internal::Site do
   let(:s3) { Aws::S3::Client.new(stub_responses: true, region: "auto") }
   let(:storage) { Internal::R2Storage.new(bucket: "test-bucket", client: s3) }
   let(:deployed) { [] }
-  let(:target) do
+  let(:site) do
     described_class.new(
       public_base: "https://news.example.com",
       retention_episodes: 5,
@@ -19,17 +19,17 @@ RSpec.describe PublishTarget do
   describe "#url_for" do
     it "serves generated pages from the site root" do
       described_class::PAGE_OBJECTS.each do |page|
-        expect(target.url_for(page)).to eq("https://news.example.com/#{page}")
+        expect(site.url_for(page)).to eq("https://news.example.com/#{page}")
       end
     end
 
     # 再生ページの JS は mp3 URL の拡張子だけを差し替えて兄弟ファイルを引くため、
     # mp3 とその派生物は同じ階層に並んでいる必要がある。
     it "keeps episode files and their siblings on the same path level" do
-      mp3 = target.url_for("ep.mp3")
+      mp3 = site.url_for("ep.mp3")
 
       expect(mp3).to eq("https://news.example.com/audio/ep.mp3")
-      expect(mp3.sub(/\.mp3\z/, ".used.html")).to eq(target.url_for("ep.used.html"))
+      expect(mp3.sub(/\.mp3\z/, ".used.html")).to eq(site.url_for("ep.used.html"))
     end
   end
 
@@ -38,7 +38,7 @@ RSpec.describe PublishTarget do
       captured = nil
       s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
 
-      target.put_episode_content("ep.used.txt", "body", content_type: "text/plain")
+      site.put_episode_content("ep.used.txt", "body", content_type: "text/plain")
 
       expect(captured[:key]).to eq("audio/ep.used.txt")
       expect(captured[:content_type]).to eq("text/plain")
@@ -54,7 +54,7 @@ RSpec.describe PublishTarget do
       s3.stub_responses(:copy_object, ->(ctx) { captured = ctx.params; { copy_object_result: {} } })
       s3.stub_responses(:delete_object, {})
 
-      target.retire_episode_file("ep.mp3")
+      site.retire_episode_file("ep.mp3")
 
       expect(captured[:copy_source]).to eq("test-bucket/audio/ep.mp3")
       expect(captured[:key]).to eq("archived/ep.mp3")
@@ -67,31 +67,31 @@ RSpec.describe PublishTarget do
       captured = nil
       s3.stub_responses(:get_object, ->(ctx) { captured = ctx.params; { body: "a,b\n" } })
 
-      expect(target.read_ledger).to eq("a,b\n")
+      expect(site.read_ledger).to eq("a,b\n")
       expect(captured[:key]).to eq("archives.csv")
     end
 
     it "raises LedgerMissing when the ledger is absent" do
       s3.stub_responses(:get_object, "NoSuchKey")
 
-      expect { target.read_ledger }.to raise_error(described_class::LedgerMissing)
+      expect { site.read_ledger }.to raise_error(described_class::LedgerMissing)
     end
 
     it "writes the ledger as text/csv" do
       captured = nil
       s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
 
-      target.write_ledger("a,b\n")
+      site.write_ledger("a,b\n")
 
       expect(captured[:key]).to eq("archives.csv")
       expect(captured[:content_type]).to eq("text/csv")
     end
   end
 
-  describe "#publish_site" do
+  describe "#deploy" do
     it "writes delivery headers into the staging directory before deploying" do
       Dir.mktmpdir do |dir|
-        target.publish_site(dir)
+        site.deploy(dir)
 
         headers = File.read(File.join(dir, "_headers"))
         expect(headers).to include("/feed.xml")
@@ -107,7 +107,7 @@ RSpec.describe PublishTarget do
       )
 
       Dir.mktmpdir do |dir|
-        expect { failing.publish_site(dir) }.to raise_error(described_class::DeployFailed)
+        expect { failing.deploy(dir) }.to raise_error(described_class::DeployFailed)
       end
     end
   end

@@ -19,8 +19,8 @@ RSpec.describe Publisher do
   # サイトの反映は subprocess を起動せず、渡されたディレクトリだけ記録する。
   let(:deployed) { [] }
   let(:deploy_result) { [true] }
-  let(:target) do
-    PublishTarget.new(
+  let(:site) do
+    Internal::Site.new(
       public_base: "https://news.example.com",
       retention_episodes: 5,
       storage: storage,
@@ -48,7 +48,7 @@ RSpec.describe Publisher do
     s3.stub_responses(:put_object, {})
     s3.stub_responses(:copy_object, { copy_object_result: {} })
     s3.stub_responses(:delete_object, {})
-    described_class.new(date: Date.new(2026, 7, 14), target: target, **kwargs)
+    described_class.new(date: Date.new(2026, 7, 14), site: site, **kwargs)
   end
 
   def ledger_csv(rows) = CSV.generate { |csv| rows.each { |r| csv << r } }

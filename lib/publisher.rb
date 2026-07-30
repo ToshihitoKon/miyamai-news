@@ -10,16 +10,16 @@ require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/used_news_markdown"
 require_relative "internal/used_news_formatter"
-require_relative "publish_target"
+require_relative "internal/site"
 require_relative "slot"
 
 class Publisher
   PROGRAM_NAME = "宮舞モカの技術ニュース"
 
-  def initialize(date: Date.today, title: nil, target: nil)
-    @date   = date
-    @title  = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
-    @target = target || PublishTarget.from_config
+  def initialize(date: Date.today, title: nil, site: nil)
+    @date  = date
+    @title = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
+    @site  = site || Internal::Site.from_config
   end
 
   EPISODE_FILE_EXTENSIONS = [".mp3", ".used.txt", ".transcript.txt"].freeze
@@ -58,26 +58,26 @@ class Publisher
   end
 
   def object_exists?(object)
-    @target.episode_file_exist?(object)
+    @site.episode_file_exist?(object)
   end
 
   def clean_archive
-    count = @target.purge_retired
+    count = @site.purge_retired
 
     puts "done: cleaned #{count} retired object(s)"
   end
 
   private
 
-  def retention_episodes = @target.retention_episodes
+  def retention_episodes = @site.retention_episodes
   def cover_image = Config.assets.cover_image
   def icon_image = Config.assets.icon_image
 
-  def public_url(object) = @target.url_for(object)
-  def site_url(object) = @target.page_url(object)
+  def public_url(object) = @site.url_for(object)
+  def site_url(object) = @site.page_url(object)
 
   def upload_content(object, content, content_type:, cache_control: nil)
-    @target.put_episode_content(object, content,
+    @site.put_episode_content(object, content,
       content_type: content_type, cache_control: cache_control)
   end
 
@@ -85,7 +85,7 @@ class Publisher
 
   def upload_mp3(local_path, filename)
     abort("mp3 not found: #{local_path}") unless File.exist?(local_path)
-    @target.put_episode_file(filename, local_path,
+    @site.put_episode_file(filename, local_path,
       content_type: "audio/mpeg", cache_control: "public, max-age=31536000, immutable")
   end
 
@@ -114,7 +114,7 @@ class Publisher
 
   def upload_transcript(local_path, object)
     abort("transcript not found: #{local_path}") unless File.exist?(local_path)
-    @target.put_episode_file(object, local_path,
+    @site.put_episode_file(object, local_path,
       content_type: "text/plain; charset=utf-8")
   end
 
@@ -134,7 +134,7 @@ class Publisher
     expired_rows.each { |r| archive_episode_files(r[1]) }
 
     csv = CSV.generate { |out| rows.each { |r| out << r } }
-    @target.write_ledger(csv)
+    @site.write_ledger(csv)
 
     rows
   end
@@ -151,7 +151,7 @@ class Publisher
     used_txt_object = filename.sub(/\.mp3\z/, ".used.txt")
     objects = self.class.episode_object_names(filename) + [self.class.used_news_html_object(used_txt_object)]
     objects.each do |object|
-      @target.retire_episode_file(object)
+      @site.retire_episode_file(object)
     rescue StandardError => e
       warn "archive skipped: #{e.message}"
     end
@@ -160,13 +160,13 @@ class Publisher
   def fetch_existing_archives
     return [] unless archives_exist?
 
-    CSV.parse(@target.read_ledger)
-  rescue PublishTarget::LedgerMissing
+    CSV.parse(@site.read_ledger)
+  rescue Internal::Site::LedgerMissing
     abort("failed to fetch existing archives.csv (aborting to avoid overwriting the ledger)")
   end
 
   def archives_exist?
-    @target.ledger_exist?
+    @site.ledger_exist?
   end
 
   # --- サイトの反映 ------------------------------------------------------
@@ -179,8 +179,8 @@ class Publisher
       File.write(File.join(dir, "feed.xml"), render_feed(rows))
       File.write(File.join(dir, "manifest.json"), render_manifest)
       stage_static_assets(dir)
-      @target.publish_site(dir)
-    rescue PublishTarget::DeployFailed => e
+      @site.deploy(dir)
+    rescue Internal::Site::DeployFailed => e
       abort(e.message)
     end
   end
