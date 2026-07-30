@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "uri"
 require_relative "config"
 require_relative "object_storage"
 require_relative "r2_storage"
@@ -50,6 +51,15 @@ module Internal
     end
 
     def page_url(object) = "#{@public_base}/#{object}"
+
+    # --- 安定 ID -----------------------------------------------------------
+
+    # RFC 4151 の tag URI。配信 URL から独立しているので、ドメインやパスを
+    # 変えても購読者側の重複判定キーが動かない。
+    # authority には発行日時点で管理していたドメインを使う。
+    def tag_uri(date, specific) = "tag:#{tag_authority},#{date}:#{specific}"
+
+    def tag_authority = URI.parse(@public_base).host
 
     # --- エピソード資材 ----------------------------------------------------
 

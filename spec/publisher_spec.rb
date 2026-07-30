@@ -314,6 +314,43 @@ RSpec.describe Publisher do
     end
   end
 
+  # <id> は RSS リーダー側の重複判定キー。ここが動くと購読者に全エピソードが
+  # 新着として再通知されるので、配信 URL から独立した tag URI に固定する。
+  describe "feed identifiers" do
+    let(:publisher) { build_publisher }
+    let(:rows) do
+      [["2026-07-14", "miyamai_news_20260714_afternoon.mp3", "回タイトル", "", "2026-07-14T00:00:00Z"]]
+    end
+
+    it "identifies each entry by a tag URI derived from date and episode name" do
+      xml = publisher.send(:render_feed, rows)
+
+      expect(xml).to include("<id>tag:news.example.com,2026-07-14:miyamai_news_20260714_afternoon</id>")
+    end
+
+    it "identifies the feed itself by a fixed tag URI" do
+      xml = publisher.send(:render_feed, rows)
+
+      expect(xml).to include("<id>tag:news.example.com,#{Publisher::FEED_ID_DATE}:feed</id>")
+    end
+
+    # 配信 URL を <id> に埋めると、ドメインやパスを変えた時点で全件が
+    # 新着扱いになる。
+    it "keeps delivery URLs out of every id" do
+      ids = publisher.send(:render_feed, rows).scan(%r{<id>(.*?)</id>}).flatten
+
+      expect(ids).not_to be_empty
+      expect(ids).to all(start_with("tag:"))
+      expect(ids).to all(satisfy { |id| !id.include?("https://") })
+    end
+
+    it "gives entries and the feed distinct ids" do
+      ids = publisher.send(:render_feed, rows).scan(%r{<id>(.*?)</id>}).flatten
+
+      expect(ids.uniq.size).to eq(ids.size)
+    end
+  end
+
   describe "#render_feed_entry" do
     let(:publisher) { build_publisher }
 

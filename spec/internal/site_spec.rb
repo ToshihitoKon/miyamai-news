@@ -34,6 +34,21 @@ RSpec.describe Internal::Site do
     end
   end
 
+  describe "#tag_uri" do
+    it "builds an RFC 4151 tag URI from the site host" do
+      expect(site.tag_uri("2026-07-14", "ep")).to eq("tag:news.example.com,2026-07-14:ep")
+    end
+
+    # 配信 URL から独立していることが要件。ホストが同じなら公開先のパスや
+    # スキーム構成が変わっても ID は動かない。
+    it "does not embed the delivery path" do
+      uri = site.tag_uri("2026-07-14", "ep")
+
+      expect(uri).not_to include("https://")
+      expect(uri).not_to include("/audio/")
+    end
+  end
+
   describe "#write_episode_file" do
     it "writes in-memory content beneath the episode-asset prefix" do
       captured = nil

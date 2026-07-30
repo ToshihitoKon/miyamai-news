@@ -16,6 +16,10 @@ require_relative "slot"
 class Publisher
   PROGRAM_NAME = "宮舞モカの技術ニュース"
 
+  # feed 自身の <id> に使う発行日。フィードの同一性を表すので、
+  # 一度決めたら変えない（変えると購読者が別フィードとして扱う）。
+  FEED_ID_DATE = "2026-07-31"
+
   def initialize(date: Date.today, title: nil, site: nil)
     @date  = date
     @title = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
@@ -228,6 +232,7 @@ class Publisher
 
     TemplateRenderer.render("feed.xml", self,
       program_name: PROGRAM_NAME,
+      feed_id: feed_id,
       feed_url: public_url("feed.xml"),
       page_url: public_url("index.html"),
       updated: feed_datetime(rows.first[0], rows.first[4]),
@@ -241,10 +246,14 @@ class Publisher
     TemplateRenderer.render("feed_entry.xml", self,
       title:,
       entry_url: public_url("index.html"),
-      entry_id: public_url(fname),
+      entry_id: entry_id(fname),
       updated: feed_datetime(date, updated_at),
       content: used_news.strip.empty? ? "" : h(used_news_html(used_news))).chomp
   end
+
+  def feed_id = @site.tag_uri(FEED_ID_DATE, "feed")
+
+  def entry_id(fname) = @site.tag_uri(date_for(fname), File.basename(fname, ".mp3"))
 
   def used_news_html(used_news)
     result = UsedNewsMarkdown.render(used_news)

@@ -253,11 +253,21 @@ CORS 設定は不要。
   `.transcript.txt` の3つ固定）には含めない。`archive_episode_files` では
   `.used.html` の退避を個別に fault-tolerant に行う（無ければ mv 失敗を警告に
   留めて継続する既存パターンを踏襲）。
-- Atom entry の `<id>` はエピソードごとの mp3 URL のままにすること（index.html に
-  しない）。`<id>` は RSS リーダー側の新着重複判定キーであり、全エントリを同じ id
-  にすると購読者が新着を検知できなくなる。
-- `cover_image` / `icon_image` は本パイプラインからはアップロードしない。事前に
-  手動で GCS バケットへアップロードしておく必要がある（README 参照）。
+- Atom の `<id>` は RFC 4151 の tag URI（`tag:<host>,<date>:<specific>`）を使う。
+  `<id>` は RSS リーダー側の新着重複判定キーなので、**配信 URL を入れてはいけない**。
+  URL を入れるとドメインやパス構成を変えた時点で全エントリの id が変わり、
+  購読者に全エピソードが新着として再通知される。以前は mp3 URL を使っていたが、
+  これは「feed.xml を動かさない key」として選ばれただけで、配信先から独立させる
+  方が正しい。
+  - entry: `tag:<host>,<エピソードの日付>:<mp3 のベース名>`。ベース名に slot が
+    含まれるので、同日複数回でも衝突しない。
+  - feed 自身: `tag:<host>,<Publisher::FEED_ID_DATE>:feed`。フィードの同一性を
+    表すので日付は固定値で、**一度決めたら変えない**（変えると購読者が別フィード
+    として扱う）。
+  - `rel="self"` の href は実際の配信 URL のままにする（こちらは取得先なので
+    tag URI にはしない）。
+- `cover_image` / `icon_image` は publish 時に static assets のステージングへ
+  コピーされて配信される。手動アップロードは不要。
 - `archives.csv` の `updated_at` 列は「publish を実行した時刻」ではなく
   「**コンテンツが変わった時刻**」を表す。`update_archives` は既存行と
   title / used_news を比較し、同一なら既存の `updated_at` を引き継ぐ。
