@@ -192,7 +192,7 @@ RSpec.describe Publisher do
   end
 
   describe "#run with retention_episodes" do
-    # spec/fixtures/config.yaml の gcs.retention_episodes: 5 が前提。
+    # spec/fixtures/config.yaml の cloudflare.retention_episodes: 5 が前提。
     let(:existing_rows) do
       (1..5).map do |n|
         date = Date.new(2026, 6, 1) + n

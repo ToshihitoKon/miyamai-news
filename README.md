@@ -29,7 +29,6 @@ mode:publish の場合に追加で必要
 
 - [wrangler](https://developers.cloudflare.com/workers/wrangler/) v4 以降
 - Cloudflare アカウント（Workers + R2）
-- gcloud（旧 GCS からの移行期間中のみ）
 
 ## Setup
 

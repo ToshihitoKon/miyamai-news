@@ -10,7 +10,7 @@ require_relative "used_news_markdown"
 # used_news（この回で紹介したニュース欄）の最終フォーマット保証を担う。
 # ScriptGenerator は「## カテゴリ / ### [タイトル](URL)」形式のそれっぽい Markdown を
 # 生成するだけでよく、フォーマットが厳密に正しいかどうかの検証・保証はしない。
-# 最終的にフォーマットを保証するのは Publisher で、GCS への書き込みを始める前に
+# 最終的にフォーマットを保証するのは Publisher で、ストレージへの書き込みを始める前に
 # ensure_valid! を呼ぶ。
 module UsedNewsFormatter
   module_function
