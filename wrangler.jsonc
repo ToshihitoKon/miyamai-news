@@ -24,7 +24,7 @@
     {
       "binding": "SUBSCRIPTIONS",
       "database_name": "miyamai-news-subscriptions",
-      "database_id": "REPLACE_WITH_WRANGLER_D1_CREATE_OUTPUT"
+      "database_id": "21c9922c-3464-4cc0-a478-6441bb6818de"
     }
   ],
   // deploy 時に DNS レコードと証明書が自動発行される。
