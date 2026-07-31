@@ -75,6 +75,13 @@ RSpec.describe AudioMixer do
         mixer = described_class.new(bgm_path: File.join(work_dir, "missing.mp3"))
         expect { mixer.mix(voice_path, output_path) }.to raise_error(SystemExit)
       end
+
+      it "raises when ffprobe succeeds but returns a non-numeric duration" do
+        allow(Open3).to receive(:capture3).and_return(["N/A\n", "", success_status])
+
+        mixer = described_class.new(bgm_path: bgm_path)
+        expect { mixer.mix(voice_path, output_path) }.to raise_error(/ffprobe returned non-numeric duration/)
+      end
     end
   end
 end

@@ -42,7 +42,11 @@ class AudioMixer
     )
     raise "ffprobe failed: #{Internal::CommandError.tail(err)}" unless status.success?
 
-    out.strip.to_f
+    begin
+      Float(out.strip)
+    rescue ArgumentError, TypeError
+      raise "ffprobe returned non-numeric duration: #{out.strip.inspect}"
+    end
   end
 
   def run_mix(voice_path, output_path, fade_start:, total_dur:, delay_ms:)
