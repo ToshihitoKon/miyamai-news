@@ -177,6 +177,11 @@
 `retention_episodes` は「保持する話数」という公開ポリシーなので、ストレージの
 設定ではなく `Site` が持つ。
 
+`--ui-only`（`republish_ui` → `deploy_site`）は `assets` を参照するため、
+`miyamai_news.rb` は `cloudflare` に加えて `assets` も起動時に検証する
+（`Config.validate_sections!("cloudflare", "assets")`）。`--clean`/`--clean-archive`
+は `deploy_site` を呼ばないので `cloudflare` のみで足りる。
+
 `Internal` 名前空間の中では `Config` が `Internal::Config`（dry-struct のスキーマ）に
 解決されてしまうため、設定ローダーを参照するときは `::Config` と書く必要がある。
 
@@ -431,6 +436,11 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - 収集 window（confirmed_at）は実行が完了しただけでは進まない。人間が成果物
   （facts/台本/mp3）を確認し「進めてよい」と判断した時点で初めて確定する。
   publish だけは公開自体が確定行為なので例外（`confirm_immediately!` で即時確定）。
+- `Pipeline#run_confirm_fetch_command` は `LastFetchStore.confirm!`（状態変更）の
+  前に `Config.validate_sections!("collect")` を呼ぶ。`confirm!` の後で読む
+  `ScriptGenerator.record_used_news_history!` が `Config.collect` を参照するため、
+  検証を先に済ませないと「pending は解消済みなのに履歴記録だけ失敗する」
+  中途半端な状態になり、`pending_episode` が既に消えていて後から追記もできない。
 - `resolve_pending!` の確認プロンプトで無回答（Enter/N）の既定はロールバック
   （＝ confirmed_at を進めない）。理由: 記事を取りこぼす（confirmed_at を進めて
   しまうと二度と収集対象に戻らない）よりも、次回また同じ記事が候補に上がる
@@ -718,8 +728,14 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   参照する。実装上対応しているのは claude のみだが、将来 effort に対応する別の
   AI CLI が増えたときに使い回す想定でこのフィールドを用意している。
 - `Config.validate_publish_target!` は、mode 判定を通らずに公開先を触る CLI 操作
-  （`--ui-only` / `--clean` / `--clean-archive`）のために独立して存在する。
-  これを通さないと、生成物を作りきってからデプロイ段階で落ちる。
+  （`--clean` / `--clean-archive`）のために独立して存在する。これを通さないと、
+  生成物を作りきってからデプロイ段階で落ちる。`--ui-only` は `assets` も参照する
+  ため `validate_publish_target!` ではなく `Config.validate_sections!` に
+  `"cloudflare", "assets"` を直接渡す（後述「miyamai_news.rb」節参照）。
+- `Config.validate_sections!` は `validate_for!`/`validate_publish_target!` が
+  共通で使う検証本体（欠けているセクション名を集めて `MissingKeyError` にする）を
+  公開したもの。mode の加算的な到達順序（`REQUIRED_SECTIONS_DELTA`）とは無関係に、
+  個別の CLI 操作が実際に参照するセクションだけをその場で指定できる。
 - `cloudflare` セクションは `pipeline.mode: publish` の必須セクション
   （`REQUIRED_SECTIONS_DELTA`）にも含める。publish は配信まで到達するため、
   配信先が未設定という状態で起動させない。

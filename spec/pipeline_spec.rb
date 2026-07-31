@@ -92,6 +92,18 @@ RSpec.describe Pipeline do
       expect(ScriptGenerator).to have_received(:record_used_news_history!).with(work_dir: work_dir, episode_key: "20260716_evening")
     end
 
+    it "--confirm-fetch は collect セクションが欠けていれば confirm! の前に abort する" do
+      pending = Time.utc(2026, 7, 16, 9, 0, 0)
+      allow(LastFetchStore).to receive(:pending_at).with(work_dir).and_return(pending)
+      allow(LastFetchStore).to receive(:confirm!)
+      allow(Config).to receive(:validate_sections!).with("collect").and_raise(Config::MissingKeyError, "missing config sections:\n  - collect")
+
+      expect { build_pipeline(confirm_fetch: true).run }.to raise_error(SystemExit)
+
+      expect(LastFetchStore).not_to have_received(:confirm!)
+      expect(ScriptGenerator).not_to have_received(:record_used_news_history!)
+    end
+
     it "--restore-fetch は restorable でなければ何もしない" do
       allow(LastFetchStore).to receive(:restorable?).with(work_dir).and_return(false)
 
