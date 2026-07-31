@@ -422,6 +422,14 @@ R2 のキー構成:
 - Workers のサブリクエスト上限は 50/リクエスト。購読者が少数のうちは全件へ
   ループで `fetch` するだけで足りるが、規模が増えた場合はバッチ分割や Cron
   Trigger によるキュー処理の検討が必要になる（現時点では未実装）。
+- `src/index.js` は `web_push.js` を無条件に static import するため、
+  `config.yaml` の `web_push` セクションの有無に関わらず、deploy する限り
+  `node_modules/web-push`（`npm install` 済み）が必須になる。これが無いまま
+  `wrangler deploy` を実行すると esbuild の解決エラーでパイプライン終盤の
+  deploy 段階まで進んでから初めて落ちるため、`miyamai_news.rb` は deploy に
+  到達する経路（`--ui-only`、および `pipeline.mode: publish` に到達する通常
+  フロー）で `Internal::NodeDeps.validate_web_push!` を起動直後に呼び、
+  fail fast させている。
 
 ### 旧 GCS feed の凍結（移行告知）
 
