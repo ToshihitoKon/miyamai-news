@@ -132,3 +132,12 @@ mixer:
   tail_sec: 3
   # フェードアウトにかける秒数。
   fade_sec: 4
+
+# Web Push 通知（任意機能。未設定なら購読ボタン・Service Worker・publish時の
+# 通知が一切有効化されない）。
+# 共有シークレット（Worker の /notify 認証用）は config には書かず、
+# 環境変数 WEB_PUSH_NOTIFY_SECRET で渡す。
+# web_push:
+#   # VAPID 公開鍵。秘密鍵ではないのでここに書いてよい（購読ボタンの JS がそのまま
+#   # ブラウザへ渡す値）。秘密鍵・subject は wrangler secret put で Worker 側に置く。
+#   vapid_public_key: your-vapid-public-key
