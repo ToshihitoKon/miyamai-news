@@ -70,6 +70,44 @@ RSpec.describe FeedCache do
 
       expect(result).to be_empty
     end
+
+    it "dedupes the same link appearing twice in a single feed fetch" do
+      since = Time.utc(2026, 7, 17, 18, 27, 16)
+      link = "https://example.com/duplicated"
+      entries = { link => { "seen_at" => (since + 1).iso8601, "title" => "Dup", "date" => "2026-07-18" } }
+
+      result = cache.send(:select_since_for, entries, [{ link: link }, { link: link }], since)
+
+      expect(result.size).to eq(1)
+    end
+  end
+
+  describe "#meta_extra" do
+    let(:cache) { build_cache }
+
+    it "returns the extra hash as-is when present" do
+      meta = { "extra" => { "bookmarks" => 42 } }
+
+      expect(cache.send(:meta_extra, meta)).to eq({ "bookmarks" => 42 })
+    end
+
+    it "falls back to the legacy top-level bookmarks key when extra is absent" do
+      meta = { "bookmarks" => 7 }
+
+      expect(cache.send(:meta_extra, meta)).to eq({ "bookmarks" => 7 })
+    end
+
+    it "prefers extra over the legacy bookmarks key when both are present" do
+      meta = { "extra" => { "bookmarks" => 42 }, "bookmarks" => 7 }
+
+      expect(cache.send(:meta_extra, meta)).to eq({ "bookmarks" => 42 })
+    end
+
+    it "returns nil when neither extra nor the legacy bookmarks key is present" do
+      meta = { "title" => "No metadata here" }
+
+      expect(cache.send(:meta_extra, meta)).to be_nil
+    end
   end
 
   describe "#fetch" do
@@ -184,6 +222,68 @@ RSpec.describe FeedCache do
         result = skipped.fetch(url, now: now + 300 + 60, since: since)
 
         expect(result.map { |e| e[:link] }).to eq(["https://example.com/a"])
+      end
+    end
+
+    context "seen_at retention across refetches" do
+      it "keeps the original seen_at when a link reappears, while refreshing title and last_fetched_at" do
+        cache = build_cache
+        allow(fetcher).to receive(:get).and_return(rss_for([["https://example.com/a", "Alpha"]]))
+        cache.fetch(url, now: now, since: since)
+
+        refetcher = build_cache
+        allow(fetcher).to receive(:get).and_return(rss_for([["https://example.com/a", "Alpha renamed"]]))
+        refetcher.fetch(url, now: now + 300, since: since)
+
+        entry = read_cache_file["entries"]["https://example.com/a"]
+        expect(entry["seen_at"]).to eq(now.iso8601)
+        expect(entry["last_fetched_at"]).to eq((now + 300).iso8601)
+        expect(entry["title"]).to eq("Alpha renamed")
+      end
+    end
+
+    context "purging expired entries" do
+      it "purges an entry once last_fetched_at exceeds retention_days" do
+        retention_days = 1
+        seeder = build_cache(retention_days: retention_days)
+        allow(fetcher).to receive(:get)
+          .and_return(rss_for([["https://example.com/old", "Old"], ["https://example.com/a", "Alpha"]]))
+        seeder.fetch(url, now: now, since: since)
+
+        # OLD がフィードから落ち、A のみ再取得。OLD の last_fetched_at(now) は
+        # retention_days を超えるのでパージされる。返り値(fetched のみ)ではなく
+        # キャッシュファイル自体を見ないと、この不変条件は検証できない。
+        refetcher = build_cache(retention_days: retention_days)
+        allow(fetcher).to receive(:get).and_return(rss_for([["https://example.com/a", "Alpha"]]))
+        refetcher.fetch(url, now: now + ((retention_days + 1) * 86_400), since: since)
+
+        expect(read_cache_file["entries"].keys).to eq(["https://example.com/a"])
+      end
+
+      it "bases the purge cutoff on last_fetched_at, not seen_at" do
+        retention_days = 1
+        cache = build_cache(retention_days: retention_days)
+        FileUtils.mkdir_p(dir)
+        # seen_at(初登場時刻)はカットオフより遥かに古いが、last_fetched_at(直近の実 fetch)は
+        # 新しい entry を直接キャッシュファイルへ仕込む。purge 基準が last_fetched_at で
+        # あれば生き残り、誤って seen_at を見ていればここで消えてしまう。
+        File.write(cache.send(:cache_path, url), JSON.generate(
+          "url" => url,
+          "fetched_at" => (now - 86_400).iso8601,
+          "entries" => {
+            "https://example.com/long-lived" => {
+              "seen_at" => (now - (retention_days + 100) * 86_400).iso8601,
+              "last_fetched_at" => (now - 86_400).iso8601,
+              "title" => "Long lived",
+              "date" => nil
+            }
+          }
+        ))
+        allow(fetcher).to receive(:get).and_return(rss_for([["https://example.com/a", "Alpha"]]))
+
+        cache.fetch(url, now: now, since: since)
+
+        expect(read_cache_file["entries"].keys).to include("https://example.com/long-lived")
       end
     end
 
