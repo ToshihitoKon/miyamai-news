@@ -11,6 +11,7 @@ require_relative "internal/template_renderer"
 require_relative "internal/used_news_markdown"
 require_relative "internal/used_news_formatter"
 require_relative "internal/site"
+require_relative "internal/episode_notifier"
 require_relative "slot"
 
 class Publisher
@@ -20,10 +21,11 @@ class Publisher
   # 一度決めたら変えない（変えると購読者が別フィードとして扱う）。
   FEED_ID_DATE = "2026-07-31"
 
-  def initialize(date: Date.today, title: nil, site: nil)
+  def initialize(date: Date.today, title: nil, site: nil, notifier: nil)
     @date  = date
     @title = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
     @site  = site || Internal::Site.from_config
+    @notifier = notifier || Internal::EpisodeNotifier.from_config
   end
 
   EPISODE_FILE_EXTENSIONS = [".mp3", ".used.txt", ".transcript.txt"].freeze
@@ -46,8 +48,9 @@ class Publisher
       upload_used_news_html(used_news, self.class.used_news_html_object(used_object))
     end
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
-    rows = update_archives(filename, used_news)
+    rows, newly_published = update_archives(filename, used_news)
     deploy_site(rows)
+    @notifier.notify(title: @title, url: public_url("index.html")) if newly_published
 
     puts "done: #{public_url('index.html')}"
   end
@@ -125,9 +128,13 @@ class Publisher
 
   # --- archives.csv ------------------------------------------------------
 
+  # 戻り値は [rows, newly_published]。newly_published は「新規エピソード or
+  # title/used_news が変化した」場合に true になり、Web Push 通知の要否判定に使う。
+  # 同一内容の再 publish（--publish-only の再実行等）ではここが false になる。
   def update_archives(filename, used_news = "")
     rows = fetch_existing_archives
     previous = rows.find { |r| r[1] == filename }
+    newly_published = changed_from?(previous, used_news)
     rows.reject! { |r| r[1] == filename }
     rows << [date_for(filename), filename, @title, used_news,
       updated_at_for(previous, used_news)]
@@ -141,7 +148,13 @@ class Publisher
     csv = CSV.generate { |out| rows.each { |r| out << r } }
     @site.write_ledger(csv)
 
-    rows
+    [rows, newly_published]
+  end
+
+  def changed_from?(previous, used_news)
+    return true unless previous
+
+    previous[2] != @title || previous[3].to_s != used_news.to_s
   end
 
   def updated_at_for(previous, used_news)
