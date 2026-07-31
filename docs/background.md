@@ -287,6 +287,14 @@ R2 のキー構成:
   （後述「used_news の表示フォーマット」節参照）。検証・修復に失敗すればここで
   abort し、mp3 を含め何もアップロードしない。「Publisher#run 中に 1 つでも
   失敗したら即 abort する」という上記原則の一部として扱う。
+- retention 超過分の実ファイル退避（`archive_episode_files`）は、新しい
+  archives.csv・index.html/feed.xml の反映（`update_archives` の `write_ledger` /
+  `deploy_site`）が終わった**後**に行う。逆順（退避を先に）にすると、退避完了後の
+  台帳・サイト反映が何らかの理由で失敗して abort した際、「エピソードファイルは
+  退避済みなのに公開中の archives.csv/index.html は移動前の場所を参照したまま」
+  という不整合が公開バケットに残り、該当回の再生・DL がリンク切れになる。
+  この順序なら退避が失敗して `warn` に留まっても（`archive_episode_files` は
+  fault-tolerant）、読者から見える台帳・ページは既に正しい状態になっている。
 - `.used.html`（used_news を事前に HTML 化したもの）は `dist/` に実体を持たない
   ストレージ専用の派生物であり、`EPISODE_FILE_EXTENSIONS`（`.mp3`/`.used.txt`/
   `.transcript.txt` の3つ固定）には含めない。`archive_episode_files` では

@@ -304,6 +304,19 @@ RSpec.describe Publisher do
         .to raise_error(Aws::S3::Errors::ServiceError)
       expect(deployed).to be_empty
     end
+
+    # 台帳・サイト反映より先に実ファイルを退避すると、反映失敗時に「ファイルは
+    # 退避済みだが公開中の archives.csv/index.html は移動前を参照したまま」という
+    # 不整合が公開バケットに残る。反映が失敗したら退避も起きないことを確認する。
+    it "does not archive expired episode files when the site deploy fails" do
+      publisher = build_publisher(ledger: ledger_csv(existing_rows))
+      copies = []
+      s3.stub_responses(:copy_object, ->(ctx) { copies << ctx.params; { copy_object_result: {} } })
+      deploy_result[0] = false
+
+      expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
+      expect(copies).to be_empty
+    end
   end
 
   describe "#clean_archive" do
@@ -586,6 +599,17 @@ RSpec.describe Publisher do
         xml_decoded = CGI.unescapeHTML(render("参考: https://example.com/a\n"))
 
         expect(xml_decoded).to include('<a href="https://example.com/a">https://example.com/a</a>')
+      end
+
+      # h() が & を &amp; に変換した後に linkify するため、クエリパラメータ付き
+      # URL は最初の & で href・表示テキストとも切断されていた。
+      it "keeps query parameters intact in both the href and the display text" do
+        xml_decoded = CGI.unescapeHTML(render("参考: https://example.com/watch?v=abc&t=10\n"))
+        href = xml_decoded[/<a href="([^"]+)"/, 1]
+        text = xml_decoded[%r{>([^<]+)</a>}, 1]
+
+        expect(CGI.unescapeHTML(href)).to eq("https://example.com/watch?v=abc&t=10")
+        expect(CGI.unescapeHTML(text)).to eq("https://example.com/watch?v=abc&t=10")
       end
     end
 
