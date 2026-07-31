@@ -89,6 +89,25 @@ RSpec.describe Publisher do
       expect(staged_files).to include("index.html", "feed.xml", "manifest.json", "_headers")
     end
 
+    it "does not stage sw.js when web_push is not configured" do
+      publisher = build_publisher
+
+      publisher.run(mp3_path, used_path, transcript_path)
+
+      expect(staged_files).not_to include("sw.js")
+    end
+
+    # --ui-only 実行のたびに反映されるバージョン単位デプロイなので、ここに
+    # 含めないと sw.js が公開サイトから消え、既存の購読が壊れる。
+    it "stages sw.js when web_push is configured" do
+      allow(Config).to receive(:web_push).and_return(double("web_push", vapid_public_key: "test-key"))
+      publisher = build_publisher
+
+      publisher.run(mp3_path, used_path, transcript_path)
+
+      expect(staged_files).to include("sw.js")
+    end
+
     # 画像は R2 に置くので、手元に実体が無くても publish できる必要がある
     # （版権素材をリポジトリに置かないため）。
     it "does not require the artwork to exist locally" do

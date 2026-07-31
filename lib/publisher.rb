@@ -196,6 +196,7 @@ class Publisher
       File.write(File.join(dir, "index.html"), render_html(rows))
       File.write(File.join(dir, "feed.xml"), render_feed(rows))
       File.write(File.join(dir, "manifest.json"), render_manifest)
+      File.write(File.join(dir, "sw.js"), render_sw) if Config.web_push
       @site.deploy(dir)
     rescue Internal::Site::DeployFailed => e
       abort(e.message)
@@ -276,6 +277,12 @@ class Publisher
 
   def render_manifest
     TemplateRenderer.render("manifest.json", self, icon_url: asset_url(icon_image))
+  end
+
+  # --- sw.js (Service Worker) --------------------------------------------
+
+  def render_sw
+    TemplateRenderer.render("sw.js", self, page_url: public_url("index.html"), icon_url: asset_url(icon_image))
   end
 
   def feed_datetime(date_str, updated_at = nil)
