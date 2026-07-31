@@ -3,6 +3,7 @@
 require "open3"
 require "tempfile"
 require "fileutils"
+require "digest"
 require_relative "internal/config"
 require_relative "internal/command_error"
 require_relative "internal/episode_logger"
@@ -50,7 +51,7 @@ class VoiceSynthesizer
     FileUtils.mkdir_p(wav_dir)
 
     wav_paths = chunks.each_with_index.map do |chunk, i|
-      path = File.join(wav_dir, format("%04d.wav", i))
+      path = wav_chunk_path(wav_dir, i, chunk[:text])
       if File.exist?(path)
         warn "  [#{i + 1}/#{chunks.size}] skip (already synthesized)"
         next path
@@ -58,7 +59,7 @@ class VoiceSynthesizer
 
       warn "  [#{i + 1}/#{chunks.size}] #{chunk[:text][0, 30]}"
       synthesize_chunk(chunk[:text], path)
-      sleep interval_sec
+      sleep interval_sec unless i == chunks.size - 1
       path
     end
 
@@ -72,6 +73,11 @@ class VoiceSynthesizer
   private
 
   def voice_path = File.join(@work_dir, "voice_#{@date_tag}_#{@slot}.mp3")
+
+  def wav_chunk_path(wav_dir, index, text)
+    digest = Digest::SHA256.hexdigest(text)[0, 8]
+    File.join(wav_dir, format("%04d_%s.wav", index, digest))
+  end
 
   def voicepeak_bin = Config.voicepeak.bin
 
@@ -118,7 +124,11 @@ class VoiceSynthesizer
       pgroup: true
     )
     stdin.close
-    pgid = Process.getpgid(wait_thr.pid)
+    pgid = begin
+      Process.getpgid(wait_thr.pid)
+    rescue Errno::ESRCH
+      raise "VOICEPEAK exited immediately after launch (process already reaped)"
+    end
 
     stdout_reader = Thread.new { stdout.read }
     stderr_reader = Thread.new { stderr.read }

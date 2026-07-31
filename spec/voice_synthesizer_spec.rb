@@ -65,6 +65,75 @@ RSpec.describe VoiceSynthesizer do
         expect(Open3).to have_received(:popen3).at_least(:once)
         expect(Open3).to have_received(:capture3).at_least(:once) # ffmpeg concat (+ silence)
       end
+
+      it "does not sleep after the last chunk is synthesized" do
+        allow(Open3).to receive(:popen3) do |*cmd|
+          out_path = cmd[cmd.index("--out") + 1]
+          File.write(out_path, "fake wav")
+          [StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)]
+        end
+        allow(Open3).to receive(:capture3).and_return(["", "", success_status])
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+        allow(synth).to receive(:sleep)
+
+        synth.synthesize(script_path)
+
+        # fixture script (前述の before ブロック) は2チャンクに分割される。
+        # チャンク間の1回だけ sleep し、最後のチャンクの後には sleep しない。
+        expect(synth).to have_received(:sleep).exactly(1).time
+      end
+    end
+
+    context "wav chunk reuse" do
+      it "re-synthesizes a chunk whose old wav filename does not carry the current text's digest" do
+        wav_dir = File.join(work_dir, "wav_20260714_afternoon")
+        FileUtils.mkdir_p(wav_dir)
+        File.write(File.join(wav_dir, "0000.wav"), "stale wav from a previous run")
+
+        allow(Open3).to receive(:popen3) do |*cmd|
+          out_path = cmd[cmd.index("--out") + 1]
+          File.write(out_path, "fake wav")
+          [StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)]
+        end
+        allow(Open3).to receive(:capture3).and_return(["", "", success_status])
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+        synth.synthesize(script_path)
+
+        expect(Open3).to have_received(:popen3).twice # 2チャンクとも再合成される
+      end
+
+      it "reuses a chunk whose wav filename already carries the current text's digest" do
+        wav_dir = File.join(work_dir, "wav_20260714_afternoon")
+        FileUtils.mkdir_p(wav_dir)
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+        first_chunk_path = synth.send(:wav_chunk_path, wav_dir, 0, "こんにちは。")
+        File.write(first_chunk_path, "already synthesized wav")
+
+        allow(Open3).to receive(:popen3) do |*cmd|
+          out_path = cmd[cmd.index("--out") + 1]
+          File.write(out_path, "fake wav")
+          [StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)]
+        end
+        allow(Open3).to receive(:capture3).and_return(["", "", success_status])
+
+        synth.synthesize(script_path)
+
+        expect(Open3).to have_received(:popen3).once # 2チャンク目のみ合成される
+      end
+    end
+
+    context "when VOICEPEAK crashes immediately after launch" do
+      it "treats Errno::ESRCH from getpgid as a synthesis failure and retries with backoff" do
+        allow(Process).to receive(:getpgid).and_raise(Errno::ESRCH)
+        allow(Open3).to receive(:popen3).and_return([StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)])
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+
+        expect { synth.synthesize(script_path) }.to raise_error(/VOICEPEAK exited immediately after launch/)
+        expect(Open3).to have_received(:popen3).exactly(synth.send(:max_retries) + 1).times
+      end
     end
 
     context "failure" do
