@@ -99,6 +99,10 @@ module Internal
       attribute :fade_sec, Types::Coercible::Float
     end
 
+    class WebPush < Base
+      attribute :vapid_public_key, Types::Strict::String
+    end
+
     # config.yaml 全体を表す構造体。必須判定は Config.validate_for! が行う。
     class AppConfig < Base
       attribute(:pipeline, Pipeline.default { Pipeline.new({}) })
@@ -110,6 +114,7 @@ module Internal
       attribute? :collect, Collect
       attribute? :rss_feed_sources, Types::Strict::Array.of(RssFeedSource)
       attribute? :mixer, Mixer
+      attribute? :web_push, WebPush
     end
   end
 end
