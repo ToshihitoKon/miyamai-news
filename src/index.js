@@ -1,4 +1,4 @@
-import { handleSubscribe } from './web_push.js';
+import { handleNotify, handleSubscribe } from './web_push.js';
 
 const SERVABLE_PREFIXES = ['episodes/', 'assets/'];
 
@@ -8,6 +8,10 @@ export default {
 
     if (request.method === 'POST' && pathname === '/subscribe') {
       return handleSubscribe(request, env);
+    }
+
+    if (request.method === 'POST' && pathname === '/notify') {
+      return handleNotify(request, env);
     }
 
     if (request.method !== 'GET' && request.method !== 'HEAD') {

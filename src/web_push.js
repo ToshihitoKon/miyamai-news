@@ -1,3 +1,5 @@
+import webpush from "web-push";
+
 export async function handleSubscribe(request, env) {
   let payload;
   try {
@@ -17,6 +19,78 @@ export async function handleSubscribe(request, env) {
   )
     .bind(endpoint, keys.p256dh, keys.auth)
     .run();
+
+  return new Response(null, { status: 204 });
+}
+
+async function verifySignature(request, secret) {
+  const signatureHeader = request.headers.get("x-signature");
+  if (!signatureHeader) return { ok: false, body: null };
+
+  const body = await request.text();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+
+  let signatureBytes;
+  try {
+    signatureBytes = Uint8Array.from(atob(signatureHeader), (c) => c.charCodeAt(0));
+  } catch {
+    return { ok: false, body };
+  }
+
+  const ok = await crypto.subtle.verify("HMAC", key, signatureBytes, new TextEncoder().encode(body));
+  return { ok, body };
+}
+
+export async function handleNotify(request, env) {
+  const { ok, body } = await verifySignature(request, env.NOTIFY_SHARED_SECRET);
+  if (!ok) return new Response("Unauthorized", { status: 401 });
+
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return new Response("Bad Request", { status: 400 });
+  }
+
+  const { title, url } = payload ?? {};
+  if (typeof title !== "string" || typeof url !== "string") {
+    return new Response("Bad Request", { status: 400 });
+  }
+
+  webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
+
+  const { results } = await env.SUBSCRIPTIONS.prepare("SELECT endpoint, p256dh, auth FROM subscriptions").all();
+
+  const expiredEndpoints = [];
+  await Promise.all(
+    results.map(async (row) => {
+      const subscription = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
+      const requestDetails = webpush.generateRequestDetails(subscription, JSON.stringify({ title, url }));
+
+      const response = await fetch(requestDetails.endpoint, {
+        method: requestDetails.method,
+        headers: requestDetails.headers,
+        body: requestDetails.body,
+      });
+
+      if (response.status === 404 || response.status === 410) {
+        expiredEndpoints.push(row.endpoint);
+      }
+    }),
+  );
+
+  if (expiredEndpoints.length > 0) {
+    const placeholders = expiredEndpoints.map(() => "?").join(", ");
+    await env.SUBSCRIPTIONS.prepare(`DELETE FROM subscriptions WHERE endpoint IN (${placeholders})`)
+      .bind(...expiredEndpoints)
+      .run();
+  }
 
   return new Response(null, { status: 204 });
 }

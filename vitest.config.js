@@ -10,7 +10,14 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: "./wrangler.jsonc" },
         miniflare: {
-          bindings: { TEST_MIGRATIONS: migrations },
+          bindings: {
+            TEST_MIGRATIONS: migrations,
+            // テスト専用のダミー鍵。本番の VAPID 鍵とは無関係。
+            NOTIFY_SHARED_SECRET: "test-shared-secret",
+            VAPID_SUBJECT: "mailto:test@example.com",
+            VAPID_PUBLIC_KEY: "BPjaGMbB9Dxe8EBCsbOLg-yiO7ZyItuPOw3p5dDzzbV0aK7dvWDYB5EMror3P5hBrHtSzJLLRyBW4dfUxPTtR7U",
+            VAPID_PRIVATE_KEY: "eUItfqOGx6kSx-o2OPaG97qkcWEEQLhFwetZ7FBaLIo",
+          },
         },
       }),
     ],
