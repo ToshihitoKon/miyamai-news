@@ -70,20 +70,27 @@ export async function handleNotify(request, env) {
   const expiredEndpoints = [];
   await Promise.all(
     results.map(async (row) => {
-      const subscription = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
-      const requestDetails = webpush.generateRequestDetails(
-        subscription,
-        JSON.stringify({ title, body: notificationBody, url }),
-      );
+      try {
+        const subscription = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
+        const requestDetails = webpush.generateRequestDetails(
+          subscription,
+          JSON.stringify({ title, body: notificationBody, url }),
+        );
 
-      const response = await fetch(requestDetails.endpoint, {
-        method: requestDetails.method,
-        headers: requestDetails.headers,
-        body: requestDetails.body,
-      });
+        const response = await fetch(requestDetails.endpoint, {
+          method: requestDetails.method,
+          headers: requestDetails.headers,
+          body: requestDetails.body,
+        });
 
-      if (response.status === 404 || response.status === 410) {
-        expiredEndpoints.push(row.endpoint);
+        if (response.status === 404 || response.status === 410) {
+          expiredEndpoints.push(row.endpoint);
+        }
+      } catch (error) {
+        // 1件の不正な購読・到達不能ホストが原因で Promise.all 全体が
+        // reject すると、他の全購読者への配信と期限切れ購読の削除が
+        // 巻き添えで止まってしまうため、ここで個別に握りつぶす。
+        console.error(`push send failed for ${row.endpoint}: ${error.message}`);
       }
     }),
   );

@@ -146,4 +146,33 @@ describe("POST /notify", () => {
     const { results } = await env.SUBSCRIPTIONS.prepare("SELECT * FROM subscriptions").all();
     expect(results).toHaveLength(1);
   });
+
+  // 1件の不正な購読（web-push の暗号化が失敗する等）が Promise.all 全体を巻き込んで
+  // reject すると、他の正常な購読者への配信・期限切れ購読の削除まで巻き添えで
+  // 止まってしまう。個別に握りつぶして他へ影響しないことを確認する。
+  it("still delivers to other subscribers and cleans up expired ones when one subscription is broken", async () => {
+    const goodKeys = await generatePushKeys();
+    await env.SUBSCRIPTIONS.prepare(
+      "INSERT INTO subscriptions (endpoint, p256dh, auth) VALUES (?, ?, ?)",
+    )
+      .bind("https://push.example/broken", "not-valid-base64!!", "also-not-valid!!")
+      .run();
+    await subscribe({ endpoint: "https://push.example/alive", keys: goodKeys });
+    await subscribe({ endpoint: "https://push.example/dead", keys: goodKeys });
+
+    const sentEndpoints = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new Request(input).url;
+      sentEndpoints.push(url);
+      return new Response(null, { status: url.endsWith("/dead") ? 410 : 201 });
+    });
+
+    const response = await notify({ title: "t", body: "b", url: "https://example.com" });
+
+    expect(response.status).toBe(204);
+    expect(sentEndpoints).toEqual(["https://push.example/alive", "https://push.example/dead"]);
+
+    const { results } = await env.SUBSCRIPTIONS.prepare("SELECT endpoint FROM subscriptions ORDER BY endpoint").all();
+    expect(results.map((r) => r.endpoint)).toEqual(["https://push.example/alive", "https://push.example/broken"]);
+  });
 });
