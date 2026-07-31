@@ -6,6 +6,18 @@ require "internal/episode_notifier"
 RSpec.describe Internal::EpisodeNotifier do
   let(:notifier) { described_class.new(base_url: "https://news.example.com", secret: "test-secret") }
 
+  def success_response(body: "")
+    instance_double(Net::HTTPSuccess, code: "204", body: body).tap do |res|
+      allow(res).to receive(:is_a?) { |klass| klass == Net::HTTPSuccess }
+    end
+  end
+
+  def failure_response(code)
+    instance_double(Net::HTTPResponse, code: code).tap do |res|
+      allow(res).to receive(:is_a?).and_return(false)
+    end
+  end
+
   describe "#notify" do
     it "POSTs a signed JSON body to /notify" do
       sent_request = nil
@@ -16,7 +28,7 @@ RSpec.describe Internal::EpisodeNotifier do
         expect(use_ssl).to be true
         block.call(http)
       end
-      allow(http).to receive(:request) { |req| sent_request = req }
+      allow(http).to receive(:request) { |req| sent_request = req; success_response }
 
       notifier.notify(title: "新しい回", body: "2026-07-14 昼", url: "https://news.example.com/")
 
@@ -33,7 +45,7 @@ RSpec.describe Internal::EpisodeNotifier do
       sent_request = nil
       http = instance_double(Net::HTTP)
       allow(Net::HTTP).to receive(:start) { |*, &block| block.call(http) }
-      allow(http).to receive(:request) { |req| sent_request = req }
+      allow(http).to receive(:request) { |req| sent_request = req; success_response }
 
       notifier.notify(title: "t", body: "b", url: "u")
 
@@ -44,6 +56,15 @@ RSpec.describe Internal::EpisodeNotifier do
       allow(Net::HTTP).to receive(:start).and_raise(SocketError, "getaddrinfo failed")
 
       expect { notifier.notify(title: "t", body: "b", url: "u") }.not_to raise_error
+    end
+
+    it "warns instead of silently succeeding when the worker returns a non-success status" do
+      http = instance_double(Net::HTTP)
+      allow(Net::HTTP).to receive(:start) { |*, &block| block.call(http) }
+      allow(http).to receive(:request).and_return(failure_response("401"))
+
+      expect { notifier.notify(title: "t", body: "b", url: "u") }
+        .to output(/notify returned 401/).to_stderr
     end
   end
 

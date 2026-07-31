@@ -30,9 +30,10 @@ module Internal
       request["Content-Type"] = "application/json"
       request["X-Signature"] = sign(payload)
 
-      Net::HTTP.start(notify_uri.hostname, notify_uri.port, use_ssl: notify_uri.scheme == "https") do |http|
+      response = Net::HTTP.start(notify_uri.hostname, notify_uri.port, use_ssl: notify_uri.scheme == "https") do |http|
         http.request(request)
       end
+      warn "  ! web push notify returned #{response.code} (site deploy already succeeded)" unless response.is_a?(Net::HTTPSuccess)
     rescue StandardError => e
       warn "  ! web push notify failed (site deploy already succeeded): #{e.message}"
     end
