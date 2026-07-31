@@ -10,10 +10,7 @@ require_relative "voice_synthesizer"
 require_relative "audio_mixer"
 require_relative "publisher"
 
-# miyamai_news.rb の CLI フラグに応じた工程の呼び分けと、その間の副作用
-# （work/dist の mkdir・EpisodeLogger の configure）を一元管理するオーケストレーター。
-# 新しいドメインロジックは持たず、既存の ScriptGenerator/Publisher/LastFetchStore/
-# Internal::EpisodeLogger の呼び出し順序を集約するだけに徹する。
+# miyamai_news.rb の CLI フラグに応じた工程の呼び分けを担うオーケストレーター。
 class Pipeline
   def initialize(args:, base_dir:, work_dir:, dist_dir:)
     @args = args
@@ -32,9 +29,6 @@ class Pipeline
     setup_episode!
 
     if @args[:publish_only]
-      # publish_only は新規収集を一切行わないので、フィードキャッシュを持つ
-      # ScriptGenerator（FeedCache.new が旧台帳ファイルを読む）を生成しない
-      # （元の main も generator 構築より前に return していた挙動を維持する）。
       run_publish_only
     else
       setup_generator!
@@ -52,9 +46,6 @@ class Pipeline
   private
 
   # --- Episode非依存の独立コマンド --------------------------------------
-  # --clean/--clean-archive/--ui-only/--confirm-fetch/--restore-fetch は Episode を
-  # 作らない（EpisodeLogger.configure されないまま no-op で動く）既存の不変条件を
-  # 維持するため、setup_episode! より前で処理する。
 
   def run_confirm_fetch_command
     pending = LastFetchStore.pending_at(@work_dir)
@@ -116,9 +107,6 @@ class Pipeline
 
   # --- Episode依存の経路 --------------------------------------------------
 
-  # 番組コンテキスト（日付・slot）は実行時刻から Episode が導く。--date/--slot の
-  # 明示指定があればそれを尊重する（Episode 側で自動判定を上書き）。now には常に
-  # 実行時の実時刻を渡す（収集基準時刻と番組の日付・slotは独立した概念）。
   def setup_episode!
     @episode = Episode.new(now: Time.now, date: @args[:date]&.to_date, slot: @args[:slot])
 
@@ -127,10 +115,6 @@ class Pipeline
     Internal::EpisodeLogger.configure(File.join(@work_dir, "#{@episode.date_tag}_#{@episode.slot}.log"))
   end
 
-  # 前回 pending の確定/ロールバックは、収集の起点(since)を確定する直前＝新規 fetch が
-  # 実際に走る直前に ScriptGenerator が自分で尋ねる。既存 news スナップショットを再利用する
-  # 実行（例: --script-only の後にフラグなしで synthesize へ進む）は fetch しないので、確認は
-  # 出ない。auto_confirm は CI 等の非対話実行で確認を飛ばして自動確定するかどうか。
   def setup_generator!
     @generator = ScriptGenerator.new(work_dir: @work_dir, episode: @episode, auto_confirm: @args[:auto_confirm] || false)
   end
@@ -138,9 +122,6 @@ class Pipeline
   def run_publish_only
     ensure_mode_allows!("publish")
     run_publish
-    # publish_only は新規 fetch をせず既存成果物を公開するだけなので、収集 window を
-    # 新しい時刻に進めてはいけない（fetch していない時刻で確定すると取りこぼす）。
-    # pending が残っていれば公開＝確定として昇格させ、無ければ何もしない。
     ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: LastFetchStore.confirm!(work_dir: @work_dir))
   end
 
@@ -154,8 +135,6 @@ class Pipeline
     run_script
   end
 
-  # フラグなしは pipeline.mode の上限まで、--synthesize-only は synthesize までを上限に、
-  # run_digest→run_synthesize→run_publish を順に呼ぶだけ。
   def run_full
     if @args[:synthesize_only]
       ensure_mode_allows!("synthesize")
@@ -172,20 +151,13 @@ class Pipeline
       run_publish
       if @generator.fetched_news?
         LastFetchStore.confirm_immediately!(work_dir: @work_dir, at: @generator.collect_since_anchor)
-        # 公開＝確定した今回の回を紹介済みニュース履歴へ追記する（confirm_immediately! は
-        # pending を経由しないので episode_key を返さない。今回の episode から直接渡す）。
         ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: @generator.episode_key)
       else
-        # 既存 news の再利用でも、pending が残っていれば昇格した回を履歴へ追記する。
         ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: LastFetchStore.confirm!(work_dir: @work_dir))
       end
     end
   end
 
-  # --digest-only は digest 相当、--script-only/--synthesize-only は synthesize 相当
-  # （facts抽出・執筆まで進む）以上、--publish-only は publish 相当以上の config が
-  # 検証されていないと実行できない。満たさなければ、必要な config が未検証のまま
-  # 実行が進んで途中で失敗するのを防ぐためここで止める。
   def ensure_mode_allows!(required_mode)
     return if Config::MODE_ORDER.fetch(Config.mode) >= Config::MODE_ORDER.fetch(required_mode)
 
@@ -213,9 +185,6 @@ class Pipeline
   # 作った中間ファイルがあれば再利用するだけなので、run_digest の後に呼んでも
   # AI を二重に呼ばない。
   def run_synthesize
-    # BGM は config の assets.bgm_path。相対パス指定なら base_dir 起点で解決する。
-    # index.html にクレジット表記を固定しているため（templates/index.html.erb 参照）、
-    # 差し替え可能にはしていない。
     bgm_path = File.expand_path(Config.assets.bgm_path, @base_dir)
     output_path = episode_mp3_path
     used_news_output = episode_used_path
@@ -225,8 +194,7 @@ class Pipeline
     voice_path = VoiceSynthesizer.new(work_dir: @work_dir, episode: @episode).synthesize(tts_script_path)
     AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
 
-    # 使用ニュース一覧・文字起こし(読み仮名化前の台本)を mp3 と並べて成果物として残す
-    # （work/ 側はキャッシュとして温存）。
+    # 使用ニュース一覧・文字起こし(読み仮名化前の台本)を mp3 と並べて成果物として残す。
     FileUtils.cp(@generator.used_news_file, used_news_output)
     FileUtils.cp(@generator.script_file, transcript_output)
 
