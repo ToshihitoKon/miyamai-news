@@ -348,12 +348,21 @@ R2 のキー構成:
   消え、ブラウザに登録済みの Service Worker が更新されず購読が実質的に壊れる
   （気づきにくい形の障害になるため、この一文だけは明記しておく）。
 - 通知の要否は `updated_at` の変化ではなく、`update_archives` が返す
-  `newly_published`（新規行 or title/used_news が変化）で判定する。`updated_at` の
+  `newly_published`（`content_changed?` の結果）で判定する。`updated_at` の
   更新セマンティクス自体は「feed.xml の `<updated>` を誤って動かさない」ためのもの
   で、Web Push の要否とは別の関心事だが、判定に使う条件（新規 or 変化）は同一なので
-  `update_archives` 一箇所で両方を導出している。`#republish_ui` は
-  `update_archives` を呼ばず `fetch_existing_archives` のみを使うため、
-  `--ui-only` では判定自体が発生せず通知も発火しない。
+  `content_changed?` 一箇所に集約し、`updated_at_for` もその結果を受け取るだけに
+  している（同じ条件を2箇所に別々に持つと、片方だけ変更したときに feed.xml の
+  `<updated>` が動くタイミングと通知が飛ぶタイミングがずれるため）。
+  `#republish_ui` は `update_archives` を呼ばず `fetch_existing_archives` のみを
+  使うため、`--ui-only` では判定自体が発生せず通知も発火しない。
+- `content_changed?` は `used_news_given`（`Publisher#run` の `used_txt_path` が
+  渡されたかどうか）も見る。`used_txt_path` が nil または実体が既に無い場合、
+  `load_and_validate_used_news` は空文字列を返すが、これは「used_news を意図的に
+  空へ変更した」わけではない。`used_news_given` が false のときは used_news の
+  差分を比較材料にせず、title の変化だけで判定する。そうしないと、work/ の掃除等で
+  used.txt がローカルから消えただけの再 publish を「内容変更あり」と誤検知し、
+  無関係な購読者へ再通知してしまう。
 - `Publisher#run` の「1つでも失敗したら即 abort する」原則（本節冒頭）の例外として、
   Web Push の通知送信だけは失敗しても `abort` せず `warn` に留める
   （`Internal::EpisodeNotifier#notify`）。`deploy_site` が既に成功した後に呼ぶため、

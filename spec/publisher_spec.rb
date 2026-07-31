@@ -140,6 +140,18 @@ RSpec.describe Publisher do
       expect(UsedNewsFormatter).not_to have_received(:ensure_valid!)
     end
 
+    # used.txt が work/ の掃除等でローカルから既に消えている状態で同じ episode を
+    # 再 publish しても、記録済みの used_news との差分を誤検知して再通知しない。
+    it "does not notify when re-publishing without used_txt_path even though the archive already has used_news" do
+      title = "回タイトル"
+      existing = [["2026-07-14", File.basename(mp3_path), title, File.read(used_path), "2026-07-14T00:00:00Z"]]
+      publisher = build_publisher(ledger: ledger_csv(existing), title: title)
+
+      publisher.run(mp3_path, nil, transcript_path)
+
+      expect(notified).to be_empty
+    end
+
     it "aborts the whole run when the site deploy fails" do
       publisher = build_publisher
       deploy_result[0] = false
@@ -449,6 +461,27 @@ RSpec.describe Publisher do
 
     it "is true when the title changed" do
       expect(newly_published_after_run(existing_row(title: "古いタイトル", used_news: used_news))).to be true
+    end
+
+    # used_txt_path が渡らない再 publish（used.txt がローカルから既に消えている等）は
+    # load_and_validate_used_news が空文字列を返すが、これは「used_news を空へ変更した」
+    # わけではないので、used_news_given: false のときは used_news の差分を無視する。
+    it "is false when re-publishing without used_txt_path even if the archived used_news is non-empty" do
+      row = existing_row(title: title, used_news: used_news)
+      publisher = build_publisher(ledger: ledger_csv([row]), title: title)
+
+      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), "", used_news_given: false)
+
+      expect(newly_published).to be false
+    end
+
+    it "is still true when the title changed even if used_news_given is false" do
+      row = existing_row(title: "古いタイトル", used_news: used_news)
+      publisher = build_publisher(ledger: ledger_csv([row]), title: title)
+
+      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), "", used_news_given: false)
+
+      expect(newly_published).to be true
     end
   end
 

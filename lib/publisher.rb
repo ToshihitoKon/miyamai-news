@@ -48,7 +48,7 @@ class Publisher
       upload_used_news_html(used_news, self.class.used_news_html_object(used_object))
     end
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
-    rows, newly_published = update_archives(filename, used_news)
+    rows, newly_published = update_archives(filename, used_news, used_news_given: !used_txt_path.nil?)
     deploy_site(rows)
     if newly_published
       @notifier.notify(title: "新着ニュースが公開されました",
@@ -132,16 +132,14 @@ class Publisher
 
   # --- archives.csv ------------------------------------------------------
 
-  # 戻り値は [rows, newly_published]。newly_published は「新規エピソード or
-  # title/used_news が変化した」場合に true になり、Web Push 通知の要否判定に使う。
-  # 同一内容の再 publish（--publish-only の再実行等）ではここが false になる。
-  def update_archives(filename, used_news = "")
+  # 戻り値は [rows, newly_published]。
+  def update_archives(filename, used_news = "", used_news_given: true)
     rows = fetch_existing_archives
     previous = rows.find { |r| r[1] == filename }
-    newly_published = changed_from?(previous, used_news)
+    changed = content_changed?(previous, used_news, used_news_given: used_news_given)
     rows.reject! { |r| r[1] == filename }
     rows << [date_for(filename), filename, @title, used_news,
-      updated_at_for(previous, used_news)]
+      updated_at_for(previous, changed:)]
     rows.sort_by! { |r| [r[0], r[4].to_s] }
     rows.reverse!
 
@@ -152,18 +150,18 @@ class Publisher
     csv = CSV.generate { |out| rows.each { |r| out << r } }
     @site.write_ledger(csv)
 
-    [rows, newly_published]
+    [rows, changed]
   end
 
-  def changed_from?(previous, used_news)
+  def content_changed?(previous, used_news, used_news_given:)
     return true unless previous
+    return true if previous[2] != @title
 
-    previous[2] != @title || previous[3].to_s != used_news.to_s
+    used_news_given && previous[3].to_s != used_news.to_s
   end
 
-  def updated_at_for(previous, used_news)
-    return now_rfc3339 unless previous
-    return now_rfc3339 unless previous[2] == @title && previous[3].to_s == used_news.to_s
+  def updated_at_for(previous, changed:)
+    return now_rfc3339 if changed || !previous
 
     prior = previous[4].to_s
     prior.empty? ? now_rfc3339 : prior
