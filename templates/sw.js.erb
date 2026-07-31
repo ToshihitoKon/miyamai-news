@@ -1,0 +1,19 @@
+self.addEventListener("push", (event) => {
+  const data = event.data ? event.data.json() : {};
+  const title = data.title || <%= Publisher::PROGRAM_NAME.to_json %>;
+  const body = data.body || "";
+  const url = data.url || <%= page_url.to_json %>;
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: <%= icon_url.to_json %>,
+      data: { url },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(self.clients.openWindow(event.notification.data.url));
+});

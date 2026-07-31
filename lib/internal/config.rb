@@ -53,6 +53,7 @@ module Config
     def collect = app_config.collect
     def rss_feed_sources = app_config.rss_feed_sources
     def mixer = app_config.mixer
+    def web_push = app_config.web_push
 
     # target_mode までに必須のトップレベルセクションが揃っているか一括検証する。
     # 欠けていれば起動直後にまとめて MissingKeyError を出し、実行途中で中途半端に

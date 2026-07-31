@@ -71,6 +71,49 @@ envchain cloudflare ruby scripts/upload_assets.rb --file miyamai_news.webp --fil
 `wrangler deploy` 時に DNS レコードと証明書が自動発行される。ただし**対象ホスト名に
 既存の CNAME レコードがあると失敗する**ので、先に削除しておく。
 
+### Web Push 通知（任意機能）
+
+`config.yaml` に `web_push` セクションを設定すると、publish 時に購読者へブラウザ
+通知を送る機能が有効になる。未設定なら完全に無効化される。
+
+Worker 側の依存関係は Node.js（npm）が必要。
+
+```bash
+npm install
+```
+
+D1 データベースと VAPID 鍵を、Worker コードのデプロイより先に用意する。
+
+```bash
+wrangler d1 create miyamai-news-subscriptions
+# 出力された database_id を wrangler.jsonc の d1_databases[0].database_id に反映する
+
+wrangler d1 migrations apply miyamai-news-subscriptions --remote
+
+npx web-push generate-vapid-keys
+# 出力された Public Key を config.yaml の web_push.vapid_public_key に設定する
+```
+
+Worker 側の secret（`wrangler secret put <name>` で設定、config.yaml には書かない）。
+
+| secret | 用途 |
+| --- | --- |
+| `VAPID_PUBLIC_KEY` | 上記で生成した Public Key |
+| `VAPID_PRIVATE_KEY` | 上記で生成した Private Key |
+| `VAPID_SUBJECT` | `mailto:` アドレスまたは `https:` URL |
+| `NOTIFY_SHARED_SECRET` | `/notify` の HMAC 認証に使う共有シークレット（任意の乱数文字列） |
+
+miyamai-news 側（`Internal::EpisodeNotifier`）にも同じ共有シークレットを渡す。
+
+| 環境変数 | 用途 |
+| --- | --- |
+| `WEB_PUSH_NOTIFY_SECRET` | `NOTIFY_SHARED_SECRET` と同じ値 |
+
+Worker 側のテストは Vitest（`@cloudflare/vitest-pool-workers`）で実行する。
+
+```bash
+npx vitest run
+```
 
 synthesize には BGM 素材を用意し `assets.bgm_path` にパスをセットする必要がある。index.html.erb に記載している BGM は[猫きまぐれBGM工房](https://kim4gure.com/) 様「古びた魔法書」
 

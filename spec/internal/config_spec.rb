@@ -130,5 +130,21 @@ RSpec.describe Config do
 
       expect(Config.cloudflare).to be_nil
     end
+
+    it "returns nil for web_push when it is not configured (feature stays disabled)" do
+      expect(Config.web_push).to be_nil
+    end
+
+    it "parses web_push when present" do
+      data = YAML.safe_load_file(default_path)
+      data["web_push"] = { "vapid_public_key" => "test-public-key" }
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "config.yaml")
+        File.write(path, YAML.dump(data))
+        Config.path = path
+
+        expect(Config.web_push.vapid_public_key).to eq("test-public-key")
+      end
+    end
   end
 end

@@ -39,13 +39,22 @@ RSpec.describe Publisher do
 
   after { FileUtils.remove_entry(work_dir) }
 
+  # notify の呼び出しを記録するだけのスパイ。web_push が未設定でも Publisher の
+  # デフォルト（NullNotifier）に隠れて検証漏れにならないよう、明示的に注入する。
+  let(:notified) { [] }
+  let(:notifier) do
+    n = double("notifier")
+    allow(n).to receive(:notify) { |**kwargs| notified << kwargs }
+    n
+  end
+
   def build_publisher(ledger: nil, **kwargs)
     s3.stub_responses(:head_object, ledger.nil? ? "NotFound" : {})
     s3.stub_responses(:get_object, { body: ledger.to_s }) unless ledger.nil?
     s3.stub_responses(:put_object, {})
     s3.stub_responses(:copy_object, { copy_object_result: {} })
     s3.stub_responses(:delete_object, {})
-    described_class.new(date: Date.new(2026, 7, 14), site: site, **kwargs)
+    described_class.new(date: Date.new(2026, 7, 14), site: site, notifier: notifier, **kwargs)
   end
 
   def ledger_csv(rows) = CSV.generate { |csv| rows.each { |r| csv << r } }
@@ -77,7 +86,27 @@ RSpec.describe Publisher do
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(staged_files).to include("index.html", "feed.xml", "manifest.json", "_headers")
+      expect(staged_files).to include("index.html", "feed.xml", "manifest.json", "sw.js", "_headers")
+    end
+
+    # web_push が未設定でも常に sw.js をステージングする。バージョン単位デプロイでは
+    # ここで書かないファイルは公開サイトから消えるため、条件付きで書くと将来
+    # web_push を無効化した瞬間に既存購読者の Service Worker が更新されなくなる。
+    it "stages sw.js even when web_push is not configured" do
+      publisher = build_publisher
+
+      publisher.run(mp3_path, used_path, transcript_path)
+
+      expect(staged_files).to include("sw.js")
+    end
+
+    it "stages sw.js when web_push is configured" do
+      allow(Config).to receive(:web_push).and_return(double("web_push", vapid_public_key: "test-key"))
+      publisher = build_publisher
+
+      publisher.run(mp3_path, used_path, transcript_path)
+
+      expect(staged_files).to include("sw.js")
     end
 
     # 画像は R2 に置くので、手元に実体が無くても publish できる必要がある
@@ -112,11 +141,44 @@ RSpec.describe Publisher do
       expect(UsedNewsFormatter).not_to have_received(:ensure_valid!)
     end
 
+    # used.txt が work/ の掃除等でローカルから既に消えている状態で同じ episode を
+    # 再 publish しても、記録済みの used_news との差分を誤検知して再通知しない。
+    it "does not notify when re-publishing without used_txt_path even though the archive already has used_news" do
+      title = "回タイトル"
+      existing = [["2026-07-14", File.basename(mp3_path), title, File.read(used_path), "2026-07-14T00:00:00Z"]]
+      publisher = build_publisher(ledger: ledger_csv(existing), title: title)
+
+      publisher.run(mp3_path, nil, transcript_path)
+
+      expect(notified).to be_empty
+    end
+
     it "aborts the whole run when the site deploy fails" do
       publisher = build_publisher
       deploy_result[0] = false
 
       expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
+    end
+
+    it "notifies for a brand-new episode" do
+      publisher = build_publisher(title: "回タイトル")
+
+      publisher.run(mp3_path, used_path, transcript_path)
+
+      expect(notified).to contain_exactly(
+        { title: "新着ニュースが公開されました", body: "2026-07-14 昼", url: "https://news.example.com/" }
+      )
+    end
+
+    it "does not notify when re-publishing identical title and used_news" do
+      title = "回タイトル"
+      existing = [["2026-07-14", File.basename(mp3_path), title, File.read(used_path),
+        "2026-07-14T00:00:00Z"]]
+      publisher = build_publisher(ledger: ledger_csv(existing), title: title)
+
+      publisher.run(mp3_path, used_path, transcript_path)
+
+      expect(notified).to be_empty
     end
   end
 
@@ -132,7 +194,15 @@ RSpec.describe Publisher do
 
       expect(deployed.size).to eq(1)
       expect(put_keys).to be_empty
-      expect(staged_files).to include("index.html", "feed.xml", "manifest.json")
+      expect(staged_files).to include("index.html", "feed.xml", "manifest.json", "sw.js")
+    end
+
+    it "does not notify (UI-only republish never fires a push notification)" do
+      publisher = build_publisher(ledger: ledger_csv(existing))
+
+      publisher.republish_ui
+
+      expect(notified).to be_empty
     end
 
     it "aborts when the ledger does not exist yet" do
@@ -318,7 +388,7 @@ RSpec.describe Publisher do
 
     def updated_at_after_run(row)
       publisher = build_publisher(ledger: ledger_csv([row]), title: title)
-      rows = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      rows, = publisher.send(:update_archives, File.basename(mp3_path), used_news)
       rows.find { |r| r[1] == File.basename(mp3_path) }[4]
     end
 
@@ -340,7 +410,7 @@ RSpec.describe Publisher do
     it "assigns the current time for a brand-new episode" do
       publisher = build_publisher(title: title)
 
-      rows = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      rows, = publisher.send(:update_archives, File.basename(mp3_path), used_news)
 
       expect(rows.first[4]).to match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/)
     end
@@ -355,9 +425,64 @@ RSpec.describe Publisher do
       row = existing_row(title: title, used_news: used_news, updated_at: published_at)
       publisher = build_publisher(ledger: ledger_csv([row]), title: title)
 
-      rows = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      rows, = publisher.send(:update_archives, File.basename(mp3_path), used_news)
 
       expect(publisher.send(:render_feed, rows)).to include("<updated>#{published_at}</updated>")
+    end
+  end
+
+  describe "#update_archives newly_published semantics" do
+    let(:title) { "宮舞モカの技術ニュース 2026-07-14" }
+    let(:used_news) { File.read(used_path) }
+
+    def existing_row(title:, used_news:, updated_at: "2026-07-14T01:23:45Z")
+      ["2026-07-14", File.basename(mp3_path), title, used_news, updated_at]
+    end
+
+    def newly_published_after_run(row)
+      publisher = build_publisher(ledger: ledger_csv([row]), title: title)
+      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      newly_published
+    end
+
+    it "is true for a brand-new episode" do
+      publisher = build_publisher(title: title)
+      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+
+      expect(newly_published).to be true
+    end
+
+    it "is false when re-publishing identical title and used_news" do
+      expect(newly_published_after_run(existing_row(title: title, used_news: used_news))).to be false
+    end
+
+    it "is true when used_news changed" do
+      expect(newly_published_after_run(existing_row(title: title, used_news: "## 別の内容\n"))).to be true
+    end
+
+    it "is true when the title changed" do
+      expect(newly_published_after_run(existing_row(title: "古いタイトル", used_news: used_news))).to be true
+    end
+
+    # used_txt_path が渡らない再 publish（used.txt がローカルから既に消えている等）は
+    # load_and_validate_used_news が空文字列を返すが、これは「used_news を空へ変更した」
+    # わけではないので、used_news_given: false のときは used_news の差分を無視する。
+    it "is false when re-publishing without used_txt_path even if the archived used_news is non-empty" do
+      row = existing_row(title: title, used_news: used_news)
+      publisher = build_publisher(ledger: ledger_csv([row]), title: title)
+
+      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), "", used_news_given: false)
+
+      expect(newly_published).to be false
+    end
+
+    it "is still true when the title changed even if used_news_given is false" do
+      row = existing_row(title: "古いタイトル", used_news: used_news)
+      publisher = build_publisher(ledger: ledger_csv([row]), title: title)
+
+      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), "", used_news_given: false)
+
+      expect(newly_published).to be true
     end
   end
 
@@ -504,6 +629,22 @@ RSpec.describe Publisher do
       xml = publisher.send(:render_feed, rows)
 
       expect(xml).to include("<title>#{program_name}</title>")
+    end
+
+    it "omits the push notification button when web_push is not configured" do
+      html = publisher.send(:render_html, rows)
+
+      expect(html).not_to include("pushsubscribe")
+    end
+
+    it "renders the push notification button and subscribe script when web_push is configured" do
+      allow(Config).to receive(:web_push).and_return(double("web_push", vapid_public_key: "test-key"))
+
+      html = publisher.send(:render_html, rows)
+
+      expect(html).to include("pushsubscribe")
+      expect(html).to include("navigator.serviceWorker.register('/sw.js')")
+      expect(html).to include('"test-key"')
     end
   end
 end

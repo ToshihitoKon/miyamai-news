@@ -1,0 +1,16 @@
+{
+  "name": "miyamai-news-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.117.0"
+  }
+}

@@ -11,6 +11,7 @@ require_relative "internal/template_renderer"
 require_relative "internal/used_news_markdown"
 require_relative "internal/used_news_formatter"
 require_relative "internal/site"
+require_relative "internal/episode_notifier"
 require_relative "slot"
 
 class Publisher
@@ -20,10 +21,11 @@ class Publisher
   # 一度決めたら変えない（変えると購読者が別フィードとして扱う）。
   FEED_ID_DATE = "2026-07-31"
 
-  def initialize(date: Date.today, title: nil, site: nil)
+  def initialize(date: Date.today, title: nil, site: nil, notifier: nil)
     @date  = date
     @title = title || "#{PROGRAM_NAME} #{date.strftime('%Y-%m-%d')}"
     @site  = site || Internal::Site.from_config
+    @notifier = notifier || Internal::EpisodeNotifier.from_config
   end
 
   EPISODE_FILE_EXTENSIONS = [".mp3", ".used.txt", ".transcript.txt"].freeze
@@ -46,8 +48,13 @@ class Publisher
       upload_used_news_html(used_news, self.class.used_news_html_object(used_object))
     end
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
-    rows = update_archives(filename, used_news)
+    rows, newly_published = update_archives(filename, used_news, used_news_given: !used_txt_path.nil?)
     deploy_site(rows)
+    if newly_published
+      @notifier.notify(title: "新着ニュースが公開されました",
+        body: notification_body(filename),
+        url: public_url("index.html"))
+    end
 
     puts "done: #{public_url('index.html')}"
   end
@@ -125,12 +132,14 @@ class Publisher
 
   # --- archives.csv ------------------------------------------------------
 
-  def update_archives(filename, used_news = "")
+  # 戻り値は [rows, newly_published]。
+  def update_archives(filename, used_news = "", used_news_given: true)
     rows = fetch_existing_archives
     previous = rows.find { |r| r[1] == filename }
+    changed = content_changed?(previous, used_news, used_news_given: used_news_given)
     rows.reject! { |r| r[1] == filename }
     rows << [date_for(filename), filename, @title, used_news,
-      updated_at_for(previous, used_news)]
+      updated_at_for(previous, changed:)]
     rows.sort_by! { |r| [r[0], r[4].to_s] }
     rows.reverse!
 
@@ -141,12 +150,18 @@ class Publisher
     csv = CSV.generate { |out| rows.each { |r| out << r } }
     @site.write_ledger(csv)
 
-    rows
+    [rows, changed]
   end
 
-  def updated_at_for(previous, used_news)
-    return now_rfc3339 unless previous
-    return now_rfc3339 unless previous[2] == @title && previous[3].to_s == used_news.to_s
+  def content_changed?(previous, used_news, used_news_given:)
+    return true unless previous
+    return true if previous[2] != @title
+
+    used_news_given && previous[3].to_s != used_news.to_s
+  end
+
+  def updated_at_for(previous, changed:)
+    return now_rfc3339 if changed || !previous
 
     prior = previous[4].to_s
     prior.empty? ? now_rfc3339 : prior
@@ -183,6 +198,7 @@ class Publisher
       File.write(File.join(dir, "index.html"), render_html(rows))
       File.write(File.join(dir, "feed.xml"), render_feed(rows))
       File.write(File.join(dir, "manifest.json"), render_manifest)
+      File.write(File.join(dir, "sw.js"), render_sw)
       @site.deploy(dir)
     rescue Internal::Site::DeployFailed => e
       abort(e.message)
@@ -211,6 +227,7 @@ class Publisher
       cover_url: asset_url(cover_image),
       description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
       og_title: PROGRAM_NAME,
+      web_push_public_key: Config.web_push&.vapid_public_key,
       options:)
   end
 
@@ -265,6 +282,12 @@ class Publisher
     TemplateRenderer.render("manifest.json", self, icon_url: asset_url(icon_image))
   end
 
+  # --- sw.js (Service Worker) --------------------------------------------
+
+  def render_sw
+    TemplateRenderer.render("sw.js", self, page_url: public_url("index.html"), icon_url: asset_url(icon_image))
+  end
+
   def feed_datetime(date_str, updated_at = nil)
     return updated_at if updated_at && !updated_at.to_s.strip.empty?
 
@@ -280,6 +303,12 @@ class Publisher
   def date_with_slot(date, filename)
     label = slot_label(filename)
     label.empty? ? date : "#{date}（#{label}）"
+  end
+
+  def notification_body(filename)
+    date = date_for(filename)
+    label = slot_label(filename)
+    label.empty? ? date : "#{date} #{label}"
   end
 
   def date_for(filename)

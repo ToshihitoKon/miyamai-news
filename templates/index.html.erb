@@ -174,6 +174,11 @@
       text-align: center;
     }
     .modebtn:hover { background: #eaf1f8; }
+    .modebtn:disabled {
+      cursor: default;
+      opacity: .6;
+    }
+    .modebtn:disabled:hover { background: #fff; }
     .news {
       margin-top: 20px;
       border-top: 1px solid #e2e8f0;
@@ -296,6 +301,9 @@
   </main>
 
   <footer class="site-footer">
+    <% if web_push_public_key %>
+      <p class="subscribe"><button type="button" class="modebtn" id="pushsubscribe">通知を有効にする</button></p>
+    <% end %>
     <p class="subscribe"><a href="<%= h(feed_url) %>">フィード（Atom）で購読</a></p>
     <div class="credits">
       <p>音声：VOICEPEAK 宮舞モカ（© 株式会社AHS）<a href="https://www.ah-soft.com/voice/moca/eula.html" target="_blank" rel="noopener">使用許諾</a></p>
@@ -524,5 +532,65 @@
     applyRelativeLabels();
     setInterval(applyRelativeLabels, 60000);
   </script>
+
+  <% if web_push_public_key %>
+  <script>
+    // VAPID 公開鍵は base64url。pushManager.subscribe に渡すには
+    // 生バイト列（Uint8Array）へ変換する必要がある。
+    function urlBase64ToUint8Array(base64) {
+      const padded = (base64 + '='.repeat((4 - (base64.length % 4)) % 4))
+        .replace(/-/g, '+').replace(/_/g, '/');
+      const raw = atob(padded);
+      return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+    }
+
+    const pushButton = document.getElementById('pushsubscribe');
+
+    function markSubscribed() {
+      pushButton.textContent = '登録済み';
+      pushButton.disabled = true;
+    }
+
+    function markFailed() {
+      pushButton.textContent = '通知を有効にする（失敗しました。再度お試しください）';
+      pushButton.disabled = false;
+    }
+
+    pushButton.addEventListener('click', async () => {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') return;
+
+      try {
+        const registration = await navigator.serviceWorker.register('/sw.js');
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(<%= web_push_public_key.to_json %>),
+        });
+
+        const response = await fetch('/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(subscription.toJSON()),
+        });
+
+        if (response.ok) {
+          markSubscribed();
+        } else {
+          markFailed();
+        }
+      } catch {
+        markFailed();
+      }
+    });
+
+    // ページ読み込み時点で既に購読済みなら、押す前からボタンの表示を揃えておく。
+    navigator.serviceWorker.getRegistration('/sw.js').then((registration) => {
+      if (!registration) return;
+      return registration.pushManager.getSubscription();
+    }).then((subscription) => {
+      if (subscription) markSubscribed();
+    });
+  </script>
+  <% end %>
 </body>
 </html>

@@ -5,17 +5,26 @@
   "name": "miyamai-news",
   "main": "src/index.js",
   "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
   // directory を書かないのは、素の `wrangler deploy` でサイトを壊さないため。
   // 配信物は publish が生成するので、常に --assets <ステージング> で渡す。
   "assets": {
-    // episodes / assets 配下だけ Worker が先に処理して R2 から返す。
+    // episodes / assets 配下は Worker が先に処理して R2 から返す。
+    // subscribe / notify は POST を受けるため static assets 層より先に Worker へ渡す。
     // episodes は config.yaml の cloudflare.episode_prefix と揃える必要がある。
-    "run_worker_first": ["/episodes/*", "/assets/*"]
+    "run_worker_first": ["/episodes/*", "/assets/*", "/subscribe", "/notify"]
   },
   "r2_buckets": [
     {
       "binding": "EPISODES",
       "bucket_name": "miyamai-news"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "SUBSCRIPTIONS",
+      "database_name": "miyamai-news-subscriptions",
+      "database_id": "21c9922c-3464-4cc0-a478-6441bb6818de"
     }
   ],
   // deploy 時に DNS レコードと証明書が自動発行される。
