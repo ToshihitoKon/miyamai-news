@@ -297,6 +297,9 @@
 
   <footer class="site-footer">
     <p class="subscribe"><a href="<%= h(feed_url) %>">フィード（Atom）で購読</a></p>
+    <% if web_push_public_key %>
+      <p class="subscribe"><button type="button" class="modebtn" id="pushsubscribe">通知を有効にする</button></p>
+    <% end %>
     <div class="credits">
       <p>音声：VOICEPEAK 宮舞モカ（© 株式会社AHS）<a href="https://www.ah-soft.com/voice/moca/eula.html" target="_blank" rel="noopener">使用許諾</a></p>
       <p>立ち絵：からい 様（<a href="https://seiga.nicovideo.jp/seiga/im11390154" target="_blank" rel="noopener">宮舞モカ立ち絵素材</a>）</p>
@@ -524,5 +527,35 @@
     applyRelativeLabels();
     setInterval(applyRelativeLabels, 60000);
   </script>
+
+  <% if web_push_public_key %>
+  <script>
+    // VAPID 公開鍵は base64url。pushManager.subscribe に渡すには
+    // 生バイト列（Uint8Array）へ変換する必要がある。
+    function urlBase64ToUint8Array(base64) {
+      const padded = (base64 + '='.repeat((4 - (base64.length % 4)) % 4))
+        .replace(/-/g, '+').replace(/_/g, '/');
+      const raw = atob(padded);
+      return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+    }
+
+    document.getElementById('pushsubscribe').addEventListener('click', async () => {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') return;
+
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(<%= web_push_public_key.to_json %>),
+      });
+
+      await fetch('/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(subscription.toJSON()),
+      });
+    });
+  </script>
+  <% end %>
 </body>
 </html>

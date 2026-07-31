@@ -225,6 +225,7 @@ class Publisher
       cover_url: asset_url(cover_image),
       description: "#{date_with_slot(current[0], current[1])} — #{current[2]}",
       og_title: PROGRAM_NAME,
+      web_push_public_key: Config.web_push&.vapid_public_key,
       options:)
   end
 

@@ -594,5 +594,21 @@ RSpec.describe Publisher do
 
       expect(xml).to include("<title>#{program_name}</title>")
     end
+
+    it "omits the push notification button when web_push is not configured" do
+      html = publisher.send(:render_html, rows)
+
+      expect(html).not_to include("pushsubscribe")
+    end
+
+    it "renders the push notification button and subscribe script when web_push is configured" do
+      allow(Config).to receive(:web_push).and_return(double("web_push", vapid_public_key: "test-key"))
+
+      html = publisher.send(:render_html, rows)
+
+      expect(html).to include("pushsubscribe")
+      expect(html).to include("navigator.serviceWorker.register('/sw.js')")
+      expect(html).to include('"test-key"')
+    end
   end
 end
