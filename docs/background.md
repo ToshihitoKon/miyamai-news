@@ -670,15 +670,22 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   構造化パースする（文法は上の「used_news の表示フォーマット」節参照。要約行は
   「見出し・メタ・空行のいずれでもない行」として拾う）。`UsedNewsFormatter.strip_preamble`
   は先頭の `##` 起点なので、要約を `### タイトル` 配下に置く限り前置き除去には影響しない。
-- used_news を書く工程は 2 つある。extractor が facts と一緒に**暫定版**を書き
-  （`templates/extractor.prompt.erb`。digest mode の到達点でも履歴の元データを残すため。
-  候補として facts 化した全ニュースが対象）、writer 到達時に**同じパス**へ**確定版**
-  （`templates/writer.prompt.erb`。台本で実際に紹介したもの）を上書きする。confirm 時に存在
-  する方が履歴に入る。これにより digest mode 運用でも履歴が溜まる（used_news が全く無い
-  digest なら記録するものが無く、`record!` は `File.exist?` ガードでスキップする）。暫定 used は
-  履歴用の副産物なので、extractor が書き損ねても digest は止めない（`finalize_optional_used_news`
-  は無ければ何もしない）。確定 used を書く writer 側はファイル欠落なら従来どおり abort する
-  （不完全なまま後段へ進ませない）。フォーマット検証・AI 修復は行わない（前掲「used_news の
+- used_news を書く工程は 2 つある。extractor が facts と一緒に**暫定版**を
+  `news_used_provisional_<episode_key>.txt`（`ScriptGenerator.provisional_used_news_path`）
+  に書き（`templates/extractor.prompt.erb`。digest mode の到達点でも履歴の元データを残す
+  ため。候補として facts 化した全ニュースが対象）、writer 到達時に**別パス**
+  `news_used_<episode_key>.txt`（`ScriptGenerator.used_news_path`。`templates/writer.prompt.erb`。
+  台本で実際に紹介したもの）へ**確定版**を新規に書く。両パスとも `news_*.txt` グロブに
+  含まれ `--clean` 対象。`record_used_news_history!` は確定版があればそれを、無ければ
+  暫定版を使う（＝confirm 時にどちらが存在するかで履歴に入るものが決まる）。これにより
+  digest mode 運用でも履歴が溜まる（used_news が全く無い digest なら記録するものが無く、
+  `record!` は `File.exist?` ガードでスキップする）。暫定 used は履歴用の副産物なので、
+  extractor が書き損ねても digest は止めない（`finalize_optional_used_news` は無ければ
+  何もしない）。確定 used を書く writer 側はファイル欠落なら従来どおり abort する
+  （不完全なまま後段へ進ませない）。**暫定版と確定版を別パスにしているのは、同一パスへの
+  上書きに依存すると writer が Write を怠っても extractor の暫定版がそのまま存在し続けて
+  existence チェックを通過してしまい、確定版として素通りしてしまうため**（issue #83。
+  以前は同一パスだった）。フォーマット検証・AI 修復は行わない（前掲「used_news の
   表示フォーマット」節参照。ScriptGenerator は生テキストをそのまま残し、Publisher が
   公開直前に検証・修復・失敗時 abort を行う）。
 - 履歴は機械パースしない: 用途は selector プロンプトへの丸ごと埋め込みなので、used_news の
