@@ -16,8 +16,9 @@ RSpec.describe "wrangler.jsonc" do
     JSON.parse(stripped)
   end
 
-  it "routes both R2-backed prefixes to the worker" do
-    expect(wrangler.dig("assets", "run_worker_first")).to contain_exactly("/episodes/*", "/assets/*")
+  it "routes R2-backed prefixes and the web push endpoints to the worker" do
+    expect(wrangler.dig("assets", "run_worker_first"))
+      .to contain_exactly("/episodes/*", "/assets/*", "/subscribe", "/notify")
   end
 
   # run_worker_first と episode_prefix がずれると、mp3 が static assets 側に
@@ -44,6 +45,16 @@ RSpec.describe "wrangler.jsonc" do
 
   it "binds the worker to an R2 bucket as EPISODES" do
     expect(wrangler["r2_buckets"].map { |b| b["binding"] }).to include("EPISODES")
+  end
+
+  it "binds the worker to a D1 database as SUBSCRIPTIONS" do
+    expect(wrangler["d1_databases"].map { |d| d["binding"] }).to include("SUBSCRIPTIONS")
+  end
+
+  # web-push npm が VAPID 署名・ペイロード暗号化に Node 標準の crypto/buffer を
+  # 使うため、Workers の nodejs_compat が無いと動かない。
+  it "enables nodejs_compat for the web-push package" do
+    expect(wrangler["compatibility_flags"]).to include("nodejs_compat")
   end
 
   it "declares a custom domain route" do
