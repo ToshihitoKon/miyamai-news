@@ -341,6 +341,15 @@ R2 のキー構成:
   が必須（Vitest 上での実地確認で、この構成が実際に動くことを確認済み）。
 - 購読の宛先が 404/410 を返したら、その `endpoint` を D1 から削除する
   （ブラウザ側で購読解除・ブラウザデータ削除等が起きた購読は自然に消える）。
+- `POST /subscribe` の `endpoint` は既知の Push サービス（FCM/Mozilla/Apple）の
+  オリジンだけを許可する。ここを検証しないと任意のホストを endpoint として
+  登録でき、`/notify` がその都度そこへ `fetch` してしまう（SSRF・D1の汚染）。
+  一件でも不正な endpoint への送信が失敗しても他の購読者への配信を止めない
+  設計（`handleNotify` の per-row try/catch）と合わせて、被害を最小化している。
+- `Internal::EpisodeNotifier#notify` は Worker からのレスポンスが非 2xx
+  （共有シークレットのずれによる 401 等）でも例外を投げないため、レスポンスの
+  ステータスを明示的に見て `warn` する。見ないと Worker 側の認証エラーが
+  `Publisher#run` の "done" 表示に隠れて気づかれない。
 - `templates/sw.js.erb`（Service Worker）は `Publisher#deploy_site`
   （`lib/publisher.rb`）の第4の生成物としてステージングディレクトリに書き出す。
   `Internal::Site#deploy` は渡されたディレクトリの中身でバージョン単位の全置換を

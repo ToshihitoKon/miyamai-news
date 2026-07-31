@@ -1,5 +1,25 @@
 import webpush from "web-push";
 
+// ブラウザが pushManager.subscribe() で返す endpoint は、必ずこのいずれかの
+// Push サービスのオリジンを指す。検証を外すと任意のホストを endpoint として
+// 登録でき、/notify がそこへ無制限に fetch してしまう（SSRF・購読者データベースの
+// 汚染）。
+const ALLOWED_ENDPOINT_ORIGINS = [
+  "https://fcm.googleapis.com",
+  "https://updates.push.services.mozilla.com",
+  "https://web.push.apple.com",
+];
+
+function isAllowedEndpoint(endpoint) {
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  return ALLOWED_ENDPOINT_ORIGINS.includes(url.origin);
+}
+
 export async function handleSubscribe(request, env) {
   let payload;
   try {
@@ -10,6 +30,9 @@ export async function handleSubscribe(request, env) {
 
   const { endpoint, keys } = payload ?? {};
   if (typeof endpoint !== "string" || !keys || typeof keys.p256dh !== "string" || typeof keys.auth !== "string") {
+    return new Response("Bad Request", { status: 400 });
+  }
+  if (!isAllowedEndpoint(endpoint)) {
     return new Response("Bad Request", { status: 400 });
   }
 

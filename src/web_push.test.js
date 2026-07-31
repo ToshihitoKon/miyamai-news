@@ -54,19 +54,19 @@ describe("POST /subscribe", () => {
 
   it("stores a new subscription", async () => {
     const response = await subscribe({
-      endpoint: "https://push.example/1",
+      endpoint: "https://fcm.googleapis.com/fcm/send/1",
       keys: { p256dh: "p256dh-value", auth: "auth-value" },
     });
 
     expect(response.status).toBe(204);
     const { results } = await env.SUBSCRIPTIONS.prepare("SELECT * FROM subscriptions").all();
     expect(results).toHaveLength(1);
-    expect(results[0].endpoint).toBe("https://push.example/1");
+    expect(results[0].endpoint).toBe("https://fcm.googleapis.com/fcm/send/1");
   });
 
   it("upserts when the same endpoint subscribes again with new keys", async () => {
-    await subscribe({ endpoint: "https://push.example/1", keys: { p256dh: "old", auth: "old" } });
-    await subscribe({ endpoint: "https://push.example/1", keys: { p256dh: "new", auth: "new" } });
+    await subscribe({ endpoint: "https://fcm.googleapis.com/fcm/send/1", keys: { p256dh: "old", auth: "old" } });
+    await subscribe({ endpoint: "https://fcm.googleapis.com/fcm/send/1", keys: { p256dh: "new", auth: "new" } });
 
     const { results } = await env.SUBSCRIPTIONS.prepare("SELECT * FROM subscriptions").all();
     expect(results).toHaveLength(1);
@@ -74,7 +74,7 @@ describe("POST /subscribe", () => {
   });
 
   it("rejects a request missing keys", async () => {
-    const response = await subscribe({ endpoint: "https://push.example/1" });
+    const response = await subscribe({ endpoint: "https://fcm.googleapis.com/fcm/send/1" });
     expect(response.status).toBe(400);
   });
 
@@ -84,6 +84,29 @@ describe("POST /subscribe", () => {
       body: "not json",
     });
     const response = await worker.fetch(request, env);
+    expect(response.status).toBe(400);
+  });
+
+  // endpoint はブラウザの pushManager.subscribe() が返す値で、必ず既知の Push
+  // サービスのオリジンを指す。ここを検証しないと、任意のホストを endpoint として
+  // 登録でき、/notify がそこへ無制限に fetch してしまう。
+  it("rejects an endpoint whose origin is not a known push service", async () => {
+    const response = await subscribe({
+      endpoint: "https://attacker.example/collect",
+      keys: { p256dh: "p256dh-value", auth: "auth-value" },
+    });
+
+    expect(response.status).toBe(400);
+    const { results } = await env.SUBSCRIPTIONS.prepare("SELECT * FROM subscriptions").all();
+    expect(results).toHaveLength(0);
+  });
+
+  it("rejects an endpoint that is not a valid URL", async () => {
+    const response = await subscribe({
+      endpoint: "not-a-url",
+      keys: { p256dh: "p256dh-value", auth: "auth-value" },
+    });
+
     expect(response.status).toBe(400);
   });
 });
@@ -109,7 +132,7 @@ describe("POST /notify", () => {
 
   it("sends a push message to every subscriber", async () => {
     const keys = await generatePushKeys();
-    await subscribe({ endpoint: "https://push.example/alive", keys });
+    await subscribe({ endpoint: "https://fcm.googleapis.com/fcm/send/alive", keys });
 
     const sentEndpoints = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -120,12 +143,12 @@ describe("POST /notify", () => {
     const response = await notify({ title: "新着ニュースが公開されました", body: "2026-07-14 昼", url: "https://example.com/episode" });
 
     expect(response.status).toBe(204);
-    expect(sentEndpoints).toEqual(["https://push.example/alive"]);
+    expect(sentEndpoints).toEqual(["https://fcm.googleapis.com/fcm/send/alive"]);
   });
 
   it("deletes subscriptions the push service reports as gone", async () => {
     const keys = await generatePushKeys();
-    await subscribe({ endpoint: "https://push.example/dead", keys });
+    await subscribe({ endpoint: "https://fcm.googleapis.com/fcm/send/dead", keys });
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 410 }));
 
@@ -137,7 +160,7 @@ describe("POST /notify", () => {
 
   it("keeps subscriptions the push service still accepts", async () => {
     const keys = await generatePushKeys();
-    await subscribe({ endpoint: "https://push.example/alive", keys });
+    await subscribe({ endpoint: "https://fcm.googleapis.com/fcm/send/alive", keys });
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 201 }));
 
@@ -155,10 +178,10 @@ describe("POST /notify", () => {
     await env.SUBSCRIPTIONS.prepare(
       "INSERT INTO subscriptions (endpoint, p256dh, auth) VALUES (?, ?, ?)",
     )
-      .bind("https://push.example/broken", "not-valid-base64!!", "also-not-valid!!")
+      .bind("https://fcm.googleapis.com/fcm/send/broken", "not-valid-base64!!", "also-not-valid!!")
       .run();
-    await subscribe({ endpoint: "https://push.example/alive", keys: goodKeys });
-    await subscribe({ endpoint: "https://push.example/dead", keys: goodKeys });
+    await subscribe({ endpoint: "https://fcm.googleapis.com/fcm/send/alive", keys: goodKeys });
+    await subscribe({ endpoint: "https://fcm.googleapis.com/fcm/send/dead", keys: goodKeys });
 
     const sentEndpoints = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -170,9 +193,9 @@ describe("POST /notify", () => {
     const response = await notify({ title: "t", body: "b", url: "https://example.com" });
 
     expect(response.status).toBe(204);
-    expect(sentEndpoints).toEqual(["https://push.example/alive", "https://push.example/dead"]);
+    expect(sentEndpoints).toEqual(["https://fcm.googleapis.com/fcm/send/alive", "https://fcm.googleapis.com/fcm/send/dead"]);
 
     const { results } = await env.SUBSCRIPTIONS.prepare("SELECT endpoint FROM subscriptions ORDER BY endpoint").all();
-    expect(results.map((r) => r.endpoint)).toEqual(["https://push.example/alive", "https://push.example/broken"]);
+    expect(results.map((r) => r.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/alive", "https://fcm.googleapis.com/fcm/send/broken"]);
   });
 });
