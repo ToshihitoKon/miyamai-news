@@ -296,10 +296,10 @@
   </main>
 
   <footer class="site-footer">
-    <p class="subscribe"><a href="<%= h(feed_url) %>">フィード（Atom）で購読</a></p>
     <% if web_push_public_key %>
       <p class="subscribe"><button type="button" class="modebtn" id="pushsubscribe">通知を有効にする</button></p>
     <% end %>
+    <p class="subscribe"><a href="<%= h(feed_url) %>">フィード（Atom）で購読</a></p>
     <div class="credits">
       <p>音声：VOICEPEAK 宮舞モカ（© 株式会社AHS）<a href="https://www.ah-soft.com/voice/moca/eula.html" target="_blank" rel="noopener">使用許諾</a></p>
       <p>立ち絵：からい 様（<a href="https://seiga.nicovideo.jp/seiga/im11390154" target="_blank" rel="noopener">宮舞モカ立ち絵素材</a>）</p>
