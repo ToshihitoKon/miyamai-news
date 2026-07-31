@@ -747,21 +747,42 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `--config` のパス解決は cwd 基準（一般的な CLI の期待動作。`__dir__` 基準だと
   スクリプト位置基準になり、リポジトリ外のディレクトリから相対パスを指定したときに
   意図と異なる場所を読んでしまう）。
-- `run_clean` の `clean_work_dir` は work/ の回ごとの中間ファイルを削除するが、
-  回をまたいで保持する状態（`last_fetch.json` / `feed_cache/` ディレクトリ）は
-  ホワイトリスト方式の `work_globs` に含まれないので残る。消すと過去に見た記事を
-  新着として拾い直し、重複紹介が起きるため。
 - `gemfile do ... end`（bundler/inline）で取得する gem のうち rss/csv/rexml は
   bundled gem のため、明示しないと後続の `require` で読めない。
-- `run_synthesize` が BGM パス（`assets.bgm_path`）を差し替え可能にしていないのは、
+- CLI フラグの解析（`parse_args`）と config 検証のみを担い、フラグに応じた工程の
+  呼び分け自体は `Pipeline`（`lib/pipeline.rb`）に委譲する薄い層。
+
+### Pipeline（工程オーケストレーション）
+
+- `miyamai_news.rb` の CLI フラグに応じた工程の呼び分けと、その間の副作用
+  （work/dist の mkdir・`Internal::EpisodeLogger` の configure）を一元管理する。
+  新しいドメインロジックは持たず、既存の `ScriptGenerator`/`Publisher`/
+  `LastFetchStore`/`Internal::EpisodeLogger` の呼び出し順序を集約するだけに徹する。
+- `--clean`/`--clean-archive`/`--ui-only`/`--confirm-fetch`/`--restore-fetch` は
+  Episode を作らない（`EpisodeLogger.configure` されないまま no-op で動く）という
+  既存の不変条件があるため、`#run` はこれらを Episode 構築（`#setup_episode!`）より
+  前で早期 return して処理する。
+- `--publish-only` は新規収集を一切行わないため、フィードキャッシュを持つ
+  `ScriptGenerator`（`FeedCache.new` が旧台帳ファイルを読む）を生成せず
+  `#run_publish_only` を直接呼ぶ（`#setup_generator!` を経由しない）。
+- `#run_clean_command` が呼ぶ `#clean_work_dir` は work/ の回ごとの中間ファイルを
+  削除するが、回をまたいで保持する状態（`last_fetch.json` / `feed_cache/`
+  ディレクトリ）はホワイトリスト方式の `work_globs` に含まれないので残る。消すと
+  過去に見た記事を新着として拾い直し、重複紹介が起きるため。
+- `#run_synthesize` が BGM パス（`assets.bgm_path`）を差し替え可能にしていないのは、
   `templates/index.html.erb` にクレジット表記（BGM 作者名）を固定で埋め込んでいるため。
   BGM を差し替えるとクレジット表記との整合が崩れる。
-- `ensure_mode_allows!` は、`--digest-only` は digest 相当、`--script-only`/
+- `#ensure_mode_allows!` は、`--digest-only` は digest 相当、`--script-only`/
   `--synthesize-only` は synthesize 相当、`--publish-only` は publish 相当以上の
   config が検証されていないと実行できないようにする。満たさなければ、必要な config が
   未検証のまま実行が進んで途中で失敗するのを防ぐためここで止める。
-- `clean_published_dist` は、ストレージ上に同名オブジェクトが存在する（＝公開済みの）mp3 の
-  みを削除する。未公開の回を誤って消さないための存在確認。
+- `#clean_published_dist` は、ストレージ上に同名オブジェクトが存在する（＝公開済みの）
+  mp3 のみを削除する。未公開の回を誤って消さないための存在確認。
+- `#setup_episode!` が `Episode.new` に渡す `now:` は `--date`/`--slot` の指定有無に
+  関わらず常に `Time.now`（後掲「横断的な注意点」の `Episode#now` と
+  `Episode#date`/`date_tag`/`slot` の独立性を参照）。
+- 収集 window の pending 化（`LastFetchStore.mark_pending!`）は `Pipeline` 自身は
+  呼ばない（前掲「LastFetchStore / 収集 window」参照）。
 
 ### 再生ページの JS（templates/index.html.erb）
 
