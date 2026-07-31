@@ -462,7 +462,11 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - 収集 window の起点として記録する時刻は、実行完了時刻ではなく収集開始時刻
   （`@now`）。実行に時間がかかった場合、開始〜完了の間に seen_at が刻まれた記事を
   次回取りこぼさないため。
-- ニュースの重複除去はタイトル基準（大文字小文字・空白を無視）。
+- ニュースの重複除去はタイトル基準（大文字小文字・空白を無視）。同一タイトルが
+  複数ソースにまたがる場合、`priority: high` のソース由来の entry を代表として
+  残す（config での記載順によらず、一次情報源の priority ラベル・URL が選定 AI
+  に渡るようにするため）。priority が同順位の entry 同士では、config の
+  `rss_feed_sources` 記載順（`items_per_source.flatten` 順）で先勝ち。
 - `fetched_news?` は「この実行で一度でも新規 RSS 収集が発生したか」を表す
   フラグで、呼び出し側（miyamai_news.rb）が publish 到達時に
   `confirm_immediately!`（fetch あり）と `confirm!`（fetch なし、pending

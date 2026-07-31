@@ -12,6 +12,7 @@ require_relative "internal/ai_cli"
 
 class ScriptGenerator
   OPENING_GREETING = "宮舞モカです。"
+  DEDUP_PRIORITY_RANK = { "high" => 0, "low" => 2 }.freeze
 
   def self.feed_cache_dir(work_dir) = File.join(work_dir, "feed_cache")
   def self.legacy_feed_cache_path(work_dir) = File.join(work_dir, "feed_cache.json")
@@ -282,9 +283,11 @@ class ScriptGenerator
     items_per_source
   end
 
-  # タイトルの重複除去（大文字小文字・空白を無視。先勝ち）
+  # タイトルの重複除去（大文字小文字・空白を無視）。同順位内は先勝ち。
   def dedup_by_title(items)
-    items.uniq { |i| i[:title].downcase.gsub(/\s+/, "") }
+    items.each_with_index.group_by { |i, _idx| i[:title].downcase.gsub(/\s+/, "") }
+      .values
+      .map { |group| group.min_by { |i, idx| [DEDUP_PRIORITY_RANK.fetch(i[:priority], 1), idx] }.first }
   end
 
   # 1ソース分の新着記事を FeedCache から全件取得し、メタ情報を付けて返す。
