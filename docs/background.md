@@ -320,6 +320,53 @@ R2 のキー構成:
 - `updated_at` は `update_archives` の並び替えキー（`[date, updated_at]`）でもある
   ため、引き継ぎは表示順の安定にも効く。
 
+#### Web Push 通知（購読者管理・送信は Worker 側に同居）
+
+- 新規 episode の publish を Web Push で知らせる機能。`config.yaml` の任意セクション
+  `web_push`（`vapid_public_key` のみ）が無ければ完全に無効化される。独立サービスへの
+  切り出しはせず、既存の配信基盤（Cloudflare Workers + R2 + D1）に同居させている
+  （購読者管理も送信もドメイン・ストレージ・実行環境がすでに揃っているため）。
+- 購読者ストアは Cloudflare D1。KV は書き込み 1,000/日の制限があり全件読み出しに
+  list + N回get が必要になる。Durable Objects は Cloudflare 公式ガイドが推す構成
+  だがエージェント単位の状態管理を前提にしたもので、今回のような「全購読者への
+  一斉配信リスト」には D1（`SELECT` 1回で全件取得）の方が素直。
+- VAPID 署名・ペイロード暗号化は `web-push` npm パッケージ（pushpad/web-push）を
+  使う。ただし `sendNotification()` は内部で Node の `https` モジュールへ直接
+  リクエストを投げる作りで、Workers の `nodejs_compat` 下でも素直に動く保証がない。
+  代わりに `generateRequestDetails(subscription, payload)` で
+  `{endpoint, method, headers, body}` を組み立てるだけに留め、実際の送信は
+  Workers 組み込みの `fetch()` で行う。VAPID の ES256 署名（`crypto.createECDH`
+  等）とペイロード暗号化（ECDH + HKDF + AES-GCM）は Node 標準の `crypto`/`Buffer`
+  に依存するため、`wrangler.jsonc` の `compatibility_flags: ["nodejs_compat"]`
+  が必須（Vitest 上での実地確認で、この構成が実際に動くことを確認済み）。
+- 購読の宛先が 404/410 を返したら、その `endpoint` を D1 から削除する
+  （ブラウザ側で購読解除・ブラウザデータ削除等が起きた購読は自然に消える）。
+- `templates/sw.js.erb`（Service Worker）は `Publisher#deploy_site`
+  （`lib/publisher.rb`）の第4の生成物としてステージングディレクトリに書き出す。
+  `Internal::Site#deploy` は渡されたディレクトリの中身でバージョン単位の全置換を
+  行うため、ここに含めないと次回の `--ui-only` 実行だけで `sw.js` が公開サイトから
+  消え、ブラウザに登録済みの Service Worker が更新されず購読が実質的に壊れる
+  （気づきにくい形の障害になるため、この一文だけは明記しておく）。
+- 通知の要否は `updated_at` の変化ではなく、`update_archives` が返す
+  `newly_published`（新規行 or title/used_news が変化）で判定する。`updated_at` の
+  更新セマンティクス自体は「feed.xml の `<updated>` を誤って動かさない」ためのもの
+  で、Web Push の要否とは別の関心事だが、判定に使う条件（新規 or 変化）は同一なので
+  `update_archives` 一箇所で両方を導出している。`#republish_ui` は
+  `update_archives` を呼ばず `fetch_existing_archives` のみを使うため、
+  `--ui-only` では判定自体が発生せず通知も発火しない。
+- `Publisher#run` の「1つでも失敗したら即 abort する」原則（本節冒頭）の例外として、
+  Web Push の通知送信だけは失敗しても `abort` せず `warn` に留める
+  （`Internal::EpisodeNotifier#notify`）。`deploy_site` が既に成功した後に呼ぶため、
+  通知の成否は公開物の整合性に影響しない。
+- `/notify` の認証は共有シークレットを Worker secret（`wrangler secret put`）に置き、
+  `crypto.subtle` の HMAC-SHA256 で検証する。config.yaml は「機密を持たないから
+  git 追跡してよい」という前提で運用しているため、ここにシークレットを書くとその
+  前提が崩れる。VAPID 公開鍵は秘密ではない（購読ボタンの JS がブラウザへそのまま
+  渡す値）ので config.yaml に置いて問題ない。
+- Workers のサブリクエスト上限は 50/リクエスト。購読者が少数のうちは全件へ
+  ループで `fetch` するだけで足りるが、規模が増えた場合はバッチ分割や Cron
+  Trigger によるキュー処理の検討が必要になる（現時点では未実装）。
+
 ### 旧 GCS feed の凍結（移行告知）
 
 旧公開先（`gs://nidodm-miyamai-news/feed.xml`）は、移転告知だけを含む静的な
