@@ -58,8 +58,8 @@ export async function handleNotify(request, env) {
     return new Response("Bad Request", { status: 400 });
   }
 
-  const { title, url } = payload ?? {};
-  if (typeof title !== "string" || typeof url !== "string") {
+  const { title, body: notificationBody, url } = payload ?? {};
+  if (typeof title !== "string" || typeof notificationBody !== "string" || typeof url !== "string") {
     return new Response("Bad Request", { status: 400 });
   }
 
@@ -71,7 +71,10 @@ export async function handleNotify(request, env) {
   await Promise.all(
     results.map(async (row) => {
       const subscription = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
-      const requestDetails = webpush.generateRequestDetails(subscription, JSON.stringify({ title, url }));
+      const requestDetails = webpush.generateRequestDetails(
+        subscription,
+        JSON.stringify({ title, body: notificationBody, url }),
+      );
 
       const response = await fetch(requestDetails.endpoint, {
         method: requestDetails.method,

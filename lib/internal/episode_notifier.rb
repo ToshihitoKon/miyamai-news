@@ -23,12 +23,12 @@ module Internal
       @secret = secret
     end
 
-    def notify(title:, url:)
-      body = JSON.generate({ title: title, url: url })
+    def notify(title:, body:, url:)
+      payload = JSON.generate({ title: title, body: body, url: url })
       request = Net::HTTP::Post.new(notify_uri)
-      request.body = body
+      request.body = payload
       request["Content-Type"] = "application/json"
-      request["X-Signature"] = sign(body)
+      request["X-Signature"] = sign(payload)
 
       Net::HTTP.start(notify_uri.hostname, notify_uri.port, use_ssl: notify_uri.scheme == "https") do |http|
         http.request(request)

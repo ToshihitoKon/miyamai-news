@@ -18,24 +18,24 @@ RSpec.describe Internal::EpisodeNotifier do
       end
       allow(http).to receive(:request) { |req| sent_request = req }
 
-      notifier.notify(title: "新しい回", url: "https://news.example.com/")
+      notifier.notify(title: "新しい回", body: "2026-07-14 昼", url: "https://news.example.com/")
 
       body = JSON.parse(sent_request.body)
-      expect(body).to eq("title" => "新しい回", "url" => "https://news.example.com/")
+      expect(body).to eq("title" => "新しい回", "body" => "2026-07-14 昼", "url" => "https://news.example.com/")
       expect(sent_request["Content-Type"]).to eq("application/json")
       expect(sent_request["X-Signature"]).not_to be_empty
     end
 
     it "signs the same body deterministically for a given secret" do
       digest = OpenSSL::Digest.new("SHA256")
-      expected = [OpenSSL::HMAC.digest(digest, "test-secret", '{"title":"t","url":"u"}')].pack("m0")
+      expected = [OpenSSL::HMAC.digest(digest, "test-secret", '{"title":"t","body":"b","url":"u"}')].pack("m0")
 
       sent_request = nil
       http = instance_double(Net::HTTP)
       allow(Net::HTTP).to receive(:start) { |*, &block| block.call(http) }
       allow(http).to receive(:request) { |req| sent_request = req }
 
-      notifier.notify(title: "t", url: "u")
+      notifier.notify(title: "t", body: "b", url: "u")
 
       expect(sent_request["X-Signature"]).to eq(expected)
     end
@@ -43,7 +43,7 @@ RSpec.describe Internal::EpisodeNotifier do
     it "warns instead of raising when the HTTP call fails (site deploy already succeeded)" do
       allow(Net::HTTP).to receive(:start).and_raise(SocketError, "getaddrinfo failed")
 
-      expect { notifier.notify(title: "t", url: "u") }.not_to raise_error
+      expect { notifier.notify(title: "t", body: "b", url: "u") }.not_to raise_error
     end
   end
 
@@ -67,6 +67,6 @@ end
 
 RSpec.describe Internal::NullNotifier do
   it "does nothing" do
-    expect { described_class.new.notify(title: "t", url: "u") }.not_to raise_error
+    expect { described_class.new.notify(title: "t", body: "b", url: "u") }.not_to raise_error
   end
 end

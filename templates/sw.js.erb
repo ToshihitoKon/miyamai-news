@@ -1,11 +1,12 @@
 self.addEventListener("push", (event) => {
   const data = event.data ? event.data.json() : {};
   const title = data.title || <%= Publisher::PROGRAM_NAME.to_json %>;
+  const body = data.body || "";
   const url = data.url || <%= page_url.to_json %>;
 
   event.waitUntil(
     self.registration.showNotification(title, {
-      body: "新しい回が公開されました",
+      body,
       icon: <%= icon_url.to_json %>,
       data: { url },
     }),

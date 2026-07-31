@@ -98,7 +98,7 @@ describe("POST /notify", () => {
   });
 
   it("rejects a request with an invalid signature", async () => {
-    const response = await notify({ title: "t", url: "https://example.com" }, { secret: "wrong-secret" });
+    const response = await notify({ title: "t", body: "b", url: "https://example.com" }, { secret: "wrong-secret" });
     expect(response.status).toBe(401);
   });
 
@@ -117,7 +117,7 @@ describe("POST /notify", () => {
       return new Response(null, { status: 201 });
     });
 
-    const response = await notify({ title: "新しい回", url: "https://example.com/episode" });
+    const response = await notify({ title: "新着ニュースが公開されました", body: "2026-07-14 昼", url: "https://example.com/episode" });
 
     expect(response.status).toBe(204);
     expect(sentEndpoints).toEqual(["https://push.example/alive"]);
@@ -129,7 +129,7 @@ describe("POST /notify", () => {
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 410 }));
 
-    await notify({ title: "t", url: "https://example.com" });
+    await notify({ title: "t", body: "b", url: "https://example.com" });
 
     const { results } = await env.SUBSCRIPTIONS.prepare("SELECT * FROM subscriptions").all();
     expect(results).toHaveLength(0);
@@ -141,7 +141,7 @@ describe("POST /notify", () => {
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 201 }));
 
-    await notify({ title: "t", url: "https://example.com" });
+    await notify({ title: "t", body: "b", url: "https://example.com" });
 
     const { results } = await env.SUBSCRIPTIONS.prepare("SELECT * FROM subscriptions").all();
     expect(results).toHaveLength(1);

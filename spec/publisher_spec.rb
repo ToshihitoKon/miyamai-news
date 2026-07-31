@@ -152,7 +152,9 @@ RSpec.describe Publisher do
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(notified).to contain_exactly({ title: "回タイトル", url: "https://news.example.com/" })
+      expect(notified).to contain_exactly(
+        { title: "新着ニュースが公開されました", body: "2026-07-14 昼", url: "https://news.example.com/" }
+      )
     end
 
     it "does not notify when re-publishing identical title and used_news" do

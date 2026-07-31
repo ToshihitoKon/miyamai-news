@@ -50,7 +50,11 @@ class Publisher
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
     rows, newly_published = update_archives(filename, used_news)
     deploy_site(rows)
-    @notifier.notify(title: @title, url: public_url("index.html")) if newly_published
+    if newly_published
+      @notifier.notify(title: "新着ニュースが公開されました",
+        body: notification_body(filename),
+        url: public_url("index.html"))
+    end
 
     puts "done: #{public_url('index.html')}"
   end
@@ -301,6 +305,12 @@ class Publisher
   def date_with_slot(date, filename)
     label = slot_label(filename)
     label.empty? ? date : "#{date}（#{label}）"
+  end
+
+  def notification_body(filename)
+    date = date_for(filename)
+    label = slot_label(filename)
+    label.empty? ? date : "#{date} #{label}"
   end
 
   def date_for(filename)
