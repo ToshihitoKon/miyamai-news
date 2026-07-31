@@ -87,7 +87,7 @@ class Pipeline
 
   def clean_work_dir
     patterns = ScriptGenerator.work_globs(@work_dir) + VoiceSynthesizer.work_globs(@work_dir) +
-      Internal::EpisodeLogger.work_globs(@work_dir)
+               Internal::EpisodeLogger.work_globs(@work_dir)
     FileUtils.rm_rf(patterns.flat_map { |pat| Dir.glob(pat) })
     warn "reset work dir: #{@work_dir}"
   end
@@ -151,14 +151,14 @@ class Pipeline
     run_synthesize if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
 
     # publish 到達時のみ「公開＝確定」を即座に反映し、それ以外は pending 化に留める。
-    if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
-      run_publish
-      if @generator.fetched_news?
-        LastFetchStore.confirm_immediately!(work_dir: @work_dir, at: @generator.collect_since_anchor)
-        ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: @generator.episode_key)
-      else
-        ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: LastFetchStore.confirm!(work_dir: @work_dir))
-      end
+    return unless Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
+
+    run_publish
+    if @generator.fetched_news?
+      LastFetchStore.confirm_immediately!(work_dir: @work_dir, at: @generator.collect_since_anchor)
+      ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: @generator.episode_key)
+    else
+      ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: LastFetchStore.confirm!(work_dir: @work_dir))
     end
   end
 

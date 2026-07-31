@@ -140,7 +140,7 @@ class Publisher
     changed = content_changed?(previous, used_news, used_news_given: used_news_given)
     rows.reject! { |r| r[1] == filename }
     rows << [date_for(filename), filename, @title, used_news,
-      updated_at_for(previous, changed:)]
+             updated_at_for(previous, changed:)]
     rows.sort_by! { |r| [r[0], r[4].to_s] }
     rows.reverse!
 

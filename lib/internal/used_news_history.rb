@@ -50,9 +50,9 @@ module UsedNewsHistory
     return [] unless Dir.exist?(history_dir)
 
     Dir.glob(File.join(history_dir, "*.txt"))
-      .sort_by { |path| episode_sort_key(File.basename(path, ".txt")) }
-      .reverse
-      .first(keep_episodes)
+       .sort_by { |path| episode_sort_key(File.basename(path, ".txt")) }
+       .reverse
+       .first(keep_episodes)
   end
   private_class_method :recent_files
 

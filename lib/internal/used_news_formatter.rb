@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "set"
 require "tmpdir"
 require_relative "config"
 require_relative "ai_cli"

@@ -57,7 +57,10 @@ RSpec.describe Internal::R2Storage do
   describe "#put" do
     it "sends content_type and cache_control" do
       captured = nil
-      client.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
+      client.stub_responses(:put_object, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
 
       storage.put("feed.xml", "<feed/>", content_type: "application/atom+xml", cache_control: "public, max-age=300")
 
@@ -68,7 +71,10 @@ RSpec.describe Internal::R2Storage do
 
     it "omits cache_control when not given" do
       captured = nil
-      client.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
+      client.stub_responses(:put_object, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
 
       storage.put("a.txt", "x", content_type: "text/plain")
 
@@ -95,19 +101,28 @@ RSpec.describe Internal::R2Storage do
     it "copies before deleting so a mid-failure leaves the source intact" do
       calls = []
       client.stub_responses(:head_object, {})
-      client.stub_responses(:copy_object, ->(_ctx) { calls << :copy; { copy_object_result: {} } })
-      client.stub_responses(:delete_object, ->(_ctx) { calls << :delete; {} })
+      client.stub_responses(:copy_object, ->(_ctx) {
+        calls << :copy
+        { copy_object_result: {} }
+      })
+      client.stub_responses(:delete_object, ->(_ctx) {
+        calls << :delete
+        {}
+      })
 
       storage.move("episodes/ep.mp3", "archived/ep.mp3")
 
-      expect(calls).to eq(%i[copy delete])
+      expect(calls).to eq([:copy, :delete])
     end
 
     it "does not delete the source when the copy fails" do
       deleted = false
       client.stub_responses(:head_object, {})
       client.stub_responses(:copy_object, "InternalError")
-      client.stub_responses(:delete_object, ->(_ctx) { deleted = true; {} })
+      client.stub_responses(:delete_object, ->(_ctx) {
+        deleted = true
+        {}
+      })
 
       expect { storage.move("episodes/ep.mp3", "archived/ep.mp3") }.to raise_error(Aws::S3::Errors::ServiceError)
       expect(deleted).to be false
@@ -116,7 +131,10 @@ RSpec.describe Internal::R2Storage do
     it "passes copy_source including the bucket name" do
       captured = nil
       client.stub_responses(:head_object, {})
-      client.stub_responses(:copy_object, ->(ctx) { captured = ctx.params; { copy_object_result: {} } })
+      client.stub_responses(:copy_object, ->(ctx) {
+        captured = ctx.params
+        { copy_object_result: {} }
+      })
       client.stub_responses(:delete_object, {})
 
       storage.move("episodes/ep.mp3", "archived/ep.mp3")
@@ -129,7 +147,10 @@ RSpec.describe Internal::R2Storage do
       calls = []
       responses = ["NotFound", {}] # from_key は無い / to_key はある
       client.stub_responses(:head_object, ->(_ctx) { responses.shift })
-      client.stub_responses(:copy_object, ->(_ctx) { calls << :copy; { copy_object_result: {} } })
+      client.stub_responses(:copy_object, ->(_ctx) {
+        calls << :copy
+        { copy_object_result: {} }
+      })
 
       expect(storage.move("episodes/ep.mp3", "archived/ep.mp3")).to eq(:already_moved)
       expect(calls).to be_empty
@@ -146,7 +167,7 @@ RSpec.describe Internal::R2Storage do
 
       # 認証情報だけ用意して、各メソッドが nil 参照で落ちないことを見る。
       # 実際の通信は行わないので接続エラーで止まる分には問題ない。
-      %i[list exist?].each do |method|
+      [:list, :exist?].each do |method|
         lazy.public_send(method, "prefix/")
       rescue Aws::S3::Errors::ServiceError, Seahorse::Client::NetworkingError
         nil # 通信段階まで到達していればクライアントは組み立てられている
@@ -163,7 +184,10 @@ RSpec.describe Internal::R2Storage do
         contents: [{ key: "archived/a.mp3" }, { key: "archived/b.mp3" }], is_truncated: false,
       })
       captured = nil
-      client.stub_responses(:delete_objects, ->(ctx) { captured = ctx.params; {} })
+      client.stub_responses(:delete_objects, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
 
       expect(storage.delete_prefix("archived/")).to eq(2)
       expect(captured[:delete][:objects]).to eq([{ key: "archived/a.mp3" }, { key: "archived/b.mp3" }])
@@ -172,7 +196,10 @@ RSpec.describe Internal::R2Storage do
     it "returns 0 and issues no delete when the prefix is empty" do
       client.stub_responses(:list_objects_v2, { contents: [], is_truncated: false })
       called = false
-      client.stub_responses(:delete_objects, ->(_ctx) { called = true; {} })
+      client.stub_responses(:delete_objects, ->(_ctx) {
+        called = true
+        {}
+      })
 
       expect(storage.delete_prefix("archived/")).to eq(0)
       expect(called).to be false

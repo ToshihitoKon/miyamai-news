@@ -40,14 +40,18 @@ RSpec.configure do |config|
   # テスト対象の出力先だけ StringIO に差し替えて握りつぶす。失敗時の調査用に、
   # example が失敗したときだけ元の出力先へ書き戻す。
   config.around do |example|
-    original_stdout, original_stderr = $stdout, $stderr
-    captured_stdout, captured_stderr = StringIO.new, StringIO.new
-    $stdout, $stderr = captured_stdout, captured_stderr
+    original_stdout = $stdout
+    original_stderr = $stderr
+    captured_stdout = StringIO.new
+    captured_stderr = StringIO.new
+    $stdout = captured_stdout
+    $stderr = captured_stderr
 
     begin
       example.run
     ensure
-      $stdout, $stderr = original_stdout, original_stderr
+      $stdout = original_stdout
+      $stderr = original_stderr
       if example.exception
         warn captured_stdout.string unless captured_stdout.string.empty?
         warn captured_stderr.string unless captured_stderr.string.empty?

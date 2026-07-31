@@ -5,8 +5,8 @@
 # 通常の publish フローが呼ぶ Internal::EpisodeNotifier をそのまま使うので、
 # 本番の /notify 認証・購読者への配信ロジックと同じ経路を通る。
 #
-#   ruby scripts/send_test_notify.rb --title "テスト" --body "本文" --url https://example.com # 計画のみ
-#   envchain cloudflare ruby scripts/send_test_notify.rb --title "テスト" --body "本文" --url https://example.com --apply
+#   bundle exec ruby scripts/send_test_notify.rb --title "テスト" --body "本文" --url https://example.com # 計画のみ
+#   envchain cloudflare bundle exec ruby scripts/send_test_notify.rb --title "テスト" --body "本文" --url https://example.com --apply
 
 require_relative "../lib/internal/config"
 require_relative "../lib/internal/episode_notifier"

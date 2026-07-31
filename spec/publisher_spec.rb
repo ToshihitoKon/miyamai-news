@@ -67,7 +67,10 @@ RSpec.describe Publisher do
     it "uploads the episode files to R2 and deploys the site once" do
       publisher = build_publisher
       put_keys = []
-      s3.stub_responses(:put_object, ->(ctx) { put_keys << ctx.params[:key]; {} })
+      s3.stub_responses(:put_object, ->(ctx) {
+        put_keys << ctx.params[:key]
+        {}
+      })
 
       publisher.run(mp3_path, used_path, transcript_path)
 
@@ -125,7 +128,10 @@ RSpec.describe Publisher do
       File.write(used_path, "・タイトルだけの旧フォーマット\nhttps://example.com/a\n")
       allow(UsedNewsFormatter).to receive(:run_fix_cli).and_return(nil)
       put_called = false
-      s3.stub_responses(:put_object, ->(_ctx) { put_called = true; {} })
+      s3.stub_responses(:put_object, ->(_ctx) {
+        put_called = true
+        {}
+      })
 
       expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
       expect(put_called).to be false
@@ -173,7 +179,7 @@ RSpec.describe Publisher do
     it "does not notify when re-publishing identical title and used_news" do
       title = "回タイトル"
       existing = [["2026-07-14", File.basename(mp3_path), title, File.read(used_path),
-        "2026-07-14T00:00:00Z"]]
+                   "2026-07-14T00:00:00Z"]]
       publisher = build_publisher(ledger: ledger_csv(existing), title: title)
 
       publisher.run(mp3_path, used_path, transcript_path)
@@ -188,7 +194,10 @@ RSpec.describe Publisher do
     it "deploys the site without writing the ledger or episode files" do
       publisher = build_publisher(ledger: ledger_csv(existing))
       put_keys = []
-      s3.stub_responses(:put_object, ->(ctx) { put_keys << ctx.params[:key]; {} })
+      s3.stub_responses(:put_object, ->(ctx) {
+        put_keys << ctx.params[:key]
+        {}
+      })
 
       publisher.republish_ui
 
@@ -219,7 +228,10 @@ RSpec.describe Publisher do
     it "stores each episode file with a valid, correct media type" do
       publisher = build_publisher
       seen = {}
-      s3.stub_responses(:put_object, ->(ctx) { seen[ctx.params[:key]] = ctx.params[:content_type]; {} })
+      s3.stub_responses(:put_object, ->(ctx) {
+        seen[ctx.params[:key]] = ctx.params[:content_type]
+        {}
+      })
 
       publisher.run(mp3_path, used_path, transcript_path)
 
@@ -236,7 +248,10 @@ RSpec.describe Publisher do
     it "never uses a storage prefix as a media type" do
       publisher = build_publisher
       types = []
-      s3.stub_responses(:put_object, ->(ctx) { types << ctx.params[:content_type]; {} })
+      s3.stub_responses(:put_object, ->(ctx) {
+        types << ctx.params[:content_type]
+        {}
+      })
 
       publisher.run(mp3_path, used_path, transcript_path)
 
@@ -251,7 +266,10 @@ RSpec.describe Publisher do
     it "writes under the episode prefix with the given content type" do
       publisher = build_publisher
       captured = nil
-      s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
+      s3.stub_responses(:put_object, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
 
       publisher.send(:upload_content, "a.used.txt", "body", content_type: "text/plain; charset=utf-8")
 
@@ -277,7 +295,10 @@ RSpec.describe Publisher do
     it "moves expired episodes out of the episode prefix" do
       publisher = build_publisher(ledger: ledger_csv(existing_rows))
       copies = []
-      s3.stub_responses(:copy_object, ->(ctx) { copies << ctx.params; { copy_object_result: {} } })
+      s3.stub_responses(:copy_object, ->(ctx) {
+        copies << ctx.params
+        { copy_object_result: {} }
+      })
 
       publisher.run(mp3_path, used_path, transcript_path)
 
@@ -289,7 +310,10 @@ RSpec.describe Publisher do
     it "does not move anything when within the retention limit" do
       publisher = build_publisher
       copied = false
-      s3.stub_responses(:copy_object, ->(_ctx) { copied = true; { copy_object_result: {} } })
+      s3.stub_responses(:copy_object, ->(_ctx) {
+        copied = true
+        { copy_object_result: {} }
+      })
 
       publisher.run(mp3_path, used_path, transcript_path)
 
@@ -326,7 +350,10 @@ RSpec.describe Publisher do
         contents: [{ key: "archived/a.mp3" }, { key: "archived/b.mp3" }], is_truncated: false,
       })
       captured = nil
-      s3.stub_responses(:delete_objects, ->(ctx) { captured = ctx.params; {} })
+      s3.stub_responses(:delete_objects, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
 
       publisher.clean_archive
 
@@ -623,10 +650,10 @@ RSpec.describe Publisher do
       names = described_class.episode_object_names("miyamai_news_20260714_afternoon.mp3")
 
       expect(names).to eq([
-        "miyamai_news_20260714_afternoon.mp3",
-        "miyamai_news_20260714_afternoon.used.txt",
-        "miyamai_news_20260714_afternoon.transcript.txt"
-      ])
+                            "miyamai_news_20260714_afternoon.mp3",
+                            "miyamai_news_20260714_afternoon.used.txt",
+                            "miyamai_news_20260714_afternoon.transcript.txt"
+                          ])
     end
   end
 

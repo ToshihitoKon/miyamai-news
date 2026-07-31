@@ -82,11 +82,11 @@ RSpec.describe Slot do
       newest_first = episodes.sort_by { |date_tag, slot| [date_tag, Slot.sort_key(slot)] }.reverse
 
       expect(newest_first).to eq([
-        %w[20260720 midnight],
-        %w[20260720 afternoon],
-        %w[20260720 morning],
-        %w[20260719 midnight]
-      ])
+                                   %w[20260720 midnight],
+                                   %w[20260720 afternoon],
+                                   %w[20260720 morning],
+                                   %w[20260719 midnight]
+                                 ])
     end
   end
 end

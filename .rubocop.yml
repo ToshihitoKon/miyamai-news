@@ -1,6 +1,7 @@
 AllCops:
   TargetRubyVersion: 4.0
   DisabledByDefault: true
+  NewCops: disable
   Exclude:
     - "gems/**/*"
 
@@ -30,6 +31,10 @@ Lint:
   Enabled: true
 Lint/UnusedMethodArgument:
   AllowUnusedKeywordArguments: true
+# RSpec.describe ブロック内でのフィクスチャ定数定義は一般的なパターンのため対象外にする。
+Lint/ConstantDefinitionInBlock:
+  Exclude:
+    - "spec/**/*"
 
 Metrics:
   Enabled: false

@@ -13,7 +13,10 @@ RSpec.describe Internal::Site do
       public_base: "https://news.example.com",
       retention_episodes: 5,
       storage: storage,
-      deployer: ->(dir) { deployed << dir; true }
+      deployer: ->(dir) {
+        deployed << dir
+        true
+      }
     )
   end
 
@@ -66,7 +69,10 @@ RSpec.describe Internal::Site do
 
     it "uploads assets with a long cache lifetime" do
       captured = nil
-      s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
+      s3.stub_responses(:put_object, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
 
       Dir.mktmpdir do |dir|
         path = File.join(dir, "cover.webp")
@@ -90,7 +96,10 @@ RSpec.describe Internal::Site do
   describe "#write_episode_file" do
     it "writes in-memory content beneath the episode-asset prefix" do
       captured = nil
-      s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
+      s3.stub_responses(:put_object, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
 
       site.write_episode_file("ep.used.txt", "body", content_type: "text/plain")
 
@@ -103,7 +112,10 @@ RSpec.describe Internal::Site do
   describe "#upload_episode_file" do
     it "uploads a local file beneath the episode-asset prefix" do
       captured = nil
-      s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
+      s3.stub_responses(:put_object, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
 
       Dir.mktmpdir do |dir|
         path = File.join(dir, "ep.mp3")
@@ -123,7 +135,10 @@ RSpec.describe Internal::Site do
     it "moves the object out of the episode-asset prefix" do
       captured = nil
       s3.stub_responses(:head_object, {})
-      s3.stub_responses(:copy_object, ->(ctx) { captured = ctx.params; { copy_object_result: {} } })
+      s3.stub_responses(:copy_object, ->(ctx) {
+        captured = ctx.params
+        { copy_object_result: {} }
+      })
       s3.stub_responses(:delete_object, {})
 
       site.retire_episode_file("ep.mp3")
@@ -137,7 +152,10 @@ RSpec.describe Internal::Site do
   describe "#read_ledger / #write_ledger" do
     it "reads the ledger from outside the public episode prefix" do
       captured = nil
-      s3.stub_responses(:get_object, ->(ctx) { captured = ctx.params; { body: "a,b\n" } })
+      s3.stub_responses(:get_object, ->(ctx) {
+        captured = ctx.params
+        { body: "a,b\n" }
+      })
 
       expect(site.read_ledger).to eq("a,b\n")
       expect(captured[:key]).to eq("archives.csv")
@@ -151,7 +169,10 @@ RSpec.describe Internal::Site do
 
     it "writes the ledger as text/csv" do
       captured = nil
-      s3.stub_responses(:put_object, ->(ctx) { captured = ctx.params; {} })
+      s3.stub_responses(:put_object, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
 
       site.write_ledger("a,b\n")
 

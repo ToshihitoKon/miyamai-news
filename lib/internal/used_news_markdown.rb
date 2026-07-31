@@ -27,8 +27,11 @@ module UsedNewsMarkdown
     in_item = false
     orphan = false
 
-    close_item = -> { html << "</div>\n" if in_item; in_item = false }
-    close_category = lambda do
+    close_item = -> {
+      html << "</div>\n" if in_item
+      in_item = false
+    }
+    close_category = -> do
       close_item.call
       html << "</div>\n" if in_category
       in_category = false

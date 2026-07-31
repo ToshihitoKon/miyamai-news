@@ -34,7 +34,7 @@ module Internal
     def record(step, stdout: nil, stderr: nil, **fields)
       return unless @path
 
-      lines = ["[#{Time.now.iso8601}] step=#{step} #{fields.map { |k, v| "#{k}=#{v}" }.join(" ")}"]
+      lines = ["[#{Time.now.iso8601}] step=#{step} #{fields.map { |k, v| "#{k}=#{v}" }.join(' ')}"]
       lines.push("___STDOUT_START___", stdout, "___STDOUT_END___") if stdout && !stdout.empty?
       lines.push("___STDERR_START___", stderr, "___STDERR_END___") if stderr && !stderr.empty?
 
