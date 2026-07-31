@@ -9,6 +9,7 @@ require_relative "feed_cache"
 require_relative "internal/last_fetch_store"
 require_relative "internal/used_news_history"
 require_relative "internal/ai_cli"
+require_relative "internal/preamble_stripper"
 
 class ScriptGenerator
   OPENING_GREETING = "宮舞モカです。"
@@ -42,12 +43,7 @@ class ScriptGenerator
     @work_dir = work_dir
     @auto_confirm = auto_confirm
     @fetched_news = false
-    @now = episode.now
-    @slot = episode.slot
-    @date_tag = episode.date_tag
-    @today_ja = episode.today_ja
-    @greeting_date_ja = episode.greeting_date_ja
-    @slot_ja = episode.slot_ja
+    @episode = episode
     @feed_cache = FeedCache.new(
       dir: self.class.feed_cache_dir(work_dir),
       legacy_path: self.class.legacy_feed_cache_path(work_dir),
@@ -80,8 +76,8 @@ class ScriptGenerator
   def script_file = script_path
   def used_news_file = used_news_path
   def fetched_news? = @fetched_news == true
-  def collect_since_anchor = @now
-  def episode_key = "#{@date_tag}_#{@slot}"
+  def collect_since_anchor = @episode.now
+  def episode_key = "#{@episode.date_tag}_#{@episode.slot}"
 
   def record_used_news_history!(episode_key)
     self.class.record_used_news_history!(work_dir: @work_dir, episode_key: episode_key)
@@ -107,11 +103,11 @@ class ScriptGenerator
   def fetch_skip_minutes = Config.collect.fetch_skip_minutes
   def used_news_history_episodes = Config.collect.used_news_history_episodes
 
-  def news_collected_path = File.join(@work_dir, "news_#{@date_tag}_#{@slot}.txt")
-  def news_selected_path  = File.join(@work_dir, "news_selected_#{@date_tag}_#{@slot}.txt")
-  def news_facts_path  = File.join(@work_dir, "news_facts_#{@date_tag}_#{@slot}.txt")
-  def script_path      = File.join(@work_dir, "script_#{@date_tag}_#{@slot}.txt")
-  def tts_script_path  = File.join(@work_dir, "tts_script_#{@date_tag}_#{@slot}.txt")
+  def news_collected_path = File.join(@work_dir, "news_#{@episode.date_tag}_#{@episode.slot}.txt")
+  def news_selected_path  = File.join(@work_dir, "news_selected_#{@episode.date_tag}_#{@episode.slot}.txt")
+  def news_facts_path  = File.join(@work_dir, "news_facts_#{@episode.date_tag}_#{@episode.slot}.txt")
+  def script_path      = File.join(@work_dir, "script_#{@episode.date_tag}_#{@episode.slot}.txt")
+  def tts_script_path  = File.join(@work_dir, "tts_script_#{@episode.date_tag}_#{@episode.slot}.txt")
   def used_news_path   = self.class.used_news_path(@work_dir, episode_key)
   def provisional_used_news_path = self.class.provisional_used_news_path(@work_dir, episode_key)
 
@@ -187,17 +183,8 @@ class ScriptGenerator
     warn "tts script: #{tts_script_path}"
   end
 
-  # AI 出力の前置き（「整形しました」等）を、本体の開始位置（ブロックが返す文字列
-  # index）を境に切り落とす。開始位置が見つからなければ原文をそのまま返す。
-  def strip_preamble_before(text)
-    idx = yield(text)
-    return text unless idx
-
-    "#{text[idx..].strip}\n"
-  end
-
   def strip_facts_preamble(text)
-    strip_preamble_before(text) do |t|
+    Internal::PreambleStripper.strip_before(text) do |t|
       lines = t.lines
       start = lines.each_index.find { |i| lines[i].strip.start_with?("##", "---", "#") }
       start && lines[...start].join.length
@@ -232,7 +219,7 @@ class ScriptGenerator
 
   # 収集 window の起点。前回時刻が無い初回は lookback_hours ぶんさかのぼる。
   def collect_since
-    last_fetch_time || (@now - (lookback_hours * 3600))
+    last_fetch_time || (@episode.now - (lookback_hours * 3600))
   end
 
   def last_fetch_time = LastFetchStore.confirmed_at(@work_dir)
@@ -289,7 +276,7 @@ class ScriptGenerator
 
   # 1ソース分の新着記事を FeedCache から全件取得し、メタ情報を付けて返す。
   def collect_source(src, since)
-    items = @feed_cache.fetch(src.url, now: @now, since: since,
+    items = @feed_cache.fetch(src.url, now: @episode.now, since: since,
       extra_extractor: Internal::HatenaBookmarks)
 
     items.map do |item|
@@ -303,7 +290,7 @@ class ScriptGenerator
 
   # 始めの挨拶(OPENING_GREETING)を本体の開始位置とみなして前置きを削ぎ落とす。
   def strip_preamble(script)
-    strip_preamble_before(script) { |text| text.index(OPENING_GREETING) }
+    Internal::PreambleStripper.strip_before(script) { |text| text.index(OPENING_GREETING) }
   end
 
   # --- プロンプト ---
@@ -315,7 +302,7 @@ class ScriptGenerator
   def selector_prompt
     TemplateRenderer.render("selector.prompt", self,
       news_collected_path: File.expand_path(news_collected_path),
-      today_ja: @today_ja,
+      today_ja: @episode.today_ja,
       category_details:,
       total_news_count:,
       recently_used: UsedNewsHistory.render_for_prompt(@work_dir, used_news_history_episodes),
@@ -326,7 +313,7 @@ class ScriptGenerator
   def extractor_prompt(selected_news)
     TemplateRenderer.render("extractor.prompt", self,
       selected_news:,
-      today_ja: @today_ja,
+      today_ja: @episode.today_ja,
       category_details:,
       total_news_count:,
       news_facts_path: File.expand_path(news_facts_path),
@@ -339,9 +326,9 @@ class ScriptGenerator
     TemplateRenderer.render("writer.prompt", self,
       selected_news:,
       news_facts:,
-      today_ja: @today_ja,
-      greeting_date_ja: @greeting_date_ja,
-      slot_ja: @slot_ja,
+      today_ja: @episode.today_ja,
+      greeting_date_ja: @episode.greeting_date_ja,
+      slot_ja: @episode.slot_ja,
       category_details:,
       script_path: File.expand_path(script_path),
       used_news_path: File.expand_path(used_news_path))

@@ -6,6 +6,7 @@ require_relative "config"
 require_relative "ai_cli"
 require_relative "template_renderer"
 require_relative "used_news_markdown"
+require_relative "preamble_stripper"
 
 # used_news（この回で紹介したニュース欄）の最終フォーマット保証を担う。
 # ScriptGenerator は「## カテゴリ / ### [タイトル](URL)」形式のそれっぽい Markdown を
@@ -49,11 +50,11 @@ module UsedNewsFormatter
   # 一覧本体より前の前置きを機械的に取り除く。本体は「## カテゴリ名」見出しから
   # 始まる構造（category_details 由来）なので、最初の「##」行を起点とみなす。
   def strip_preamble(used)
-    lines = used.lines
-    start = lines.each_index.find { |i| lines[i].strip.start_with?("##") }
-    return used unless start
-
-    "#{lines[start..].join.strip}\n"
+    Internal::PreambleStripper.strip_before(used) do |text|
+      lines = text.lines
+      start = lines.each_index.find { |i| lines[i].strip.start_with?("##") }
+      start && lines[...start].join.length
+    end
   end
 
   def repair(content)
