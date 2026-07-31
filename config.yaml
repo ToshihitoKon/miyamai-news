@@ -185,3 +185,6 @@ mixer:
   intro_sec: 3
   tail_sec: 3
   fade_sec: 4
+
+web_push:
+  vapid_public_key: BNbPW-kr_lN9A4vHwASvya0tHunn2kP_tY1j3Em1pY9yS1gtCOBRywnpk2xNZJ1uxFkEla3CsaCwnWsvBprxZ9M
