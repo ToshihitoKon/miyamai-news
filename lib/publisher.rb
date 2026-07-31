@@ -198,7 +198,7 @@ class Publisher
       File.write(File.join(dir, "index.html"), render_html(rows))
       File.write(File.join(dir, "feed.xml"), render_feed(rows))
       File.write(File.join(dir, "manifest.json"), render_manifest)
-      File.write(File.join(dir, "sw.js"), render_sw) if Config.web_push
+      File.write(File.join(dir, "sw.js"), render_sw)
       @site.deploy(dir)
     rescue Internal::Site::DeployFailed => e
       abort(e.message)

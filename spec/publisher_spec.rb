@@ -86,19 +86,20 @@ RSpec.describe Publisher do
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(staged_files).to include("index.html", "feed.xml", "manifest.json", "_headers")
+      expect(staged_files).to include("index.html", "feed.xml", "manifest.json", "sw.js", "_headers")
     end
 
-    it "does not stage sw.js when web_push is not configured" do
+    # web_push が未設定でも常に sw.js をステージングする。バージョン単位デプロイでは
+    # ここで書かないファイルは公開サイトから消えるため、条件付きで書くと将来
+    # web_push を無効化した瞬間に既存購読者の Service Worker が更新されなくなる。
+    it "stages sw.js even when web_push is not configured" do
       publisher = build_publisher
 
       publisher.run(mp3_path, used_path, transcript_path)
 
-      expect(staged_files).not_to include("sw.js")
+      expect(staged_files).to include("sw.js")
     end
 
-    # --ui-only 実行のたびに反映されるバージョン単位デプロイなので、ここに
-    # 含めないと sw.js が公開サイトから消え、既存の購読が壊れる。
     it "stages sw.js when web_push is configured" do
       allow(Config).to receive(:web_push).and_return(double("web_push", vapid_public_key: "test-key"))
       publisher = build_publisher
@@ -193,7 +194,7 @@ RSpec.describe Publisher do
 
       expect(deployed.size).to eq(1)
       expect(put_keys).to be_empty
-      expect(staged_files).to include("index.html", "feed.xml", "manifest.json")
+      expect(staged_files).to include("index.html", "feed.xml", "manifest.json", "sw.js")
     end
 
     it "does not notify (UI-only republish never fires a push notification)" do

@@ -355,7 +355,10 @@ R2 のキー構成:
   `Internal::Site#deploy` は渡されたディレクトリの中身でバージョン単位の全置換を
   行うため、ここに含めないと次回の `--ui-only` 実行だけで `sw.js` が公開サイトから
   消え、ブラウザに登録済みの Service Worker が更新されず購読が実質的に壊れる
-  （気づきにくい形の障害になるため、この一文だけは明記しておく）。
+  （気づきにくい形の障害になるため、この一文だけは明記しておく）。`Config.web_push`
+  の有無で書き出しを分岐させず常に書き出しているのはこのためで、将来 `web_push`
+  セクションを config.yaml から外しても sw.js は消えない（`render_sw` 自体が
+  `Config.web_push` に依存していない）。
 - 通知の要否は `updated_at` の変化ではなく、`update_archives` が返す
   `newly_published`（`content_changed?` の結果）で判定する。`updated_at` の
   更新セマンティクス自体は「feed.xml の `<updated>` を誤って動かさない」ためのもの
