@@ -119,6 +119,10 @@
   短くても最後まで途切れないようループさせるため。`amix` に `normalize=0` を渡すのは、
   自動音量正規化を無効化し、指定した音量バランス（bgm_volume/voice_boost_db）をそのまま
   保つため。
+- `probe_duration` が `out.strip.to_f` ではなく `Float()` で厳格パースしているのは、
+  ffprobe が成功終了（exit 0）でも duration を取得できない場合に `N/A` を出力する
+  ことがあるため（Issue #90）。`"N/A".to_f` は例外を出さず黙って `0.0` になり、
+  その後段のループ回数計算等に誤った値が伝播してしまう。
 
 ### Slot（番組の時間帯区分）
 
@@ -541,6 +545,13 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
   煩雑なため一律で `cmd` は出さない）。`bin`/`model` を `run_with_spinner`
   に個別のキーワード引数として渡さず `log_meta:` 1つにまとめているのは、
   ログ用の付随情報であることを1箇所で明示するため（レビュー指摘を反映）。
+- `agy`（非 `claude` 分岐で使う AI CLI）の `-p`/`--print`/`--prompt` は
+  値必須の引数で、stdin からプロンプトを読む経路を持たない。`agy -p
+  < /dev/null` は `flag needs an argument: -p` で即座に失敗し、`agy -p ""`
+  も stdin を読まず `promptLength=0` の empty prompt エラーになる（検証
+  済み）。そのためプロンプト全文を argv 経由で渡す現状の実装は、ARG_MAX
+  超過リスク（Issue #90）を認識した上での制約であり、stdin/一時ファイルへの
+  切り替えでは解決できない。
 - `work_globs(work_dir)` は `work/*.log` を返し、`miyamai_news.rb` の
   `clean_work_dir` が他コンポーネントの `work_globs` と合算して `--clean` の
   対象にする（`ScriptGenerator`/`VoiceSynthesizer` と同じホワイトリスト方式）。
