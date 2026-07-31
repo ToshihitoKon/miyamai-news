@@ -228,6 +228,46 @@ RSpec.describe ScriptGenerator do
     end
   end
 
+  describe "#dedup_by_title" do
+    def dedup(items)
+      described_class.new(work_dir: work_dir, episode: episode).send(:dedup_by_title, items)
+    end
+
+    it "prefers the priority: high entry even when it appears later in the input" do
+      low_first = { title: "Same Title", source: "SourceLow", priority: "low" }
+      high_later = { title: "Same Title", source: "SourceHigh", priority: "high" }
+
+      result = dedup([low_first, high_later])
+
+      expect(result).to contain_exactly(high_later)
+    end
+
+    it "prefers an unspecified-priority entry over a priority: low entry regardless of order" do
+      low_first = { title: "Same Title", source: "SourceLow", priority: "low" }
+      unspecified_later = { title: "Same Title", source: "SourceNormal" }
+
+      expect(dedup([low_first, unspecified_later])).to contain_exactly(unspecified_later)
+      expect(dedup([unspecified_later, low_first])).to contain_exactly(unspecified_later)
+    end
+
+    it "keeps the first entry when priorities are tied" do
+      first = { title: "Same Title", source: "SourceA", priority: "high" }
+      second = { title: "Same Title", source: "SourceB", priority: "high" }
+
+      expect(dedup([first, second])).to contain_exactly(first)
+    end
+
+    it "preserves the first-appearance order of each title group in the output" do
+      title_a = { title: "Title A", source: "SourceA" }
+      title_b_low = { title: "Title B", source: "SourceLow", priority: "low" }
+      title_b_high = { title: "Title B", source: "SourceHigh", priority: "high" }
+
+      result = dedup([title_a, title_b_low, title_b_high])
+
+      expect(result).to eq([title_a, title_b_high])
+    end
+  end
+
   describe "#collect_since" do
     it "uses the confirmed timestamp" do
       at = Time.utc(2026, 7, 14, 9, 0, 0)
