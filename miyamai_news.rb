@@ -4,20 +4,6 @@
 # lib/ の各コンポーネントを束ねる薄いエントリポイント。工程のロジックは持たず、
 # CLI 解析と呼び出し順の制御に徹する。CLI の使い方は README を参照。
 
-require "bundler/inline"
-
-# 単体で完結するよう bundler/inline で依存 gem を取得する。
-gemfile do
-  source "https://rubygems.org"
-  gem "tty-spinner"
-  gem "rss"
-  gem "csv"
-  gem "rexml"
-  gem "dry-struct"
-  gem "dry-types"
-  gem "aws-sdk-s3"
-end
-
 require "time"
 require "optparse"
 

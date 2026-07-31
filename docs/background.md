@@ -804,8 +804,8 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `--config` のパス解決は cwd 基準（一般的な CLI の期待動作。`__dir__` 基準だと
   スクリプト位置基準になり、リポジトリ外のディレクトリから相対パスを指定したときに
   意図と異なる場所を読んでしまう）。
-- `gemfile do ... end`（bundler/inline）で取得する gem のうち rss/csv/rexml は
-  bundled gem のため、明示しないと後続の `require` で読めない。
+- Gemfile で rss/csv/rexml を明示しているのは、これらが bundled gem のため
+  明示しないと後続の `require` で読めないため。
 - CLI フラグの解析（`parse_args`）と config 検証のみを担い、フラグに応じた工程の
   呼び分け自体は `Pipeline`（`lib/pipeline.rb`）に委譲する薄い層。
 

@@ -33,6 +33,7 @@ mode:publish の場合に追加で必要
 ## Setup
 
 ```bash
+bundle install
 cp config.sample.yaml config.yaml
 ```
 
@@ -53,7 +54,7 @@ R2 のトークンは Cloudflare ダッシュボードの R2 > API トークン�
 
 ```bash
 envchain --set cloudflare R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY
-envchain cloudflare ruby miyamai_news.rb
+envchain cloudflare bundle exec ruby miyamai_news.rb
 ```
 
 `wrangler deploy` の認証は `wrangler login`（対話ログイン）で済ませる場合は環境変数
@@ -64,7 +65,7 @@ envchain cloudflare ruby miyamai_news.rb
 手元へ実体がある必要はない。
 
 ```sh
-envchain cloudflare ruby scripts/upload_assets.rb --file miyamai_news.webp --file miyamai_news_icon.png
+envchain cloudflare bundle exec ruby scripts/upload_assets.rb --file miyamai_news.webp --file miyamai_news_icon.png
 ```
 
 カスタムドメインは `wrangler.jsonc` の `routes` に `custom_domain: true` で宣言すると
@@ -120,26 +121,26 @@ synthesize には BGM 素材を用意し `assets.bgm_path` にパスをセット
 ## Usage
 
 ```sh
-ruby miyamai_news.rb # pipeline.mode の上限まで自動的に進む 
+bundle exec ruby miyamai_news.rb # pipeline.mode の上限まで自動的に進む 
 
 # 特定のフェーズのみを実行する
-ruby miyamai_news.rb --digest-only     # ニュース選別・facts抽出のみ生成して停止（digest以上）
-ruby miyamai_news.rb --script-only     # 台本のみ生成して停止（work/ に書き出す。synthesize以上）
-ruby miyamai_news.rb --synthesize-only # 音声合成・BGM合成のみ（dist/ に書き出して終了。synthesize以上）
-ruby miyamai_news.rb --publish-only    # dist/ の該当回を公開のみ（publish のみ）
-ruby miyamai_news.rb --ui-only         # 新しい回を公開せず index.html / manifest.json だけ再生成
+bundle exec ruby miyamai_news.rb --digest-only     # ニュース選別・facts抽出のみ生成して停止（digest以上）
+bundle exec ruby miyamai_news.rb --script-only     # 台本のみ生成して停止（work/ に書き出す。synthesize以上）
+bundle exec ruby miyamai_news.rb --synthesize-only # 音声合成・BGM合成のみ（dist/ に書き出して終了。synthesize以上）
+bundle exec ruby miyamai_news.rb --publish-only    # dist/ の該当回を公開のみ（publish のみ）
+bundle exec ruby miyamai_news.rb --ui-only         # 新しい回を公開せず index.html / manifest.json だけ再生成
 
 # cleaner
-ruby miyamai_news.rb --clean         # work/ を掃除し、公開済みの dist/ 成果物を削除
-ruby miyamai_news.rb --clean-archive # archived/ 配下の退避済み成果物を完全削除
+bundle exec ruby miyamai_news.rb --clean         # work/ を掃除し、公開済みの dist/ 成果物を削除
+bundle exec ruby miyamai_news.rb --clean-archive # archived/ 配下の退避済み成果物を完全削除
 
 # last_fetched_at (RSS Feed 最終 fetch 時刻）の管理
-ruby miyamai_news.rb --confirm-fetch # 前回実行分の収集windowを確定する（成果物確認後に使う）
-ruby miyamai_news.rb --restore-fetch # 誤ってロールバックした収集windowを復元する
-ruby miyamai_news.rb --auto-confirm  # 前回分を確認せず自動確定してから実行（CI向け）
+bundle exec ruby miyamai_news.rb --confirm-fetch # 前回実行分の収集windowを確定する（成果物確認後に使う）
+bundle exec ruby miyamai_news.rb --restore-fetch # 誤ってロールバックした収集windowを復元する
+bundle exec ruby miyamai_news.rb --auto-confirm  # 前回分を確認せず自動確定してから実行（CI向け）
 
 # オプション一覧を表示
-ruby miyamai_news.rb --help
+bundle exec ruby miyamai_news.rb --help
 ```
 
 ## Tips
@@ -170,7 +171,7 @@ seen_at の継承元として残している。
 安全に削除できるかどうかのチェックスクリプトを同梱している。
 
 ```sh
-ruby scripts/check_legacy_feed_cache.rb
+bundle exec ruby scripts/check_legacy_feed_cache.rb
 ```
 
 ### 日付と slot
