@@ -539,7 +539,14 @@
       return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
     }
 
-    document.getElementById('pushsubscribe').addEventListener('click', async () => {
+    const pushButton = document.getElementById('pushsubscribe');
+
+    function markSubscribed() {
+      pushButton.textContent = '通知は有効です';
+      pushButton.disabled = true;
+    }
+
+    pushButton.addEventListener('click', async () => {
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') return;
 
@@ -554,6 +561,16 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(subscription.toJSON()),
       });
+
+      markSubscribed();
+    });
+
+    // ページ読み込み時点で既に購読済みなら、押す前からボタンの表示を揃えておく。
+    navigator.serviceWorker.getRegistration('/sw.js').then((registration) => {
+      if (!registration) return;
+      return registration.pushManager.getSubscription();
+    }).then((subscription) => {
+      if (subscription) markSubscribed();
     });
   </script>
   <% end %>
