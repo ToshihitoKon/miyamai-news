@@ -48,8 +48,9 @@ class Publisher
       upload_used_news_html(used_news, self.class.used_news_html_object(used_object))
     end
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
-    rows, newly_published = update_archives(filename, used_news, used_news_given: !used_txt_path.nil?)
+    rows, newly_published, expired_rows = update_archives(filename, used_news, used_news_given: !used_txt_path.nil?)
     deploy_site(rows)
+    expired_rows.each { |r| archive_episode_files(r[1]) }
     if newly_published
       @notifier.notify(title: "新着ニュースが公開されました",
         body: notification_body(filename),
@@ -132,7 +133,7 @@ class Publisher
 
   # --- archives.csv ------------------------------------------------------
 
-  # 戻り値は [rows, newly_published]。
+  # 戻り値は [rows, newly_published, expired_rows]。
   def update_archives(filename, used_news = "", used_news_given: true)
     rows = fetch_existing_archives
     previous = rows.find { |r| r[1] == filename }
@@ -145,12 +146,11 @@ class Publisher
 
     expired_rows = rows.drop(retention_episodes)
     rows = rows.first(retention_episodes)
-    expired_rows.each { |r| archive_episode_files(r[1]) }
 
     csv = CSV.generate { |out| rows.each { |r| out << r } }
     @site.write_ledger(csv)
 
-    [rows, changed]
+    [rows, changed, expired_rows]
   end
 
   def content_changed?(previous, used_news, used_news_given:)
@@ -272,7 +272,7 @@ class Publisher
 
   def fallback_used_news_html(used_news)
     h(used_news)
-      .gsub(%r{https?://[^\s&]+}) { |url| %(<a href="#{url}">#{url}</a>) }
+      .gsub(%r{https?://[^\s<]+}) { |url| %(<a href="#{url}">#{url}</a>) }
       .gsub("\n", "<br>\n")
   end
 
