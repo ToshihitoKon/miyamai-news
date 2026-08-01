@@ -19,10 +19,6 @@ class Pipeline
     @dist_dir = dist_dir
   end
 
-  # args だけから #run の到達先を静的に判定する（Episode 構築や Config 読み込みの
-  # 副作用なしに、CLI 起動直後の validation から呼べるようにするため）。
-  # --clean 系・--ui-only・--confirm-fetch・--restore-fetch は pipeline.mode と
-  # 無関係な独立コマンドなので nil を返す。
   def self.target_mode_for(args)
     return nil if args[:clean] || args[:clean_archive] || args[:ui_only]
     return nil if args[:confirm_fetch] || args[:restore_fetch]
@@ -169,7 +165,6 @@ class Pipeline
     run_digest
     run_synthesize if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
 
-    # publish 到達時のみ「公開＝確定」を即座に反映し、それ以外は pending 化に留める。
     return unless Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
 
     run_publish
@@ -194,19 +189,13 @@ class Pipeline
     warn "news facts: #{facts_path}"
   end
 
-  # 台本だけ生成して停止する。VOICEPEAK 向けの整形はしない（人間が読む台本まで）。
-  # 中身を確認・手直ししたうえで、フラグなしで再実行すれば既存の台本を再利用して
-  # 整形〜音声合成〜publish まで続きから進む。
   def run_script
     script_path = @generator.generate(format: false)
 
     warn "script: #{script_path}"
   end
 
-  # 台本執筆・tts整形・音声合成・BGM合成までを実行する。pipeline.mode: synthesize の
-  # 到達点。ScriptGenerator#generate は内部で digest 相当の工程を呼ぶが、run_digest が
-  # 作った中間ファイルがあれば再利用するだけなので、run_digest の後に呼んでも
-  # AI を二重に呼ばない。
+  # 台本執筆・tts整形・音声合成・BGM合成までを実行する。pipeline.mode: synthesize の到達点。
   def run_synthesize
     bgm_path = File.expand_path(Config.assets.bgm_path, @base_dir)
     output_path = episode_mp3_path
@@ -217,7 +206,6 @@ class Pipeline
     voice_path = VoiceSynthesizer.new(work_dir: @work_dir, episode: @episode).synthesize(tts_script_path)
     AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
 
-    # 使用ニュース一覧・文字起こし(読み仮名化前の台本)を mp3 と並べて成果物として残す。
     FileUtils.cp(@generator.used_news_file, used_news_output)
     FileUtils.cp(@generator.script_file, transcript_output)
 
@@ -242,6 +230,5 @@ class Pipeline
   # dist/ に置く成果物のパス。generate と publish で同じ命名規則を共有する。
   def episode_mp3_path = File.join(@dist_dir, "miyamai_news_#{@episode.date_tag}_#{@episode.slot}.mp3")
   def episode_used_path = File.join(@dist_dir, "miyamai_news_#{@episode.date_tag}_#{@episode.slot}.used.txt")
-  # 読み仮名化前の人間可読な原稿。公開ページでは「文字起こし」として提示する。
   def episode_transcript_path = File.join(@dist_dir, "miyamai_news_#{@episode.date_tag}_#{@episode.slot}.transcript.txt")
 end

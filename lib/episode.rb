@@ -11,10 +11,6 @@ require_relative "slot"
 #   now:  収集基準時刻（Time）。時刻精度が必要な収集ロジックに使う。
 #   date: 番組日付（Date）。深夜シフト済み。ファイル名・表示・アーカイブに使う。
 #   slot: 時間帯 slot（morning/afternoon/evening/midnight）。
-#
-# now と date は 0:00-4:59 の実行でズレる（Slot.broadcast_date が前日 midnight 扱いに
-# して date を1日戻すため）。また --date で date を明示上書きする場合も、now は
-# 呼び出し側が常に実時刻を渡す契約になっている。
 class Episode
   attr_reader :now, :date, :slot
 

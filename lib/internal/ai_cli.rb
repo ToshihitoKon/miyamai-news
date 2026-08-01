@@ -7,15 +7,10 @@ require_relative "episode_logger"
 
 # claude/agy 等の AI CLI をサブプロセスとして実行する共通ロジック。ScriptGenerator
 # （selector/extractor/writer/format）と UsedNewsFormatter（used_fix）の双方が使う。
-# Config.ai_agent（グローバル設定）と引数だけで完結し、呼び出し元のインスタンス状態は
-# 参照しない。
 module Internal
   module AiCli
     module_function
 
-    # effort_override は claude 用の effort を明示的に差し替える（nil なら
-    # Config.ai_agent.effort を使う）。fatal: false のとき、失敗しても abort せず
-    # nil を返す（used_news 整形修復のように失敗しても実行全体を止めたくない用途向け）。
     def run(spinner_message, prompt, model_override: nil, effort_override: :default, fatal: true)
       bin = ::Config.ai_agent.bin
       model = model_override || ::Config.ai_agent.model

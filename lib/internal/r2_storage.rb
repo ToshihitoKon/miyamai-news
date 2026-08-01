@@ -53,8 +53,6 @@ module Internal
       raise ObjectNotFound, "object not found: #{key}"
     end
 
-    # 「存在しない」と「確認できなかった」を区別する。判定不能を「存在しない」と
-    # 誤ると、archives.csv を初回扱いして既存台帳を上書き消失させる。
     def exist?(key)
       client.head_object(bucket: @bucket, key: key)
       true
@@ -62,8 +60,6 @@ module Internal
       false
     end
 
-    # copy が成功してから delete する。途中で失敗したときは元を残す方に倒す
-    # （二重に存在するだけなら次回リトライで解消でき、公開物も壊れない）。
     def move(from_key, to_key)
       return :already_moved if !exist?(from_key) && exist?(to_key)
 
@@ -100,8 +96,7 @@ module Internal
 
     private
 
-    # 認証情報の要求は最初のリクエストまで遅らせる。生成だけで環境変数を必須に
-    # すると、公開先を組み立てるだけの経路でも認証情報が必要になる。
+    # 認証情報の要求は最初のリクエストまで遅らせる。
     def client
       @client ||= Aws::S3::Client.new(
         access_key_id: fetch_env("R2_ACCESS_KEY_ID"),

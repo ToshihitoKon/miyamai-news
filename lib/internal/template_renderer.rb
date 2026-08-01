@@ -4,10 +4,6 @@ require "erb"
 
 # templates/ 以下の ERB テンプレート（プロンプト *.prompt.erb と HTML/XML *.erb）を
 # 読み込んで描画する。
-#
-# context オブジェクトのスコープで評価するので、テンプレートは context の
-# インスタンス変数（@title など）や private メソッド（h, date_with_slot など）を
-# そのまま呼べる。テンプレート固有の値は locals ハッシュで明示的に渡す。
 module TemplateRenderer
   DIR = File.join(File.expand_path("../..", __dir__), "templates")
 

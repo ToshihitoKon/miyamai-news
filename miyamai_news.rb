@@ -1,9 +1,6 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# lib/ の各コンポーネントを束ねる薄いエントリポイント。工程のロジックは持たず、
-# CLI 解析と呼び出し順の制御に徹する。CLI の使い方は README を参照。
-
 require "time"
 require "optparse"
 

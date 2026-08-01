@@ -42,8 +42,7 @@ module Internal
 
     private
 
-    # リダイレクトを MAX_REDIRECTS 回まで追従する。Location は相対URIのことがあるため、
-    # 直前の URL を基点に URI#merge で解決する。
+    # リダイレクトを MAX_REDIRECTS 回まで追従する。
     def get_once(url)
       current = URI.parse(url)
 

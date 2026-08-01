@@ -8,10 +8,6 @@ require_relative "used_news_markdown"
 require_relative "preamble_stripper"
 
 # used_news（この回で紹介したニュース欄）の最終フォーマット保証を担う。
-# ScriptGenerator は「## カテゴリ / ### [タイトル](URL)」形式のそれっぽい Markdown を
-# 生成するだけでよく、フォーマットが厳密に正しいかどうかの検証・保証はしない。
-# 最終的にフォーマットを保証するのは Publisher で、ストレージへの書き込みを始める前に
-# ensure_valid! を呼ぶ。
 module UsedNewsFormatter
   module_function
 
@@ -31,9 +27,6 @@ module UsedNewsFormatter
 
   PROMPT_CONTEXT = Object.new.freeze
 
-  # 前置き除去 → フォーマット検証 → 崩れていれば AI 修復、の順に整えて返す。
-  # 修復後もフォーマットが直らなければ abort する。
-  # used_news が無い回（空文字列）は早期 return し、AI 呼び出し・abort を行わない。
   def ensure_valid!(text)
     cleaned = strip_preamble(text.to_s)
     return "" if cleaned.strip.empty?
@@ -71,9 +64,7 @@ module UsedNewsFormatter
   end
   private_class_method :repair
 
-  # 修復専用の非致命的な AI 呼び出し。tmp file に Write させ、Ruby 側が読んで返す
-  # （stdout は前置き・コードフェンス等のノイズが混入しやすいため使わない）。
-  # 失敗・書き忘れなら nil（ensure_valid! 側で最終的に abort するかどうかを判断する）。
+  # 修復専用の非致命的な AI 呼び出し。tmp file に Write させ、Ruby 側が読んで返す。
   def run_fix_cli(broken_text)
     Dir.mktmpdir("used_news_formatter") do |dir|
       output_path = File.join(dir, "fixed.txt")
@@ -93,8 +84,7 @@ module UsedNewsFormatter
   end
   private_class_method :run_fix_cli
 
-  # 修復 AI が記事を捏造/欠落させていないことの機械的ガード。整形後の URL 集合が
-  # 元の URL 集合と一致することを要求する（増減どちらも不採用）。
+  # 修復 AI が記事を捏造/欠落させていないことの機械的ガード。
   def preserves_urls?(original, fixed)
     urls_in(original) == urls_in(fixed)
   end

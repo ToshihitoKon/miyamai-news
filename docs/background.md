@@ -32,6 +32,9 @@
 - 収集 window の since は排他的下限（seen_at > since）で判定する。同一実行由来の
   confirmed_at と seen_at が一致することがあり、含めると同じ記事を毎回新着として
   二重紹介してしまう。
+- `select_since_for` は対象 entry を `link` で `uniq` してから返す。1 回のフィード
+  取得内で同じ link が複数回出現しても（フィード側の重複掲載等）、selector への
+  候補としては 1 件にまとめる。
 - extra フィールド（はてブのブックマーク数など）は、書き込み時はシンボルキーだが
   JSON 往復後は常に文字列キーになる。extra を読む側（hatena_bookmarks.rb 等）は
   文字列キー前提で書くこと。
@@ -86,6 +89,9 @@
 
 - `rss` gem ははてなブックマーク RSS(RDF) の hatena 名前空間の要素（ブックマーク数等）を
   公開しないため、REXML で直接パースしてブックマーク数を取り出す。
+- `count_of(extra)` は `extra` が nil、またはこのモジュールが付与したもの以外
+  （はてブ以外のソース由来）であれば 0 を返す。他ソースの entry にブックマーク数
+  欄が無いのは異常ではないため、例外にせず黙って 0 扱いにする。
 
 ### HttpFetcher（単一 URL の取得）
 
@@ -98,6 +104,10 @@
 
 ### TemplateRenderer（ERB テンプレート描画）
 
+- `render` は渡された context オブジェクトの binding で ERB を評価する。テンプレート
+  側から context のインスタンス変数（`@title` 等）や private メソッド（`h`,
+  `date_with_slot` 等）をそのまま呼べるのはこのため。テンプレート固有の値は
+  この暗黙のスコープ共有とは別に、`locals` ハッシュで明示的に渡す。
 - コンパイル済み ERB をテンプレート名でキャッシュする。同一プロセス内で同じ
   テンプレートを何度も描画しても、ファイル読み込みと構文解析は 1 回で済む。
 - `trim_mode: "-"` は `<%- -%>` を書いたときだけ前後の空白を削る設定。通常の `<%= %>`
@@ -148,6 +158,10 @@
 - MAX_CHARS=140 は VOICEPEAK の 1 回の合成呼び出しあたりの文字数上限（ハード制約）。
 - 話題転換タグ `[interval:mid]` / `[interval:long]` は、文分割・MAX_CHARS 分割より
   **先に**検出・除去すること。後で分割するとタグ文字列自体が分割で壊れる恐れがある。
+- `split_chunks` が正規表現 `scan` でテキストとタグの組を切り出す際、末尾に
+  `["", nil]`（空文字列＋タグなし）が必ず 1 組余分に付く（`scan` の走査上の
+  副産物）。そのままチャンクにすると空の合成呼び出しが発生するため、最後にこの
+  組だけを取り除く。
 - `voice_{date}_{slot}.mp3` は合成結果のキャッシュとして機能する。存在すれば
   VOICEPEAK を起動せず再利用する（`--synthesize-only` でブースト値だけ調整したい
   場合など）。
@@ -227,7 +241,9 @@ R2 のキー構成:
 - **mp3 とその兄弟ファイルは同じ `episodes/` プレフィックス配下に揃える。**
   再生ページの JS は mp3 URL の拡張子だけを差し替えて `.used.html` /
   `.transcript.txt` を引くため（`templates/index.html.erb`）、階層が違うと
-  兄弟ファイルの URL が壊れる。
+  兄弟ファイルの URL が壊れる。`.transcript.txt` の内容は読み仮名化前の
+  人間可読な台本原稿だが、公開ページ上では「文字起こし」として提示する
+  （`Pipeline#episode_transcript_path`）。
 - **retention 超過分の退避先は `episodes/` の外（`archived/`）にする。**
   `episodes/` 配下に置くと `run_worker_first` の対象なので Worker が R2 から配信し
   続け、公開を終えたはずの回が読めるままになる。
@@ -236,6 +252,9 @@ R2 のキー構成:
   static assets に無いパスは Worker にフォールバックするため、`/archives.csv` が
   Worker へ届き R2 のルート直下から返ってしまう。Worker 側で配信可能な
   プレフィックス（`SERVABLE_PREFIXES`）を明示的に許可制にして塞ぐ。
+- `ObjectNotFound`（`Internal::ObjectStorage`）は R2 実装固有の例外（`Aws::S3::Errors::*`）を
+  ラップして返す共通例外。呼び出し側（`Site#read_ledger` 等）がストレージの実装を
+  S3/R2 のどれに差し替えても、捕捉する例外クラスを変えずに済む。
 - `object_exists?` は「オブジェクトが存在しない」と「確認自体に失敗した」を
   区別する。R2 は S3 互換 API なので HeadObject の 404 と 403 / 5xx が例外クラス
   として分かれ、文言マッチではなく型で判定できる。判定不能な失敗を「存在しない」
@@ -262,6 +281,9 @@ R2 のキー構成:
   含む全ファイルを毎回ステージングディレクトリへ書き出してから 1 回だけ
   `wrangler deploy` する。画像だけ載せ忘れると初回の `--ui-only` でアートワークが
   消える。
+- `_headers` で `feed.xml` の `Content-Type` を `application/atom+xml; charset=utf-8`
+  へ明示的に上書きする。拡張子ベースの既定推定だと `.xml` は `application/xml` 系に
+  なるため。
 - **`_headers` は `run_worker_first` のパス（`episodes/*`）に適用されない。**
   mp3 と兄弟ファイルの `Content-Type` は、Ruby 側が R2 の put 時に設定した値を
   Worker が `writeHttpMetadata` で反映することで初めて正しくなる。どちらかが
@@ -340,6 +362,10 @@ R2 のキー構成:
     として扱う）。
   - `rel="self"` の href は実際の配信 URL のままにする（こちらは取得先なので
     tag URI にはしない）。
+- tag URI の authority には発行日時点で管理していたドメインを使う（RFC 4151 は
+  タグ付与者がその日付時点でそのドメインを管理していたことを要求する）。
+  `Site#tag_authority` は `public_base` のホスト名を動的に導出する実装なので、
+  `public_base` を変えると過去に発行済みのエントリの id も無条件に変わる。
 - `cover_image` / `icon_image` は publish 時に static assets のステージングへ
   コピーされて配信される。手動アップロードは不要。
 - `archives.csv` の `updated_at` 列は「publish を実行した時刻」ではなく
@@ -427,8 +453,9 @@ R2 のキー構成:
   `node_modules/web-push`（`npm install` 済み）が必須になる。これが無いまま
   `wrangler deploy` を実行すると esbuild の解決エラーでパイプライン終盤の
   deploy 段階まで進んでから初めて落ちる。これを避けるため、`miyamai_news.rb`
-  は起動直後に `Internal::NodeDeps.validate_wrangler_build!` を呼び、
-  `wrangler deploy --dry-run`（空の一時ディレクトリを `--assets` に渡し、
+  は起動時に `Internal::NodeDeps.validate_wrangler_build!` を呼び（実際に deploy
+  へ到達する起動に限る。呼び出し条件は次項参照）、`wrangler deploy --dry-run`
+  （空の一時ディレクトリを `--assets` に渡し、
   実アップロードなしでビルドと設定検証だけを行わせる）で fail fast させている。
   `node_modules/web-push` の有無だけを見るファイル存在チェックにせず実際に
   `wrangler` を動かしているのは、依存の欠落に限らず `wrangler.jsonc` の
@@ -533,7 +560,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   に渡るようにするため）。priority が同順位の entry 同士では、config の
   `rss_feed_sources` 記載順（`items_per_source.flatten` 順）で先勝ち。
 - `fetched_news?` は「この実行で一度でも新規 RSS 収集が発生したか」を表す
-  フラグで、呼び出し側（miyamai_news.rb）が publish 到達時に
+  フラグで、呼び出し側（`Pipeline#run_full`）が publish 到達時に
   `confirm_immediately!`（fetch あり）と `confirm!`（fetch なし、pending
   ベース）のどちらの経路で収集window を確定するか判断するのに使う。
   digest→generate と同一インスタンスで複数回工程を呼んでも、一度 true に
@@ -575,8 +602,8 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
 （`lib/internal/episode_logger.rb`）はこれを `work/<date_tag>_<slot>.log` に
 プレーンテキストで追記するだけの薄い記録係で、以下の不変条件を持つ。
 
-- **Config と同じモジュールレベルのグローバル状態**。`miyamai_news.rb` の
-  `main` 内で episode 確定後・`WORK_DIR` 作成後に一度だけ `configure(path)` する。
+- **Config と同じモジュールレベルのグローバル状態**。`Pipeline#setup_episode!`
+  内で episode 確定後・`WORK_DIR` 作成後に一度だけ `configure(path)` する。
   `AiCli`（呼び出し元のインスタンス状態を参照しない設計）や、`Publisher` 経由で
   呼ばれ episode の概念を持たない `UsedNewsFormatter`、`FeedCache` の下位層で
   episode を知らない `HttpFetcher` など、経路の異なる全呼び出し元に個別に
@@ -617,9 +644,9 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
   済み）。そのためプロンプト全文を argv 経由で渡す現状の実装は、ARG_MAX
   超過リスク（Issue #90）を認識した上での制約であり、stdin/一時ファイルへの
   切り替えでは解決できない。
-- `work_globs(work_dir)` は `work/*.log` を返し、`miyamai_news.rb` の
-  `clean_work_dir` が他コンポーネントの `work_globs` と合算して `--clean` の
-  対象にする（`ScriptGenerator`/`VoiceSynthesizer` と同じホワイトリスト方式）。
+- `work_globs(work_dir)` は `work/*.log` を返し、`Pipeline#clean_work_dir` が
+  他コンポーネントの `work_globs` と合算して `--clean` の対象にする
+  （`ScriptGenerator`/`VoiceSynthesizer` と同じホワイトリスト方式）。
 
 ### used_news の表示フォーマット（Markdown サブセット）
 
@@ -700,7 +727,9 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   あり、`ScriptGenerator`（selector/extractor/writer/format）と `UsedNewsFormatter`
   （修復）の両方が `Internal::AiCli.run`/`.model_for` を直接呼ぶ（ラッパーは持たない）。
   非致命化パラメータは `fatal:`（既定 `true`）で統一し、失敗時に abort するかどうかを
-  直接的に表す。
+  直接的に表す。`effort_override:`（既定 `:default`）は claude 用の effort を
+  呼び出し元で明示的に差し替えるための引数で、`nil` を渡すと `Config.ai_agent.effort`
+  を使う。
 - `UsedNewsFormatter::PROMPT_CONTEXT`（空オブジェクト）で足りるのは、
   `fix_format.prompt.erb` が `format_spec`/`broken_content`/`output_path` のローカル
   変数のみを参照し、`ScriptGenerator`/`Publisher` いずれのインスタンスメソッドにも
@@ -809,6 +838,10 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   wrangler の認証（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）は
   config.yaml に置かず環境変数で渡す。config.yaml は「機密を持たないから git で
   追跡してよい」という前提で運用しているため、ここに秘密鍵を書くと前提が崩れる。
+  `Internal::R2Storage` はこの環境変数の読み取りを実際に S3 クライアントを使う
+  最初のリクエストまで遅らせる（`client` の遅延初期化）。インスタンス生成だけで
+  必須化すると、公開先の情報を組み立てるだけで R2 に触らない経路（`object_exists?`
+  を呼ばない `--clean` の対象外判定など）でも環境変数が無いと落ちてしまう。
 - `cloudflare.episode_prefix` は `wrangler.jsonc` の `assets.run_worker_first` と
   揃える必要がある（片方だけ変えると mp3 が static assets 側にルーティングされ
   404 になる）。デフォルトは `episodes`。
@@ -827,12 +860,15 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 ### miyamai_news.rb（CLIエントリポイント）
 
 - CLI 起動時の config 検証: `--ui-only`/`--clean`/`--clean-archive` は
-  `pipeline.mode` とは無関係だが公開先（R2・Workers）を触るため
-  `cloudflare` を要求する（`Config.validate_publish_target!`）。
-  `--confirm-fetch`/`--restore-fetch` は `work/last_fetch.json` のみを触り
-  公開先も pipeline.mode も伴わないので検証を全てスキップする。それ以外は各コンポーネントが実行中に
-  MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な
-  config が揃っているか一括で検証する（`Config.validate_for!`）。
+  `pipeline.mode` とは無関係だが公開先（R2・Workers）を触るため個別に検証する
+  （`--ui-only` は `assets` も参照するため `Config.validate_sections!("cloudflare",
+  "assets")`、`--clean`/`--clean-archive` は `deploy_site` を呼ばないため
+  `cloudflare` のみで足りる `Config.validate_publish_target!`。詳細は前掲
+  「Publisher / Internal::Site」節参照）。`--confirm-fetch`/`--restore-fetch` は
+  `work/last_fetch.json` のみを触り公開先も pipeline.mode も伴わないので検証を
+  全てスキップする。それ以外は各コンポーネントが実行中に MissingKeyError で
+  落ちて中途半端に失敗するのを避けるため、起動直後に必要な config が揃っているか
+  一括で検証する（`Config.validate_for!`）。
 - `--config` のパス解決は cwd 基準（一般的な CLI の期待動作。`__dir__` 基準だと
   スクリプト位置基準になり、リポジトリ外のディレクトリから相対パスを指定したときに
   意図と異なる場所を読んでしまう）。
@@ -854,6 +890,11 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `--publish-only` は新規収集を一切行わないため、フィードキャッシュを持つ
   `ScriptGenerator`（`FeedCache.new` が旧台帳ファイルを読む）を生成せず
   `#run_publish_only` を直接呼ぶ（`#setup_generator!` を経由しない）。
+- `#run_script`（`--script-only`）は VOICEPEAK 向けの整形をしない、人間が読む
+  台本までで停止する。台本の中身を確認・手直ししたうえで、フラグなしで
+  再実行すれば既存の台本を再利用して整形〜音声合成〜publish まで続きから
+  進められる（work_dir 内の中間ファイルの有無で再利用を判断する、前掲
+  「ScriptGenerator / AI パイプライン」節の再利用機構に乗る）。
 - `#run_clean_command` が呼ぶ `#clean_work_dir` は work/ の回ごとの中間ファイルを
   削除するが、回をまたいで保持する状態（`last_fetch.json` / `feed_cache/`
   ディレクトリ）はホワイトリスト方式の `work_globs` に含まれないので残る。消すと
@@ -901,8 +942,8 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   slot。ファイル名・ストレージのオブジェクト名・ログパス・Publisher のアーカイブ表示に使う）
   は独立した概念で、混同しないこと。`now` の消費者は `ScriptGenerator` 経由で
   `FeedCache`（`seen_at` 記録）・`LastFetchStore`（`since` 判定の起点）のみ。
-  `miyamai_news.rb` は `--date`/`--slot` 指定時に `date:`/`slot:` は明示上書きするが、
-  `now:` には常に `Time.now`（実行時の実時刻）を渡す。`--date` で過去日を指定した際に
+  `Pipeline#setup_episode!` は `--date`/`--slot` 指定時に `date:`/`slot:` は明示上書き
+  するが、`now:` には常に `Time.now`（実行時の実時刻）を渡す。`--date` で過去日を指定した際に
   `now` まで過去に飛ばすと、その実行で新規に見つかった記事の `seen_at` が過去時刻で
   記録され、`confirmed_at`（実時刻ベース）以下として `select_since_for` に弾かれる。
   `seen_at` は一度設定されると二度と更新されないため、これは一時的な欠落ではなく

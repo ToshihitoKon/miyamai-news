@@ -3,13 +3,11 @@
 require "fileutils"
 require_relative "../slot"
 
-# 直近に紹介したニュースの履歴を回ごとのファイルとして work/used_news_history/ に貯め、
-# selector プロンプトに渡して回またぎの重複紹介を避けるためのモジュール。
+# 直近に紹介したニュースの履歴を回ごとのファイルとして work/used_news_history/ に貯める。
 module UsedNewsHistory
   module_function
 
   # 履歴ファイルを置くディレクトリ（回ごとに <episode_key>.txt を1ファイル）。
-  # work_globs のホワイトリストに載らないので clean 非対象（回をまたぐ永続状態）。
   def dir(work_dir) = File.join(work_dir, "used_news_history")
 
   # 1 回分の used_news を履歴に取り込む。used_news_path が無ければ何もしない
@@ -33,9 +31,8 @@ module UsedNewsHistory
       .join("\n\n")
   end
 
-  # link を落とす。新フォーマットは `### [タイトル](URL)` に URL が内包されるので
-  # `### タイトル` に畳む。旧フォーマット（独立した URL 行）の除去も残す。
-  # 除去で空いた行が連続しないよう、3 行以上の空行は 1 行に畳む。
+  # link を落とす。`### [タイトル](URL)` → `### タイトル` に畳み、独立した URL 行は
+  # 削除する。3 行以上の空行は 1 行に畳む。
   def strip_links(text)
     text
       .gsub(/^(###\s+)\[(.+)\]\(\S+\)\s*$/, '\1\2')
@@ -45,7 +42,7 @@ module UsedNewsHistory
   private_class_method :strip_links
 
   # 履歴ディレクトリ内の <episode_key>.txt を、エピソードの時系列で新しい順に並べて
-  # 上位 keep_episodes 件のパスを返す。並び順は (date_tag, slot の日内順)。
+  # 上位 keep_episodes 件のパスを返す。
   def recent_files(history_dir, keep_episodes)
     return [] unless Dir.exist?(history_dir)
 

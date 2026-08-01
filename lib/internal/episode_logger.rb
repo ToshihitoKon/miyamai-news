@@ -4,9 +4,7 @@ require "time"
 
 # 回ごとの実行ログ（AI CLI/VOICEPEAK/HTTP フェッチの stdout・stderr・所要時間・
 # リトライ回数等）を work/<date_tag>_<slot>.log に追記するだけの薄い記録係。
-# 計測自体は行わず、呼び出し元が用意した値をそのまま書き込む。configure されるまで
-# （path が未設定の間）は record が no-op になるので、呼び出し元は configure 済みか
-# を毎回気にせず呼べる。
+# configure されるまで（path が未設定の間）は record が no-op になる。
 module Internal
   module EpisodeLogger
     module_function

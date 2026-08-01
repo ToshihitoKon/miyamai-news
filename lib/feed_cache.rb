@@ -9,21 +9,9 @@ require_relative "internal/feed_parser"
 
 # RSS/Atom フィードの取得・パースと、entry の「初登場時刻(seen_at)」の記録を担う小さな
 # キャッシュ層。
-#
-# キャッシュはフィード URL ごとに 1 ファイル（work/feed_cache/<正規化 URL の SHA1>.json）。
-# ファイルの形（JSON）:
-#   { "url":, "fetched_at":, "entries": { "<link>": { "seen_at":, "last_fetched_at":,
-#     "title":, "date":, "extra": {} }, ... } }
 class FeedCache
   class FetchError < StandardError; end
 
-  # @param dir [String] URL 別キャッシュファイルを置くディレクトリ
-  # @param retention_days [Integer] last_fetched_at がこれより古い entry はパージする保持日数
-  # @param skip_window_sec [Integer] 最終 fetch からこの秒数以内は再取得せずキャッシュを返す。0 で無効
-  # @param legacy_path [String, nil] 旧・単一ファイル形式のキャッシュ。seen_at の継承元として
-  #   のみ読む
-  # @param max_retries [Integer] フィード取得のリトライ回数
-  # @param retry_base_sec [Float] 指数バックオフの初期待機秒数
   def initialize(dir:, retention_days:, skip_window_sec: 0, legacy_path: nil,
                  max_retries: 3, retry_base_sec: 2.0)
     @dir = dir
@@ -34,17 +22,8 @@ class FeedCache
   end
 
   # 1 フィード（単一 URL）を取得・パースし、seen_at を更新したうえで seen_at > since の
-  # entry を返す（排他的下限）。返す各 entry は
-  # { link:, title:, date:, seen_at:, extra: }。副作用としてキャッシュファイルを更新し、
-  # 取得失敗時は FetchError を送出する。最終 fetch から skip_window_sec 以内はスキップし、
-  # HTTP を叩かずキャッシュから同じ結果を返す。フィードごとに別ファイルなので複数スレッド
-  # から同時に呼んでよい。
-  #
-  # @param url [String] フィード URL
-  # @param now [Time] seen_at / fetched_at として記録する現在時刻
-  # @param since [Time] 前回収集済みの起点（排他的下限）
-  # @param extra_extractor [#call, nil] ソース種別固有メタデータの注入口
-  # @return [Array<Hash>]
+  # entry を返す。返す各 entry は
+  # { link:, title:, date:, seen_at:, extra: }。
   def fetch(url, now:, since:, extra_extractor: nil)
     cache = load_cache(url)
     if skip?(cache, now)
@@ -75,8 +54,7 @@ class FeedCache
     false
   end
 
-  # スキップ時に select_since_for へ渡す擬似 entries。「直前の実 fetch でフィード本文に
-  # 実際に載っていた link」だけに絞る。
+  # スキップ時に select_since_for へ渡す擬似 entries。
   def cached_entries(cache)
     cache["entries"].select { |_link, meta| meta["last_fetched_at"] == cache["fetched_at"] }
       .keys.map { |link| { link: link } }
@@ -102,8 +80,8 @@ class FeedCache
   end
 
   # 今回フィードに登場した entry を seen_at 付きでキャッシュに反映する。既にある link は
-  # seen_at を据え置き（初登場時刻を保つ）、title/date/last_fetched_at/extra だけ最新化する。
-  # 新規 link の seen_at 初期値は initial_seen_at。
+  # title/date/last_fetched_at/extra だけ最新化する。新規 link の seen_at 初期値は
+  # initial_seen_at。
   def record_seen(entries, fetched, now)
     fetched.each do |entry|
       existing = entries[entry[:link]]
@@ -117,7 +95,7 @@ class FeedCache
     end
   end
 
-  # 今回の extra_extractor が値を出せなかった場合に、既存キャッシュから引き継ぐ。
+  # 既存キャッシュから extra を引き継ぐ。
   def existing_extra(existing)
     existing && meta_extra(existing)
   end
@@ -127,7 +105,7 @@ class FeedCache
     @legacy_seen_at[entry[:link]] || now.iso8601
   end
 
-  # last_fetched_at が保持期間より古い（フィードから消えて久しい）entry を間引く。
+  # last_fetched_at が保持期間より古い entry を間引く。
   def purge_expired(entries, now)
     cutoff = now - (@retention_days * 86_400)
     entries.reject! do |_link, meta|
@@ -138,9 +116,8 @@ class FeedCache
     end
   end
 
-  # 今回このフィードで登場した entry のうち、seen_at > since のものを返す（排他的下限）。
+  # 今回このフィードで登場した entry のうち、seen_at > since のものを返す。
   def select_since_for(entries, fetched, since)
-    # 同一フィード内に同じ link が複数回現れても 1 件として返す。
     fetched.uniq { |e| e[:link] }.filter_map do |entry|
       meta = entries[entry[:link]] or next
       seen_at = Time.iso8601(meta["seen_at"])
@@ -153,8 +130,7 @@ class FeedCache
     end
   end
 
-  # extra 導入前の旧キャッシュ（トップレベルの "bookmarks"）を読むフォールバック。
-  # 新形式は "extra" キーにまとまっているのでそのまま返す。
+  # 旧キャッシュ（トップレベルの "bookmarks"）を読むフォールバック。
   def meta_extra(meta)
     meta["extra"] || (meta["bookmarks"] ? { "bookmarks" => meta["bookmarks"] } : nil)
   end

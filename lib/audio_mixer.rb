@@ -27,10 +27,7 @@ class AudioMixer
   private
 
   def bgm_volume = Config.mixer.bgm_volume
-  # ナレーション音量を底上げするゲイン(dB)。未指定時は0(無調整)。
   def voice_boost_db = Config.mixer.voice_boost_db
-  # ミックスのタイムライン: [intro_sec: BGM単独] → [ナレーション] →
-  # [tail_sec: BGM単独] → [fade_sec: フェードアウト]
   def intro_sec = Config.mixer.intro_sec
   def tail_sec = Config.mixer.tail_sec
   def fade_sec = Config.mixer.fade_sec

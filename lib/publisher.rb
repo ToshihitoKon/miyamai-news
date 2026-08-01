@@ -17,8 +17,7 @@ require_relative "slot"
 class Publisher
   PROGRAM_NAME = "宮舞モカの技術ニュース"
 
-  # feed 自身の <id> に使う発行日。フィードの同一性を表すので、
-  # 一度決めたら変えない（変えると購読者が別フィードとして扱う）。
+  # feed 自身の <id> に使う発行日。
   FEED_ID_DATE = "2026-07-31"
 
   def initialize(date: Date.today, title: nil, site: nil, notifier: nil)
@@ -191,8 +190,6 @@ class Publisher
 
   # --- サイトの反映 ------------------------------------------------------
 
-  # 反映はディレクトリ単位で、ここに無いファイルは公開サイトから消える。
-  # 生成ページを毎回すべて書き出してから 1 回だけ反映する。
   def deploy_site(rows)
     Dir.mktmpdir("miyamai_site") do |dir|
       File.write(File.join(dir, "index.html"), render_html(rows))

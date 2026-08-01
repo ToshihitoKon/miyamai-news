@@ -4,20 +4,13 @@ require "time"
 require "json"
 
 # 収集 window の起点を work/last_fetch.json に永続化するモジュール。前回 pending の
-# 確定/ロールバックを人間に尋ねる .resolve_pending! も持つ。状態はすべて JSON 側にあり、
-# インスタンス状態は持たない（work_dir を渡すだけのモジュール関数の集まり）。
-#
-# JSON のキー: confirmed_at(確定済みの収集window起点。次回 since に使う) /
-# pending_at(直近実行の未確認の到達時刻) / pending_episode(pending_at の回の episode_key。
-# confirm 時に紹介済みニュース履歴へ追記する回を特定するため保持する) / rollback_at(直前の
-# confirm!/rollback! で失われた値を退避する1段の Undo バッファ) / last_op(rollback_at が
-# confirm/discard どちらの Undo 用かを示す)。
+# 確定/ロールバックを人間に尋ねる .resolve_pending! も持つ。
 module LastFetchStore
   module_function
 
   def path(work_dir) = File.join(work_dir, "last_fetch.json")
 
-  # 全キー（冒頭コメント参照）を保証して返す（欠けているキーは nil で補う）。
+  # 全キーを保証して返す（欠けているキーは nil で補う）。
   def load(work_dir)
     return read_data(work_dir) if File.exist?(path(work_dir))
 
@@ -38,7 +31,6 @@ module LastFetchStore
 
   # 新規収集が発生した実行の完了時に呼ぶ。confirmed_at は動かさず、pending_at を at に
   # 進める。episode_key はこの回の紹介済みニュース履歴を confirm 時に追記するため保持する。
-  # Undo バッファはクリアする。
   def mark_pending!(work_dir:, at:, episode_key: nil)
     write(work_dir, load(work_dir).merge(
       "pending_at" => at.iso8601, "pending_episode" => episode_key,
@@ -46,9 +38,8 @@ module LastFetchStore
     ))
   end
 
-  # pending_at を confirmed_at へ昇格し、pending_at をクリアする。.restore! で
-  # 巻き戻せるよう、昇格前の confirmed_at を rollback_at へ退避し last_op を confirm にする。
-  # 確定した回の episode_key を返す（呼び出し側が紹介済みニュース履歴へ追記するのに使う）。
+  # pending_at を confirmed_at へ昇格し、pending_at をクリアする。昇格前の confirmed_at は
+  # rollback_at へ退避し last_op を confirm にする。確定した回の episode_key を返す。
   # pending_at が無ければ何もせず nil を返す（冪等）。
   def confirm!(work_dir:)
     data = load(work_dir)
@@ -90,9 +81,9 @@ module LastFetchStore
     end
   end
 
-  # publish 完了時に呼ぶ。pending を経由せず confirmed_at を即座に at へ確定する
-  # （公開自体が確定行為のため）。この回の履歴追記は呼び出し側が episode から直接行うので
-  # pending_episode は残さずクリアする。
+  # publish 完了時に呼ぶ。pending を経由せず confirmed_at を即座に at へ確定する。
+  # この回の履歴追記は呼び出し側が episode から直接行うので pending_episode は
+  # 残さずクリアする。
   def confirm_immediately!(work_dir:, at:)
     write(work_dir, load(work_dir).merge(
       "confirmed_at" => at.iso8601, "pending_at" => nil, "pending_episode" => nil,

@@ -1,14 +1,6 @@
 # frozen_string_literal: true
 
 # 番組の時間帯 slot を扱う。
-#
-# 11:00 起点で 6 時間ずつ 4 分割する:
-#   morning   5:00-10:59
-#   afternoon 11:00-16:59
-#   evening   17:00-22:59
-#   midnight  23:00-翌 4:59
-# midnight は日付をまたぐため、深夜〜早朝(0:00-4:59)の実行は前日の深夜の回として扱う
-# （broadcast_date が日付を 1 日戻す）。
 module Slot
   module_function
 
@@ -40,12 +32,9 @@ module Slot
   def ja_label(slot) = JA_LABELS.fetch(slot)
 
   # 1 日の中での slot の時系列順（JA_LABELS のキー順＝DAY_START_HOUR 起点の時間帯順）。
-  # 同一 date_tag 内で複数回のエピソードを並べるためのソートキーに使う。midnight は
-  # broadcast_date が前日回に寄せるので、この順で日内の最後になる。
   ORDER = JA_LABELS.keys.freeze
 
-  # slot を日内の並び順（0 始まり）に変換する。(date_tag, sort_key(slot)) でエピソードの
-  # 時系列順が一意に決まる。
+  # slot を日内の並び順（0 始まり）に変換する。
   def sort_key(slot) = ORDER.index(slot) || raise(KeyError, "unknown slot: #{slot}")
 
   FILENAME_PATTERN = /_(#{JA_LABELS.keys.join('|')})\.mp3\z/

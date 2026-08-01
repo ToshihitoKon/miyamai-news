@@ -192,8 +192,6 @@ class ScriptGenerator
     end
   end
 
-  # Claude が Write で書いたファイルを読み直し、後処理をかけて上書きする。
-  # Claude が想定パスに書いていなければ止める。
   def rewrite_file(path)
     abort "expected file not written: #{path}" unless File.exist?(path)
 
@@ -218,7 +216,6 @@ class ScriptGenerator
     news_body
   end
 
-  # 収集 window の起点。前回時刻が無い初回は lookback_hours ぶんさかのぼる。
   def collect_since
     last_fetch_time || (@episode.now - (lookback_hours * 3600))
   end
@@ -291,7 +288,6 @@ class ScriptGenerator
     end
   end
 
-  # 始めの挨拶(OPENING_GREETING)を本体の開始位置とみなして前置きを削ぎ落とす。
   def strip_preamble(script)
     Internal::PreambleStripper.strip_before(script) { |text| text.index(OPENING_GREETING) }
   end
@@ -324,7 +320,7 @@ class ScriptGenerator
   end
 
   # ライター用タスク。facts と選定済みニュースを差し込み、台本(script)と used の
-  # 書き込み先パスを渡す（Claude が Write で直接書く。絶対パスで渡す）。
+  # 書き込み先パスを渡す。
   def writer_prompt(selected_news, news_facts)
     TemplateRenderer.render("writer.prompt", self,
       selected_news:,

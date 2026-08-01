@@ -37,7 +37,6 @@ module Config
     end
 
     # config.yaml のパスを差し替える（--config CLI引数・テストのfixture指定用）。
-    # 差し替えた時点で新しいパスから即座に読み込み直す（fail fast）。
     def path=(new_path)
       @path = new_path
       @app_config = load_app_config
@@ -56,23 +55,18 @@ module Config
     def web_push = app_config.web_push
 
     # target_mode までに必須のトップレベルセクションが揃っているか一括検証する。
-    # 欠けていれば起動直後にまとめて MissingKeyError を出し、実行途中で中途半端に
-    # 失敗するのを防ぐ。
     def validate_for!(target_mode)
       raise ArgumentError, "unknown pipeline mode: #{target_mode}" unless MODE_ORDER.key?(target_mode)
 
       validate_sections!(*required_sections_for(target_mode), context: "pipeline.mode=#{target_mode}")
     end
 
-    # 公開先の設定が揃っているか検証する。mode 判定を通らずに公開先を触る
-    # CLI 操作（--clean / --clean-archive）で使う。
+    # 公開先の設定が揃っているか検証する。
     def validate_publish_target!
       validate_sections!("cloudflare")
     end
 
-    # 指定したトップレベルセクションが全て揃っているか検証する。mode の到達順序と
-    # 無関係に、個別の CLI 操作が実際に参照するセクションだけをその場で指定して使う
-    # （例: --ui-only は assets も参照するため cloudflare に加えて assets を渡す）。
+    # 指定したトップレベルセクションが全て揃っているか検証する。
     def validate_sections!(*sections, context: nil)
       cfg = app_config
       missing = sections.reject { |section| cfg.public_send(section) }
