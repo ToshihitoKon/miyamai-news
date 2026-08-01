@@ -22,6 +22,8 @@ Layout/FirstArgumentIndentation:
   EnforcedStyle: consistent
 Layout/FirstHashElementIndentation:
   EnforcedStyle: consistent
+Layout/FirstArrayElementIndentation:
+  EnforcedStyle: consistent
 Layout/ArgumentAlignment:
   EnforcedStyle: with_fixed_indentation
 Layout/HashAlignment:

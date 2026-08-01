@@ -178,8 +178,9 @@ RSpec.describe Publisher do
 
     it "does not notify when re-publishing identical title and used_news" do
       title = "回タイトル"
-      existing = [["2026-07-14", File.basename(mp3_path), title, File.read(used_path),
-                   "2026-07-14T00:00:00Z"]]
+      existing = [
+        ["2026-07-14", File.basename(mp3_path), title, File.read(used_path), "2026-07-14T00:00:00Z"],
+      ]
       publisher = build_publisher(ledger: ledger_csv(existing), title: title)
 
       publisher.run(mp3_path, used_path, transcript_path)
@@ -653,10 +654,10 @@ RSpec.describe Publisher do
       names = described_class.episode_object_names("miyamai_news_20260714_afternoon.mp3")
 
       expect(names).to eq([
-                            "miyamai_news_20260714_afternoon.mp3",
-                            "miyamai_news_20260714_afternoon.used.txt",
-                            "miyamai_news_20260714_afternoon.transcript.txt"
-                          ])
+        "miyamai_news_20260714_afternoon.mp3",
+        "miyamai_news_20260714_afternoon.used.txt",
+        "miyamai_news_20260714_afternoon.transcript.txt"
+      ])
     end
   end
 
