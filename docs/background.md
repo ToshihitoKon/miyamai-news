@@ -422,6 +422,31 @@ R2 のキー構成:
 - Workers のサブリクエスト上限は 50/リクエスト。購読者が少数のうちは全件へ
   ループで `fetch` するだけで足りるが、規模が増えた場合はバッチ分割や Cron
   Trigger によるキュー処理の検討が必要になる（現時点では未実装）。
+- `src/index.js` は `web_push.js` を無条件に static import するため、
+  `config.yaml` の `web_push` セクションの有無に関わらず、deploy する限り
+  `node_modules/web-push`（`npm install` 済み）が必須になる。これが無いまま
+  `wrangler deploy` を実行すると esbuild の解決エラーでパイプライン終盤の
+  deploy 段階まで進んでから初めて落ちる。これを避けるため、`miyamai_news.rb`
+  は起動直後に `Internal::NodeDeps.validate_wrangler_build!` を呼び、
+  `wrangler deploy --dry-run`（空の一時ディレクトリを `--assets` に渡し、
+  実アップロードなしでビルドと設定検証だけを行わせる）で fail fast させている。
+  `node_modules/web-push` の有無だけを見るファイル存在チェックにせず実際に
+  `wrangler` を動かしているのは、依存の欠落に限らず `wrangler.jsonc` の
+  設定不備等、ビルド段階で起きうる失敗全般を検出するため。`Site#deploy`
+  （`lib/internal/site.rb`）と同じ bare `wrangler` 呼び出しを使う必要がある。
+  `npx wrangler` にすると `node_modules/.bin` 経由の別バージョンを検証して
+  しまい、実際の deploy が使うバイナリ（PATH 解決、環境によってはグローバル
+  インストール版）と食い違う。
+- 上記の validation は `--ui-only` または `Pipeline.reaches?("publish", ARGS)`
+  が真の場合だけ呼ぶ。`Pipeline.target_mode_for(args)`（`--clean` 系・
+  `--ui-only`・`--confirm-fetch`・`--restore-fetch` は pipeline.mode と無関係な
+  独立コマンドなので nil を返す）と、それを `Config::MODE_ORDER` で比較する
+  `Pipeline.reaches?(mode, args)` を `Pipeline` に持たせている。`Config` では
+  なく `Pipeline` に置くのは、CLI フラグ（`args`）と mode の対応づけが
+  `Pipeline#run` 自身の知識だから。`--digest-only` / `--script-only` /
+  `--synthesize-only` はこの判定で正しく対象外になる（`pipeline.mode:
+  publish` の環境でも deploy 前で止まるため）。`--ui-only` は mode の概念の
+  外側で deploy するため、呼び出し側で明示的に特別扱いする。
 
 ### 旧 GCS feed の凍結（移行告知）
 
