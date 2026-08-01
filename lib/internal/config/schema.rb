@@ -47,14 +47,12 @@ module Internal
       attribute? :extractor_model, Types::Strict::String
       attribute? :writer_model, Types::Strict::String
       attribute? :formatter_model, Types::Strict::String
-      # used_news のフォーマット修復専用。パース失敗時のみ呼ばれる軽量モデル。
-      # effort は bin == "claude" のとき run_ai_cli の effort_override に渡す。
+      # used_news のフォーマット修復専用モデル。
       attribute? :used_fix_model, Types::Strict::String
       attribute? :used_fix_effort, Types::Strict::String
-      # フォーマット修復の最大リトライ回数。0 で修復自体を無効化する。
+      # フォーマット修復の最大リトライ回数。
       attribute? :used_fix_max_retries, Types::Strict::Integer.default(2)
 
-      # role別モデルが未指定なら model にフォールバックする。
       def model_for(role)
         public_send(:"#{role}_model") || model
       end
@@ -77,9 +75,9 @@ module Internal
       attribute :fetch_max_retries, Types::Strict::Integer
       attribute :fetch_retry_base_sec, Types::Coercible::Float
       # 各フィードの最終 fetch からこの分数以内は、再取得せず前回キャッシュから返す。
-      # 0 でスキップ無効（常に fetch）。
+      # 0 でスキップ無効。
       attribute? :fetch_skip_minutes, Types::Strict::Integer.default(5)
-      # 直近この回数分の紹介済みニュースを selector に渡し、回またぎの重複紹介を避ける。
+      # 直近この回数分の紹介済みニュースを selector に渡す。
       attribute? :used_news_history_episodes, Types::Strict::Integer.default(4)
     end
 

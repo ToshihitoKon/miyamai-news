@@ -18,8 +18,6 @@ module Internal
 
     LEDGER_OBJECT = "archives.csv"
 
-    # 素材はほとんど変わらないので長めに寝かせる。差し替えたい場合は
-    # 1 時間待つか、ファイル名を変えて参照を切り替える。
     ASSET_CACHE_CONTROL = "public, max-age=3600"
 
     DeployFailed = Class.new(StandardError)
@@ -56,17 +54,13 @@ module Internal
       "#{@public_base}/#{@storage.episode_key(object)}"
     end
 
-    # index.html は配信側が "/" へ 307 リダイレクトするため、正規形の "/" を返す。
-    # リダイレクトされる URL を feed の link や og:url に載せると、購読者と
-    # クローラが毎回余計な往復をする。
     def page_url(object)
       return "#{@public_base}/" if object == INDEX_OBJECT
 
       "#{@public_base}/#{object}"
     end
 
-    # 画像などの恒久素材。R2 に置くのでリポジトリにも配信物にも実体を持たない
-    # （版権素材を Git 管理下に置かずに済む）。
+    # 画像などの恒久素材。R2 に置くのでリポジトリにも配信物にも実体を持たない。
     def asset_url(object) = "#{@public_base}/#{@storage.asset_key(object)}"
 
     def upload_asset(object, path, content_type:)
@@ -78,9 +72,7 @@ module Internal
 
     # --- 安定 ID -----------------------------------------------------------
 
-    # RFC 4151 の tag URI。配信 URL から独立しているので、ドメインやパスを
-    # 変えても購読者側の重複判定キーが動かない。
-    # authority には発行日時点で管理していたドメインを使う。
+    # RFC 4151 の tag URI。
     def tag_uri(date, specific) = "tag:#{tag_authority},#{date}:#{specific}"
 
     def tag_authority = URI.parse(@public_base).host
@@ -101,8 +93,7 @@ module Internal
 
     def episode_file_exist?(object) = @storage.exist?(@storage.episode_key(object))
 
-    # 退避先は資材プレフィックスの外。中に置くと公開経路に残り、保持件数を
-    # 超えた回が読めるままになる。
+    # 退避先は資材プレフィックスの外。
     def retire_episode_file(object)
       @storage.move(@storage.episode_key(object), @storage.archive_key(object))
     end
@@ -125,7 +116,6 @@ module Internal
 
     # --- サイトの反映 ------------------------------------------------------
 
-    # 反映はディレクトリ単位で、ここに無いファイルは公開サイトから消える。
     def deploy(dir)
       write_delivery_headers(dir)
       deployer.call(dir) || raise(DeployFailed, "site deploy failed for #{dir}")
@@ -133,9 +123,6 @@ module Internal
 
     private
 
-    # feed.xml の Content-Type は拡張子ベースだと application/xml 系になるため
-    # 明示的に上書きする。資材プレフィックス配下（Worker が返す経路）には
-    # このファイルが適用されないので、そちらは Worker 側でヘッダーを付ける。
     def write_delivery_headers(dir)
       File.write(File.join(dir, "_headers"), <<~HEADERS)
         /index.html

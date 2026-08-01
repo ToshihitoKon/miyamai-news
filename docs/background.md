@@ -241,7 +241,9 @@ R2 のキー構成:
 - **mp3 とその兄弟ファイルは同じ `episodes/` プレフィックス配下に揃える。**
   再生ページの JS は mp3 URL の拡張子だけを差し替えて `.used.html` /
   `.transcript.txt` を引くため（`templates/index.html.erb`）、階層が違うと
-  兄弟ファイルの URL が壊れる。
+  兄弟ファイルの URL が壊れる。`.transcript.txt` の内容は読み仮名化前の
+  人間可読な台本原稿だが、公開ページ上では「文字起こし」として提示する
+  （`Pipeline#episode_transcript_path`）。
 - **retention 超過分の退避先は `episodes/` の外（`archived/`）にする。**
   `episodes/` 配下に置くと `run_worker_first` の対象なので Worker が R2 から配信し
   続け、公開を終えたはずの回が読めるままになる。
@@ -250,6 +252,9 @@ R2 のキー構成:
   static assets に無いパスは Worker にフォールバックするため、`/archives.csv` が
   Worker へ届き R2 のルート直下から返ってしまう。Worker 側で配信可能な
   プレフィックス（`SERVABLE_PREFIXES`）を明示的に許可制にして塞ぐ。
+- `ObjectNotFound`（`Internal::ObjectStorage`）は R2 実装固有の例外（`Aws::S3::Errors::*`）を
+  ラップして返す共通例外。呼び出し側（`Site#read_ledger` 等）がストレージの実装を
+  S3/R2 のどれに差し替えても、捕捉する例外クラスを変えずに済む。
 - `object_exists?` は「オブジェクトが存在しない」と「確認自体に失敗した」を
   区別する。R2 は S3 互換 API なので HeadObject の 404 と 403 / 5xx が例外クラス
   として分かれ、文言マッチではなく型で判定できる。判定不能な失敗を「存在しない」
@@ -276,6 +281,9 @@ R2 のキー構成:
   含む全ファイルを毎回ステージングディレクトリへ書き出してから 1 回だけ
   `wrangler deploy` する。画像だけ載せ忘れると初回の `--ui-only` でアートワークが
   消える。
+- `_headers` で `feed.xml` の `Content-Type` を `application/atom+xml; charset=utf-8`
+  へ明示的に上書きする。拡張子ベースの既定推定だと `.xml` は `application/xml` 系に
+  なるため。
 - **`_headers` は `run_worker_first` のパス（`episodes/*`）に適用されない。**
   mp3 と兄弟ファイルの `Content-Type` は、Ruby 側が R2 の put 時に設定した値を
   Worker が `writeHttpMetadata` で反映することで初めて正しくなる。どちらかが
@@ -354,6 +362,10 @@ R2 のキー構成:
     として扱う）。
   - `rel="self"` の href は実際の配信 URL のままにする（こちらは取得先なので
     tag URI にはしない）。
+- tag URI の authority には発行日時点で管理していたドメインを使う（RFC 4151 は
+  タグ付与者がその日付時点でそのドメインを管理していたことを要求する）。
+  `Site#tag_authority` は `public_base` のホスト名を動的に導出する実装なので、
+  `public_base` を変えると過去に発行済みのエントリの id も無条件に変わる。
 - `cover_image` / `icon_image` は publish 時に static assets のステージングへ
   コピーされて配信される。手動アップロードは不要。
 - `archives.csv` の `updated_at` 列は「publish を実行した時刻」ではなく
@@ -878,6 +890,11 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `--publish-only` は新規収集を一切行わないため、フィードキャッシュを持つ
   `ScriptGenerator`（`FeedCache.new` が旧台帳ファイルを読む）を生成せず
   `#run_publish_only` を直接呼ぶ（`#setup_generator!` を経由しない）。
+- `#run_script`（`--script-only`）は VOICEPEAK 向けの整形をしない、人間が読む
+  台本までで停止する。台本の中身を確認・手直ししたうえで、フラグなしで
+  再実行すれば既存の台本を再利用して整形〜音声合成〜publish まで続きから
+  進められる（work_dir 内の中間ファイルの有無で再利用を判断する、前掲
+  「ScriptGenerator / AI パイプライン」節の再利用機構に乗る）。
 - `#run_clean_command` が呼ぶ `#clean_work_dir` は work/ の回ごとの中間ファイルを
   削除するが、回をまたいで保持する状態（`last_fetch.json` / `feed_cache/`
   ディレクトリ）はホワイトリスト方式の `work_globs` に含まれないので残る。消すと

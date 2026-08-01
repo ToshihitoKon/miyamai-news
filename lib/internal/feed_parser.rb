@@ -23,7 +23,6 @@ module Internal
         end
       end
 
-      # 末尾スラッシュの有無だけ違う同じ記事の URL を同一視するための正規化。
       def normalize_link(link)
         link.strip.sub(%r{(?<!:)/+\z}, "")
       end

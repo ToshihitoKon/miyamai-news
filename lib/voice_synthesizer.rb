@@ -19,8 +19,7 @@ class VoiceSynthesizer
   INTERVAL_TAG = /\[interval:(mid|long)\]/
   TEXT_WITH_FOLLOWING_TAG = /(.*?)(?:#{INTERVAL_TAG}|\z)/m
 
-  # work/ に作る回ごとの中間ファイル/ディレクトリの glob パターン（clean 対象のみ。
-  # wav_* はチャンク wav を入れるディレクトリ）。
+  # work/ に作る回ごとの中間ファイル/ディレクトリの glob パターン（clean 対象のみ）。
   def self.work_globs(work_dir)
     %w[wav_* voice_*.mp3].map { |pat| File.join(work_dir, pat) }
   end
@@ -114,8 +113,7 @@ class VoiceSynthesizer
     end
   end
 
-  # VOICEPEAK を1回起動してWAVを生成する。timeout_sec 超過はハングとみなし
-  # プロセスグループごと kill して RuntimeError を投げる（呼び出し元がリトライする）。
+  # VOICEPEAK を1回起動してWAVを生成する。
   def run_voicepeak(text, out_path)
     start = Internal::EpisodeLogger.start_timer
 
@@ -242,8 +240,7 @@ class VoiceSynthesizer
     silence_files&.each_value(&:unlink)
   end
 
-  # :short/:mid/:long 用の無音 WAV を作る。秒数が0以下の種類はキー自体を持たない
-  # （concat_to_mp3 側は Hash#[] の nil でスキップする）。
+  # :short/:mid/:long 用の無音 WAV を作る。秒数が0以下の種類はキー自体を持たない。
   def generate_silence_set
     { short: chunk_gap_sec, mid: mid_pause_sec, long: long_pause_sec }.filter_map do |kind, sec|
       next unless sec.positive?

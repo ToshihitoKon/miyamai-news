@@ -7,8 +7,7 @@ module Internal
   # はてなブックマーク RSS(RDF) 固有の知識を隔離する。
   module HatenaBookmarks
     class << self
-      # フィード本文から link => { "bookmarks" => N } を作る。はてブ以外には
-      # hatena:bookmarkcount が無いので空ハッシュになる。
+      # フィード本文から link => { "bookmarks" => N } を作る。
       def call(body)
         doc = REXML::Document.new(body)
         pairs = doc.get_elements("//item").filter_map do |item|
@@ -21,8 +20,7 @@ module Internal
         {}
       end
 
-      # FeedCache の extra からブックマーク数を取り出す。extra が nil、または
-      # このモジュールで付与したものでなければ 0 になる。
+      # FeedCache の extra からブックマーク数を取り出す。
       def count_of(extra) = extra&.fetch("bookmarks", 0).to_i
     end
   end
