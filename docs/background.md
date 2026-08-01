@@ -32,6 +32,9 @@
 - 収集 window の since は排他的下限（seen_at > since）で判定する。同一実行由来の
   confirmed_at と seen_at が一致することがあり、含めると同じ記事を毎回新着として
   二重紹介してしまう。
+- `select_since_for` は対象 entry を `link` で `uniq` してから返す。1 回のフィード
+  取得内で同じ link が複数回出現しても（フィード側の重複掲載等）、selector への
+  候補としては 1 件にまとめる。
 - extra フィールド（はてブのブックマーク数など）は、書き込み時はシンボルキーだが
   JSON 往復後は常に文字列キーになる。extra を読む側（hatena_bookmarks.rb 等）は
   文字列キー前提で書くこと。
@@ -86,6 +89,9 @@
 
 - `rss` gem ははてなブックマーク RSS(RDF) の hatena 名前空間の要素（ブックマーク数等）を
   公開しないため、REXML で直接パースしてブックマーク数を取り出す。
+- `count_of(extra)` は `extra` が nil、またはこのモジュールが付与したもの以外
+  （はてブ以外のソース由来）であれば 0 を返す。他ソースの entry にブックマーク数
+  欄が無いのは異常ではないため、例外にせず黙って 0 扱いにする。
 
 ### HttpFetcher（単一 URL の取得）
 
@@ -98,6 +104,10 @@
 
 ### TemplateRenderer（ERB テンプレート描画）
 
+- `render` は渡された context オブジェクトの binding で ERB を評価する。テンプレート
+  側から context のインスタンス変数（`@title` 等）や private メソッド（`h`,
+  `date_with_slot` 等）をそのまま呼べるのはこのため。テンプレート固有の値は
+  この暗黙のスコープ共有とは別に、`locals` ハッシュで明示的に渡す。
 - コンパイル済み ERB をテンプレート名でキャッシュする。同一プロセス内で同じ
   テンプレートを何度も描画しても、ファイル読み込みと構文解析は 1 回で済む。
 - `trim_mode: "-"` は `<%- -%>` を書いたときだけ前後の空白を削る設定。通常の `<%= %>`
@@ -148,6 +158,10 @@
 - MAX_CHARS=140 は VOICEPEAK の 1 回の合成呼び出しあたりの文字数上限（ハード制約）。
 - 話題転換タグ `[interval:mid]` / `[interval:long]` は、文分割・MAX_CHARS 分割より
   **先に**検出・除去すること。後で分割するとタグ文字列自体が分割で壊れる恐れがある。
+- `split_chunks` が正規表現 `scan` でテキストとタグの組を切り出す際、末尾に
+  `["", nil]`（空文字列＋タグなし）が必ず 1 組余分に付く（`scan` の走査上の
+  副産物）。そのままチャンクにすると空の合成呼び出しが発生するため、最後にこの
+  組だけを取り除く。
 - `voice_{date}_{slot}.mp3` は合成結果のキャッシュとして機能する。存在すれば
   VOICEPEAK を起動せず再利用する（`--synthesize-only` でブースト値だけ調整したい
   場合など）。
@@ -701,7 +715,9 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   あり、`ScriptGenerator`（selector/extractor/writer/format）と `UsedNewsFormatter`
   （修復）の両方が `Internal::AiCli.run`/`.model_for` を直接呼ぶ（ラッパーは持たない）。
   非致命化パラメータは `fatal:`（既定 `true`）で統一し、失敗時に abort するかどうかを
-  直接的に表す。
+  直接的に表す。`effort_override:`（既定 `:default`）は claude 用の effort を
+  呼び出し元で明示的に差し替えるための引数で、`nil` を渡すと `Config.ai_agent.effort`
+  を使う。
 - `UsedNewsFormatter::PROMPT_CONTEXT`（空オブジェクト）で足りるのは、
   `fix_format.prompt.erb` が `format_spec`/`broken_content`/`output_path` のローカル
   変数のみを参照し、`ScriptGenerator`/`Publisher` いずれのインスタンスメソッドにも
@@ -810,6 +826,10 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   wrangler の認証（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）は
   config.yaml に置かず環境変数で渡す。config.yaml は「機密を持たないから git で
   追跡してよい」という前提で運用しているため、ここに秘密鍵を書くと前提が崩れる。
+  `Internal::R2Storage` はこの環境変数の読み取りを実際に S3 クライアントを使う
+  最初のリクエストまで遅らせる（`client` の遅延初期化）。インスタンス生成だけで
+  必須化すると、公開先の情報を組み立てるだけで R2 に触らない経路（`object_exists?`
+  を呼ばない `--clean` の対象外判定など）でも環境変数が無いと落ちてしまう。
 - `cloudflare.episode_prefix` は `wrangler.jsonc` の `assets.run_worker_first` と
   揃える必要がある（片方だけ変えると mp3 が static assets 側にルーティングされ
   404 になる）。デフォルトは `episodes`。
