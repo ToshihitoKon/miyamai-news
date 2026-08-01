@@ -19,6 +19,16 @@ class Pipeline
     @dist_dir = dist_dir
   end
 
+  # args だけから #run の到達先を静的に判定する（Episode 構築や Config 読み込みの
+  # 副作用なしに、CLI 起動直後の validation から呼べるようにするため）。
+  def self.deploys_site?(args)
+    return true if args[:ui_only]
+    return false if args[:clean] || args[:clean_archive] || args[:confirm_fetch] || args[:restore_fetch]
+    return false if args[:digest_only] || args[:script_only] || args[:synthesize_only]
+
+    Config.mode == "publish"
+  end
+
   def run
     return run_clean_command if @args[:clean]
     return run_clean_archive_command if @args[:clean_archive]

@@ -187,4 +187,38 @@ RSpec.describe Pipeline do
       expect(LastFetchStore).not_to have_received(:mark_pending!)
     end
   end
+
+  describe ".deploys_site?" do
+    after { Config.path = File.expand_path("fixtures/config.yaml", __dir__) }
+
+    it "returns true for --ui-only regardless of pipeline.mode" do
+      expect(Pipeline.deploys_site?(ui_only: true)).to be true
+    end
+
+    [:clean, :clean_archive, :confirm_fetch, :restore_fetch, :digest_only, :script_only, :synthesize_only].each do |flag|
+      it "returns false for --#{flag.to_s.tr('_', '-')} regardless of pipeline.mode" do
+        expect(Pipeline.deploys_site?(flag => true)).to be false
+      end
+    end
+
+    it "returns true for --publish-only when pipeline.mode is publish" do
+      expect(Pipeline.deploys_site?(publish_only: true)).to be true
+    end
+
+    it "returns false for --publish-only when pipeline.mode is below publish" do
+      Config.path = File.expand_path("fixtures/config_digest.yaml", __dir__)
+
+      expect(Pipeline.deploys_site?(publish_only: true)).to be false
+    end
+
+    it "returns true for no flags when pipeline.mode is publish" do
+      expect(Pipeline.deploys_site?({})).to be true
+    end
+
+    it "returns false for no flags when pipeline.mode is below publish" do
+      Config.path = File.expand_path("fixtures/config_digest.yaml", __dir__)
+
+      expect(Pipeline.deploys_site?({})).to be false
+    end
+  end
 end

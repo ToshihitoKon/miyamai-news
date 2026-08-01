@@ -427,17 +427,32 @@ R2 のキー構成:
   `node_modules/web-push`（`npm install` 済み）が必須になる。これが無いまま
   `wrangler deploy` を実行すると esbuild の解決エラーでパイプライン終盤の
   deploy 段階まで進んでから初めて落ちる。これを避けるため、`miyamai_news.rb`
-  は deploy に到達する経路（`--ui-only`、および `pipeline.mode: publish` に
-  到達する通常フロー）で起動直後に `Internal::NodeDeps.validate_wrangler_build!`
-  を呼び、`wrangler deploy --dry-run`（空の一時ディレクトリを `--assets` に
-  渡し、実アップロードなしでビルドと設定検証だけを行わせる）で fail fast
-  させている。`node_modules/web-push` の有無だけを見るファイル存在チェックに
-  せず実際に `wrangler` を動かしているのは、依存の欠落に限らず
-  `wrangler.jsonc` の設定不備等、ビルド段階で起きうる失敗全般を検出するため。
-  `Site#deploy`（`lib/internal/site.rb`）と同じ bare `wrangler` 呼び出しを使う
-  必要がある。`npx wrangler` にすると `node_modules/.bin` 経由の別バージョンを
-  検証してしまい、実際の deploy が使うバイナリ（PATH 解決、環境によっては
-  グローバルインストール版）と食い違う。
+  は起動直後に `Internal::NodeDeps.validate_wrangler_build!` を呼び、
+  `wrangler deploy --dry-run`（空の一時ディレクトリを `--assets` に渡し、
+  実アップロードなしでビルドと設定検証だけを行わせる）で fail fast させている。
+  `node_modules/web-push` の有無だけを見るファイル存在チェックにせず実際に
+  `wrangler` を動かしているのは、依存の欠落に限らず `wrangler.jsonc` の
+  設定不備等、ビルド段階で起きうる失敗全般を検出するため。`Site#deploy`
+  （`lib/internal/site.rb`）と同じ bare `wrangler` 呼び出しを使う必要がある。
+  `npx wrangler` にすると `node_modules/.bin` 経由の別バージョンを検証して
+  しまい、実際の deploy が使うバイナリ（PATH 解決、環境によってはグローバル
+  インストール版）と食い違う。
+- 上記の validation は `Pipeline.deploys_site?(args)` が deploy に実際に
+  到達すると判定した場合だけ呼ぶ。`Pipeline#run` 自体が持つ「どのフラグが
+  どこまで進むか」というマッピングと同じ知識なので、`miyamai_news.rb` 側に
+  別実装として持たず `Pipeline` のクラスメソッドに寄せている（CLI 起動直後の
+  validation から呼ぶため、Episode 構築や Config 読み込みを伴わない静的な
+  判定にした）。`--ui-only` は必ず到達する。`--publish-only` はフラグなしの
+  通常実行と同じく `Config.mode == "publish"` のときだけ到達する
+  （`Pipeline#run_publish_only` の `ensure_mode_allows!`、および
+  `Pipeline#run_full` の `target_mode` 判定と同じ条件で、mode が足りなければ
+  deploy 前に `abort` される）。`--digest-only` / `--script-only` /
+  `--synthesize-only` は `pipeline.mode: publish` の環境でも deploy 前で
+  止まるため対象外とした。`Config::MODE_ORDER` の数値比較
+  （`>= MODE_ORDER["publish"]`）ではなく `Config.mode` を直接比較している
+  のは、publish が到達順序の最終段であり数値比較にする意味がない
+  （`==` と等価）ため、CLI フラグと同じ列挙の仲間として素直に読める形に
+  している。
 
 ### 旧 GCS feed の凍結（移行告知）
 
