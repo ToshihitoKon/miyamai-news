@@ -19,6 +19,25 @@ class Pipeline
     @dist_dir = dist_dir
   end
 
+  # args だけから #run の到達先を静的に判定する（Episode 構築や Config 読み込みの
+  # 副作用なしに、CLI 起動直後の validation から呼べるようにするため）。
+  # --clean 系・--ui-only・--confirm-fetch・--restore-fetch は pipeline.mode と
+  # 無関係な独立コマンドなので nil を返す。
+  def self.target_mode_for(args)
+    return nil if args[:clean] || args[:clean_archive] || args[:ui_only]
+    return nil if args[:confirm_fetch] || args[:restore_fetch]
+    return "digest" if args[:digest_only]
+    return "synthesize" if args[:script_only] || args[:synthesize_only]
+
+    Config.mode
+  end
+
+  # args と現在の Config.mode の組み合わせで、この起動が mode まで到達するか。
+  def self.reaches?(mode, args)
+    target = target_mode_for(args)
+    !target.nil? && Config::MODE_ORDER[target] >= Config::MODE_ORDER[mode]
+  end
+
   def run
     return run_clean_command if @args[:clean]
     return run_clean_archive_command if @args[:clean_archive]
