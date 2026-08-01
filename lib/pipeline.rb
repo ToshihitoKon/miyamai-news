@@ -54,8 +54,12 @@ class Pipeline
       return
     end
 
-    ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: LastFetchStore.confirm!(work_dir: @work_dir))
+    Config.validate_sections!("collect")
+    episode_key = LastFetchStore.confirm!(work_dir: @work_dir)
+    ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: episode_key)
     warn "confirmed fetch window: #{pending}"
+  rescue Config::MissingKeyError => e
+    abort e.message
   end
 
   def run_restore_fetch_command

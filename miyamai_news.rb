@@ -62,7 +62,9 @@ ARGS = parse_args(ARGV)
 begin
   Config.path = File.expand_path(ARGS[:config]) if ARGS[:config]
 
-  if ARGS[:ui_only] || ARGS[:clean] || ARGS[:clean_archive]
+  if ARGS[:ui_only]
+    Config.validate_sections!("cloudflare", "assets")
+  elsif ARGS[:clean] || ARGS[:clean_archive]
     Config.validate_publish_target!
   elsif !ARGS[:confirm_fetch] && !ARGS[:restore_fetch]
     Config.validate_for!(Config.mode)

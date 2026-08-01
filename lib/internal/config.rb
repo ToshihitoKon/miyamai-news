@@ -61,20 +61,26 @@ module Config
     def validate_for!(target_mode)
       raise ArgumentError, "unknown pipeline mode: #{target_mode}" unless MODE_ORDER.key?(target_mode)
 
-      cfg = app_config
-      missing = required_sections_for(target_mode).reject { |section| cfg.public_send(section) }
-      return if missing.empty?
-
-      raise MissingKeyError,
-        "missing config sections for pipeline.mode=#{target_mode}:\n" + missing.map { |s| "  - #{s}" }.join("\n")
+      validate_sections!(*required_sections_for(target_mode), context: "pipeline.mode=#{target_mode}")
     end
 
     # 公開先の設定が揃っているか検証する。mode 判定を通らずに公開先を触る
-    # CLI 操作（--ui-only / --clean / --clean-archive）で使う。
+    # CLI 操作（--clean / --clean-archive）で使う。
     def validate_publish_target!
-      return if cloudflare
+      validate_sections!("cloudflare")
+    end
 
-      raise MissingKeyError, "missing config section: cloudflare"
+    # 指定したトップレベルセクションが全て揃っているか検証する。mode の到達順序と
+    # 無関係に、個別の CLI 操作が実際に参照するセクションだけをその場で指定して使う
+    # （例: --ui-only は assets も参照するため cloudflare に加えて assets を渡す）。
+    def validate_sections!(*sections, context: nil)
+      cfg = app_config
+      missing = sections.reject { |section| cfg.public_send(section) }
+      return if missing.empty?
+
+      suffix = context ? " for #{context}" : ""
+      raise MissingKeyError,
+        "missing config sections#{suffix}:\n" + missing.map { |s| "  - #{s}" }.join("\n")
     end
 
     private
