@@ -53,11 +53,11 @@ begin
     Config.validate_sections!("cloudflare", "assets")
   elsif ARGS[:clean] || ARGS[:clean_archive]
     Config.validate_publish_target!
-    Internal::NodeDeps.validate_web_push!(root_dir: __dir__) if ARGS[:ui_only]
+    Internal::NodeDeps.validate_wrangler_build!(root_dir: __dir__) if ARGS[:ui_only]
   elsif !ARGS[:confirm_fetch] && !ARGS[:restore_fetch]
     Config.validate_for!(Config.mode)
     if Config::MODE_ORDER[Config.mode] >= Config::MODE_ORDER["publish"]
-      Internal::NodeDeps.validate_web_push!(root_dir: __dir__)
+      Internal::NodeDeps.validate_wrangler_build!(root_dir: __dir__)
     end
   end
 rescue Config::MissingConfigError, Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e

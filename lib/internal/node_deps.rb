@@ -1,16 +1,22 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 module Internal
-  # src/index.js は web_push.js を無条件に static import するため、
-  # config.yaml の web_push セクションの有無に関わらず deploy には
-  # node_modules/web-push が必須になる。
   module NodeDeps
     MissingDependencyError = Class.new(StandardError)
 
-    def self.validate_web_push!(root_dir:)
-      return if File.exist?(File.join(root_dir, "node_modules", "web-push", "package.json"))
+    # Site#deploy が呼ぶ `wrangler` と同じ解決経路（PATH 経由の bare 呼び出し）を
+    # 使う。npx 経由にすると別バージョンの wrangler を検証してしまいかねない。
+    def self.validate_wrangler_build!(root_dir:)
+      Dir.mktmpdir("miyamai_wrangler_dryrun") do |empty_assets_dir|
+        ok = Dir.chdir(root_dir) do
+          system("wrangler", "deploy", "--dry-run", "--assets", empty_assets_dir, out: File::NULL)
+        end
+        return if ok
 
-      raise MissingDependencyError, "node_modules/web-push not found. Run `npm install` (see README.md)."
+        raise MissingDependencyError, "pre-deploy build check failed (`wrangler deploy --dry-run`); see output above."
+      end
     end
   end
 end

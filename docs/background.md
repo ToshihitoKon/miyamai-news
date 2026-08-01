@@ -426,10 +426,18 @@ R2 のキー構成:
   `config.yaml` の `web_push` セクションの有無に関わらず、deploy する限り
   `node_modules/web-push`（`npm install` 済み）が必須になる。これが無いまま
   `wrangler deploy` を実行すると esbuild の解決エラーでパイプライン終盤の
-  deploy 段階まで進んでから初めて落ちるため、`miyamai_news.rb` は deploy に
-  到達する経路（`--ui-only`、および `pipeline.mode: publish` に到達する通常
-  フロー）で `Internal::NodeDeps.validate_web_push!` を起動直後に呼び、
-  fail fast させている。
+  deploy 段階まで進んでから初めて落ちる。これを避けるため、`miyamai_news.rb`
+  は deploy に到達する経路（`--ui-only`、および `pipeline.mode: publish` に
+  到達する通常フロー）で起動直後に `Internal::NodeDeps.validate_wrangler_build!`
+  を呼び、`wrangler deploy --dry-run`（空の一時ディレクトリを `--assets` に
+  渡し、実アップロードなしでビルドと設定検証だけを行わせる）で fail fast
+  させている。`node_modules/web-push` の有無だけを見るファイル存在チェックに
+  せず実際に `wrangler` を動かしているのは、依存の欠落に限らず
+  `wrangler.jsonc` の設定不備等、ビルド段階で起きうる失敗全般を検出するため。
+  `Site#deploy`（`lib/internal/site.rb`）と同じ bare `wrangler` 呼び出しを使う
+  必要がある。`npx wrangler` にすると `node_modules/.bin` 経由の別バージョンを
+  検証してしまい、実際の deploy が使うバイナリ（PATH 解決、環境によっては
+  グローバルインストール版）と食い違う。
 
 ### 旧 GCS feed の凍結（移行告知）
 

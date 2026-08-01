@@ -2,24 +2,38 @@
 
 require "spec_helper"
 require "tmpdir"
-require "fileutils"
 require "internal/node_deps"
 
 RSpec.describe Internal::NodeDeps do
-  describe ".validate_web_push!" do
-    it "passes when node_modules/web-push is installed" do
-      Dir.mktmpdir do |dir|
-        FileUtils.mkdir_p(File.join(dir, "node_modules", "web-push"))
-        File.write(File.join(dir, "node_modules", "web-push", "package.json"), "{}")
+  describe ".validate_wrangler_build!" do
+    it "passes when the wrangler dry-run build succeeds" do
+      allow(Internal::NodeDeps).to receive(:system).and_return(true)
 
-        expect { described_class.validate_web_push!(root_dir: dir) }.not_to raise_error
+      Dir.mktmpdir do |root_dir|
+        expect { described_class.validate_wrangler_build!(root_dir: root_dir) }.not_to raise_error
       end
     end
 
-    it "raises MissingDependencyError when node_modules/web-push is absent" do
-      Dir.mktmpdir do |dir|
-        expect { described_class.validate_web_push!(root_dir: dir) }
-          .to raise_error(Internal::NodeDeps::MissingDependencyError, /npm install/)
+    it "raises MissingDependencyError when the wrangler dry-run build fails" do
+      allow(Internal::NodeDeps).to receive(:system).and_return(false)
+
+      Dir.mktmpdir do |root_dir|
+        expect { described_class.validate_wrangler_build!(root_dir: root_dir) }
+          .to raise_error(Internal::NodeDeps::MissingDependencyError, /wrangler deploy --dry-run/)
+      end
+    end
+
+    it "runs the dry-run in root_dir against a scratch assets directory" do
+      Dir.mktmpdir do |root_dir|
+        allow(Internal::NodeDeps).to receive(:system) do |*args, **_kwargs|
+          expect(Dir.pwd).to eq(File.realpath(root_dir))
+          expect(args[0..2]).to eq(["wrangler", "deploy", "--dry-run"])
+          expect(args[3]).to eq("--assets")
+          expect(Dir.exist?(args[4])).to be true
+          true
+        end
+
+        described_class.validate_wrangler_build!(root_dir: root_dir)
       end
     end
   end
