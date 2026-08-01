@@ -438,21 +438,21 @@ R2 のキー構成:
   しまい、実際の deploy が使うバイナリ（PATH 解決、環境によってはグローバル
   インストール版）と食い違う。
 - 上記の validation は `Pipeline.deploys_site?(args)` が deploy に実際に
-  到達すると判定した場合だけ呼ぶ。`Pipeline#run` 自体が持つ「どのフラグが
-  どこまで進むか」というマッピングと同じ知識なので、`miyamai_news.rb` 側に
-  別実装として持たず `Pipeline` のクラスメソッドに寄せている（CLI 起動直後の
-  validation から呼ぶため、Episode 構築や Config 読み込みを伴わない静的な
-  判定にした）。`--ui-only` は必ず到達する。`--publish-only` はフラグなしの
-  通常実行と同じく `Config.mode == "publish"` のときだけ到達する
-  （`Pipeline#run_publish_only` の `ensure_mode_allows!`、および
-  `Pipeline#run_full` の `target_mode` 判定と同じ条件で、mode が足りなければ
-  deploy 前に `abort` される）。`--digest-only` / `--script-only` /
-  `--synthesize-only` は `pipeline.mode: publish` の環境でも deploy 前で
-  止まるため対象外とした。`Config::MODE_ORDER` の数値比較
-  （`>= MODE_ORDER["publish"]`）ではなく `Config.mode` を直接比較している
-  のは、publish が到達順序の最終段であり数値比較にする意味がない
-  （`==` と等価）ため、CLI フラグと同じ列挙の仲間として素直に読める形に
-  している。
+  到達すると判定した場合だけ呼ぶ。「args と現在の pipeline.mode の組み合わせで
+  どこまで到達するか」は `Pipeline#run_full` の `target_mode` 計算がすでに
+  持っていた知識で、`Pipeline.target_mode_for(args)`（`--clean` 系・
+  `--ui-only`・`--confirm-fetch`・`--restore-fetch` は pipeline.mode と無関係な
+  独立コマンドなので nil を返す）として切り出し、`Pipeline.reaches?(mode, args)`
+  （`target_mode_for` の結果を `Config::MODE_ORDER` で比較する）と
+  `run_full` 本体の両方がこれを使う。`miyamai_news.rb` 側に別実装を持たせず
+  `Pipeline` に寄せているのは、CLI フラグと mode のマッピングが `Pipeline#run`
+  自身の知識であり、validation 側だけのために複製すると片方だけ更新されて
+  ずれる恐れがあるため（新しい `--foo-only` フラグを `Pipeline#run` に足したのに
+  validation 側の判定を更新し忘れる、といった事故を防ぐ）。CLI 起動直後の
+  validation から呼ぶため、`target_mode_for`/`reaches?` は Episode 構築や
+  副作用のある `ensure_mode_allows!`（abort する）を伴わない純粋な判定に
+  している。`--ui-only` は mode の概念の外側で deploy するため
+  `deploys_site?` だけが特別扱いする。
 
 ### 旧 GCS feed の凍結（移行告知）
 

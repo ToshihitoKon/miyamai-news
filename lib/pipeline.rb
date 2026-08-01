@@ -21,13 +21,24 @@ class Pipeline
 
   # args だけから #run の到達先を静的に判定する（Episode 構築や Config 読み込みの
   # 副作用なしに、CLI 起動直後の validation から呼べるようにするため）。
-  def self.deploys_site?(args)
-    return true if args[:ui_only]
-    return false if args[:clean] || args[:clean_archive] || args[:confirm_fetch] || args[:restore_fetch]
-    return false if args[:digest_only] || args[:script_only] || args[:synthesize_only]
+  # --clean 系・--ui-only・--confirm-fetch・--restore-fetch は pipeline.mode と
+  # 無関係な独立コマンドなので nil を返す。
+  def self.target_mode_for(args)
+    return nil if args[:clean] || args[:clean_archive] || args[:ui_only]
+    return nil if args[:confirm_fetch] || args[:restore_fetch]
+    return "digest" if args[:digest_only]
+    return "synthesize" if args[:script_only] || args[:synthesize_only]
 
-    Config.mode == "publish"
+    Config.mode
   end
+
+  # args と現在の Config.mode の組み合わせで、この起動が mode まで到達するか。
+  def self.reaches?(mode, args)
+    target = target_mode_for(args)
+    !target.nil? && Config::MODE_ORDER[target] >= Config::MODE_ORDER[mode]
+  end
+
+  def self.deploys_site?(args) = args[:ui_only] || reaches?("publish", args)
 
   def run
     return run_clean_command if @args[:clean]
@@ -150,18 +161,13 @@ class Pipeline
   end
 
   def run_full
-    if @args[:synthesize_only]
-      ensure_mode_allows!("synthesize")
-      target_mode = "synthesize"
-    else
-      target_mode = Config.mode
-    end
+    ensure_mode_allows!("synthesize") if @args[:synthesize_only]
 
     run_digest
-    run_synthesize if Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
+    run_synthesize if self.class.reaches?("synthesize", @args)
 
     # publish 到達時のみ「公開＝確定」を即座に反映し、それ以外は pending 化に留める。
-    return unless Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
+    return unless self.class.reaches?("publish", @args)
 
     run_publish
     if @generator.fetched_news?

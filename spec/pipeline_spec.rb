@@ -188,6 +188,49 @@ RSpec.describe Pipeline do
     end
   end
 
+  describe ".target_mode_for" do
+    after { Config.path = File.expand_path("fixtures/config.yaml", __dir__) }
+
+    it "returns nil for the independent commands" do
+      [:clean, :clean_archive, :ui_only, :confirm_fetch, :restore_fetch].each do |flag|
+        expect(Pipeline.target_mode_for(flag => true)).to be_nil
+      end
+    end
+
+    it "returns digest for --digest-only" do
+      expect(Pipeline.target_mode_for(digest_only: true)).to eq("digest")
+    end
+
+    it "returns synthesize for --script-only and --synthesize-only" do
+      expect(Pipeline.target_mode_for(script_only: true)).to eq("synthesize")
+      expect(Pipeline.target_mode_for(synthesize_only: true)).to eq("synthesize")
+    end
+
+    it "falls back to Config.mode for --publish-only and no flags" do
+      expect(Pipeline.target_mode_for(publish_only: true)).to eq("publish")
+      expect(Pipeline.target_mode_for({})).to eq("publish")
+    end
+  end
+
+  describe ".reaches?" do
+    after { Config.path = File.expand_path("fixtures/config.yaml", __dir__) }
+
+    it "returns false for the independent commands, which have no target mode" do
+      expect(Pipeline.reaches?("digest", clean: true)).to be false
+    end
+
+    it "compares against Config::MODE_ORDER" do
+      expect(Pipeline.reaches?("digest", digest_only: true)).to be true
+      expect(Pipeline.reaches?("publish", digest_only: true)).to be false
+    end
+
+    it "returns false when pipeline.mode is below the requested mode" do
+      Config.path = File.expand_path("fixtures/config_digest.yaml", __dir__)
+
+      expect(Pipeline.reaches?("publish", {})).to be false
+    end
+  end
+
   describe ".deploys_site?" do
     after { Config.path = File.expand_path("fixtures/config.yaml", __dir__) }
 
