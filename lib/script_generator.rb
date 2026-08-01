@@ -247,7 +247,7 @@ class ScriptGenerator
     meta = [item[:date], "seen:#{item[:seen_at]}", item[:source]]
     meta << "bookmarks:#{item[:bookmarks]}" if item[:bookmarks]
     meta << "priority:#{item[:priority]}" if item[:priority]
-    "#{index}. #{item[:title]}\n   #{item[:link]}\n   (#{meta.join(" / ")})"
+    "#{index}. #{item[:title]}\n   #{item[:link]}\n   (#{meta.join(' / ')})"
   end
 
   # 全ソースを fetch_threads 並列で収集する。戻り値は sources と同じ順の items 配列。

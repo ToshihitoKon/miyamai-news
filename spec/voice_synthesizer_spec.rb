@@ -300,7 +300,8 @@ RSpec.describe VoiceSynthesizer do
 
         # 最後の要素はタグの後ろの文（次のカテゴリです。）で :short。
         # それより前が、140字超の1文を分割した断片群であり、:long は最後の断片にだけ乗る。
-        after_tag, fragments = result.last, result[0..-2]
+        after_tag = result.last
+        fragments = result[0..-2]
         expect(fragments.size).to be > 1
         expect(fragments[0..-2].map { |c| c[:pause] }).to all(eq(:short))
         expect(fragments.last[:pause]).to eq(:long)
@@ -320,15 +321,13 @@ RSpec.describe VoiceSynthesizer do
 
     before do
       allow(Open3).to receive(:capture3) do |*cmd|
-        if cmd.first == "ffmpeg" && cmd.include?("anullsrc=r=48000:cl=mono")
-          silence_durations << cmd[cmd.index("-t") + 1]
-        end
+        silence_durations << cmd[cmd.index("-t") + 1] if cmd.first == "ffmpeg" && cmd.include?("anullsrc=r=48000:cl=mono")
         ["", "", success_status]
       end
     end
 
     it "generates short/mid/long silence upfront regardless of which pauses actually occur" do
-      synth.send(:concat_to_mp3, wav_paths, %i[short mid long], output)
+      synth.send(:concat_to_mp3, wav_paths, [:short, :mid, :long], output)
 
       expect(silence_durations.map(&:to_f)).to contain_exactly(0.4, 1.0, 2.0)
     end
@@ -345,7 +344,7 @@ RSpec.describe VoiceSynthesizer do
         ["", "", success_status]
       end
 
-      synth.send(:concat_to_mp3, wav_paths, %i[short mid long], output)
+      synth.send(:concat_to_mp3, wav_paths, [:short, :mid, :long], output)
 
       # wav_paths.size 個の wav 行と、最後を除く2個分の無音行(mid, long)で計5行。
       expect(captured_lines.size).to eq(5)

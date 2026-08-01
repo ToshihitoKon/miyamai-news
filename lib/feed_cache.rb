@@ -79,7 +79,7 @@ class FeedCache
   # 実際に載っていた link」だけに絞る。
   def cached_entries(cache)
     cache["entries"].select { |_link, meta| meta["last_fetched_at"] == cache["fetched_at"] }
-                    .keys.map { |link| { link: link } }
+      .keys.map { |link| { link: link } }
   end
 
   def fetch_and_parse(url, extra_extractor)
