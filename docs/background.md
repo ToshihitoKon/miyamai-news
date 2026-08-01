@@ -299,17 +299,24 @@ R2 のキー構成:
   OGP 展開が黙って壊れる。
 - `Publisher#run` 中に R2 操作または `wrangler deploy` が 1 つでも失敗したら
   即 abort する。公開物が index.html/feed.xml/manifest.json/archives.csv/mp3 の
-  間で中途半端に不整合な状態のまま残らないようにするため。R2 への書き込みを
-  すべて終えた後に `wrangler deploy` を 1 回だけ実行する順序にしているので、
-  ページが存在しないファイルを参照する瞬間が生じない。
+  間で中途半端に不整合な状態のまま残らないようにするため。
+  mp3 などの実体ファイルを R2 へ書き終えた後、`archives.csv` の内容はまだ
+  書き込まずに `wrangler deploy`（`deploy_site`）を先に実行し、それが成功
+  してから初めて `archives.csv` を書く（`write_ledger`）。逆順（先に
+  `archives.csv` を書く）にすると、その後の `wrangler deploy` だけが失敗した
+  ときに「台帳には新着行があるのに、公開ページはまだ反映されていない」状態で
+  abort する。次回の実行では新旧の内容が既に一致しているため
+  `newly_published` が false と判定され、`archive_episode_files` も通知
+  （`EpisodeNotifier#notify`）も二度と行われなくなる。deploy を先に済ませて
+  おけば、この種の取りこぼしが起きない。
 - `Publisher#run` はストレージへの書き込みを一切始める前に
   `UsedNewsFormatter.ensure_valid!` で used_news のフォーマットを確定させる
   （後述「used_news の表示フォーマット」節参照）。検証・修復に失敗すればここで
   abort し、mp3 を含め何もアップロードしない。「Publisher#run 中に 1 つでも
   失敗したら即 abort する」という上記原則の一部として扱う。
 - retention 超過分の実ファイル退避（`archive_episode_files`）は、新しい
-  archives.csv・index.html/feed.xml の反映（`update_archives` の `write_ledger` /
-  `deploy_site`）が終わった**後**に行う。逆順（退避を先に）にすると、退避完了後の
+  archives.csv・index.html/feed.xml の反映（`deploy_site` / `write_ledger`）が
+  終わった**後**に行う。逆順（退避を先に）にすると、退避完了後の
   台帳・サイト反映が何らかの理由で失敗して abort した際、「エピソードファイルは
   退避済みなのに公開中の archives.csv/index.html は移動前の場所を参照したまま」
   という不整合が公開バケットに残り、該当回の再生・DL がリンク切れになる。
@@ -336,7 +343,7 @@ R2 のキー構成:
 - `cover_image` / `icon_image` は publish 時に static assets のステージングへ
   コピーされて配信される。手動アップロードは不要。
 - `archives.csv` の `updated_at` 列は「publish を実行した時刻」ではなく
-  「**コンテンツが変わった時刻**」を表す。`update_archives` は既存行と
+  「**コンテンツが変わった時刻**」を表す。`build_archives` は既存行と
   title / used_news を比較し、同一なら既存の `updated_at` を引き継ぐ。
   異なるとき（および新規エピソード）のみ現在時刻を入れる。
   `updated_at` は feed.xml の `<updated>` の源であり、ここが「実行時刻」だと
@@ -345,7 +352,7 @@ R2 のキー構成:
   運用ルールで回避していたが、値のセマンティクス自体を修正して解消した。
 - 既存の `updated_at` が空文字の行（過去に空で記録されたもの）からは引き継がず
   現在時刻を入れる。空のまま引き継ぐと `<updated>` が空になり Atom として壊れる。
-- `updated_at` は `update_archives` の並び替えキー（`[date, updated_at]`）でもある
+- `updated_at` は `build_archives` の並び替えキー（`[date, updated_at]`）でもある
   ため、引き継ぎは表示順の安定にも効く。
 
 #### Web Push 通知（購読者管理・送信は Worker 側に同居）
@@ -387,14 +394,14 @@ R2 のキー構成:
   の有無で書き出しを分岐させず常に書き出しているのはこのためで、将来 `web_push`
   セクションを config.yaml から外しても sw.js は消えない（`render_sw` 自体が
   `Config.web_push` に依存していない）。
-- 通知の要否は `updated_at` の変化ではなく、`update_archives` が返す
+- 通知の要否は `updated_at` の変化ではなく、`build_archives` が返す
   `newly_published`（`content_changed?` の結果）で判定する。`updated_at` の
   更新セマンティクス自体は「feed.xml の `<updated>` を誤って動かさない」ためのもの
   で、Web Push の要否とは別の関心事だが、判定に使う条件（新規 or 変化）は同一なので
   `content_changed?` 一箇所に集約し、`updated_at_for` もその結果を受け取るだけに
   している（同じ条件を2箇所に別々に持つと、片方だけ変更したときに feed.xml の
   `<updated>` が動くタイミングと通知が飛ぶタイミングがずれるため）。
-  `#republish_ui` は `update_archives` を呼ばず `fetch_existing_archives` のみを
+  `#republish_ui` は `build_archives` を呼ばず `fetch_existing_archives` のみを
   使うため、`--ui-only` では判定自体が発生せず通知も発火しない。
 - `content_changed?` は `used_news_given`（`Publisher#run` の `used_txt_path` が
   渡されたかどうか）も見る。`used_txt_path` が nil または実体が既に無い場合、
