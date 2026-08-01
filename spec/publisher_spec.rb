@@ -335,7 +335,10 @@ RSpec.describe Publisher do
     it "does not archive expired episode files when the site deploy fails" do
       publisher = build_publisher(ledger: ledger_csv(existing_rows))
       copies = []
-      s3.stub_responses(:copy_object, ->(ctx) { copies << ctx.params; { copy_object_result: {} } })
+      s3.stub_responses(:copy_object, ->(ctx) {
+        copies << ctx.params
+        { copy_object_result: {} }
+      })
       deploy_result[0] = false
 
       expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
