@@ -4,6 +4,7 @@ AllCops:
   NewCops: disable
   Exclude:
     - "gems/**/*"
+    - "vendor/**/*"
 
 Bundler:
   Enabled: true
