@@ -437,22 +437,13 @@ R2 のキー構成:
   `npx wrangler` にすると `node_modules/.bin` 経由の別バージョンを検証して
   しまい、実際の deploy が使うバイナリ（PATH 解決、環境によってはグローバル
   インストール版）と食い違う。
-- 上記の validation は `Pipeline.deploys_site?(args)` が deploy に実際に
-  到達すると判定した場合だけ呼ぶ。「args と現在の pipeline.mode の組み合わせで
-  どこまで到達するか」は `Pipeline#run_full` の `target_mode` 計算がすでに
-  持っていた知識で、`Pipeline.target_mode_for(args)`（`--clean` 系・
-  `--ui-only`・`--confirm-fetch`・`--restore-fetch` は pipeline.mode と無関係な
-  独立コマンドなので nil を返す）として切り出し、`Pipeline.reaches?(mode, args)`
-  （`target_mode_for` の結果を `Config::MODE_ORDER` で比較する）と
-  `run_full` 本体の両方がこれを使う。`miyamai_news.rb` 側に別実装を持たせず
-  `Pipeline` に寄せているのは、CLI フラグと mode のマッピングが `Pipeline#run`
-  自身の知識であり、validation 側だけのために複製すると片方だけ更新されて
-  ずれる恐れがあるため（新しい `--foo-only` フラグを `Pipeline#run` に足したのに
-  validation 側の判定を更新し忘れる、といった事故を防ぐ）。CLI 起動直後の
-  validation から呼ぶため、`target_mode_for`/`reaches?` は Episode 構築や
-  副作用のある `ensure_mode_allows!`（abort する）を伴わない純粋な判定に
-  している。`--ui-only` は mode の概念の外側で deploy するため
-  `deploys_site?` だけが特別扱いする。
+- 上記の validation は `--ui-only` または `pipeline.mode: publish`（フラグなし
+  実行 / `--publish-only` が実際に deploy まで進む条件）のときだけ呼ぶ。
+  `--digest-only` / `--script-only` / `--synthesize-only` は `pipeline.mode:
+  publish` の環境でも deploy 前で止まるが、この2項の条件だけでは区別できない
+  ため、これらのフラグでも dry-run が走る（許容している）。`miyamai_news.rb`
+  が起動直後に持っている `ARGS` と `Config.mode` だけで判定できるため、
+  `Pipeline` 側に判定ロジックを持たせていない。
 
 ### 旧 GCS feed の凍結（移行告知）
 

@@ -9,7 +9,6 @@ require "optparse"
 
 require_relative "lib/internal/config"
 require_relative "lib/internal/node_deps"
-require_relative "lib/pipeline"
 require_relative "lib/slot"
 
 def parse_args(argv)
@@ -58,12 +57,14 @@ begin
     Config.validate_for!(Config.mode)
   end
 
-  Internal::NodeDeps.validate_wrangler_build!(root_dir: __dir__) if Pipeline.deploys_site?(ARGS)
+  Internal::NodeDeps.validate_wrangler_build!(root_dir: __dir__) if ARGS[:ui_only] || Config.mode == "publish"
 rescue Config::MissingConfigError, Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
   abort e.message
 rescue Internal::NodeDeps::MissingDependencyError => e
   abort e.message
 end
+
+require_relative "lib/pipeline"
 
 BASE_DIR = __dir__
 WORK_DIR = File.join(BASE_DIR, "work")
