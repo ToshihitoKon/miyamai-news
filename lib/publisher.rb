@@ -48,8 +48,9 @@ class Publisher
       upload_used_news_html(used_news, self.class.used_news_html_object(used_object))
     end
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
-    rows, newly_published, expired_rows = update_archives(filename, used_news, used_news_given: !used_txt_path.nil?)
+    rows, newly_published, expired_rows, ledger_csv = build_archives(filename, used_news, used_news_given: !used_txt_path.nil?)
     deploy_site(rows)
+    @site.write_ledger(ledger_csv)
     expired_rows.each { |r| archive_episode_files(r[1]) }
     if newly_published
       @notifier.notify(title: "新着ニュースが公開されました",
@@ -133,8 +134,8 @@ class Publisher
 
   # --- archives.csv ------------------------------------------------------
 
-  # 戻り値は [rows, newly_published, expired_rows]。
-  def update_archives(filename, used_news = "", used_news_given: true)
+  # 戻り値は [rows, newly_published, expired_rows, ledger_csv]。
+  def build_archives(filename, used_news = "", used_news_given: true)
     rows = fetch_existing_archives
     previous = rows.find { |r| r[1] == filename }
     changed = content_changed?(previous, used_news, used_news_given: used_news_given)
@@ -148,9 +149,8 @@ class Publisher
     rows = rows.first(retention_episodes)
 
     csv = CSV.generate { |out| rows.each { |r| out << r } }
-    @site.write_ledger(csv)
 
-    [rows, changed, expired_rows]
+    [rows, changed, expired_rows, csv]
   end
 
   def content_changed?(previous, used_news, used_news_given:)

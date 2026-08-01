@@ -166,6 +166,19 @@ RSpec.describe Publisher do
       expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
     end
 
+    it "does not write the ledger when the site deploy fails" do
+      publisher = build_publisher
+      put_keys = []
+      s3.stub_responses(:put_object, ->(ctx) {
+        put_keys << ctx.params[:key]
+        {}
+      })
+      deploy_result[0] = false
+
+      expect { publisher.run(mp3_path, used_path, transcript_path) }.to raise_error(SystemExit)
+      expect(put_keys).not_to include("archives.csv")
+    end
+
     it "notifies for a brand-new episode" do
       publisher = build_publisher(title: "回タイトル")
 
@@ -421,7 +434,7 @@ RSpec.describe Publisher do
     end
   end
 
-  describe "#update_archives updated_at semantics" do
+  describe "#build_archives updated_at semantics" do
     let(:title) { "宮舞モカの技術ニュース 2026-07-14" }
     let(:used_news) { File.read(used_path) }
     let(:published_at) { "2026-07-14T01:23:45Z" }
@@ -432,7 +445,7 @@ RSpec.describe Publisher do
 
     def updated_at_after_run(row)
       publisher = build_publisher(ledger: ledger_csv([row]), title: title)
-      rows, = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      rows, = publisher.send(:build_archives, File.basename(mp3_path), used_news)
       rows.find { |r| r[1] == File.basename(mp3_path) }[4]
     end
 
@@ -454,7 +467,7 @@ RSpec.describe Publisher do
     it "assigns the current time for a brand-new episode" do
       publisher = build_publisher(title: title)
 
-      rows, = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      rows, = publisher.send(:build_archives, File.basename(mp3_path), used_news)
 
       expect(rows.first[4]).to match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/)
     end
@@ -469,13 +482,13 @@ RSpec.describe Publisher do
       row = existing_row(title: title, used_news: used_news, updated_at: published_at)
       publisher = build_publisher(ledger: ledger_csv([row]), title: title)
 
-      rows, = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      rows, = publisher.send(:build_archives, File.basename(mp3_path), used_news)
 
       expect(publisher.send(:render_feed, rows)).to include("<updated>#{published_at}</updated>")
     end
   end
 
-  describe "#update_archives newly_published semantics" do
+  describe "#build_archives newly_published semantics" do
     let(:title) { "宮舞モカの技術ニュース 2026-07-14" }
     let(:used_news) { File.read(used_path) }
 
@@ -485,13 +498,13 @@ RSpec.describe Publisher do
 
     def newly_published_after_run(row)
       publisher = build_publisher(ledger: ledger_csv([row]), title: title)
-      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      _rows, newly_published = publisher.send(:build_archives, File.basename(mp3_path), used_news)
       newly_published
     end
 
     it "is true for a brand-new episode" do
       publisher = build_publisher(title: title)
-      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), used_news)
+      _rows, newly_published = publisher.send(:build_archives, File.basename(mp3_path), used_news)
 
       expect(newly_published).to be true
     end
@@ -515,7 +528,7 @@ RSpec.describe Publisher do
       row = existing_row(title: title, used_news: used_news)
       publisher = build_publisher(ledger: ledger_csv([row]), title: title)
 
-      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), "", used_news_given: false)
+      _rows, newly_published = publisher.send(:build_archives, File.basename(mp3_path), "", used_news_given: false)
 
       expect(newly_published).to be false
     end
@@ -524,7 +537,7 @@ RSpec.describe Publisher do
       row = existing_row(title: "古いタイトル", used_news: used_news)
       publisher = build_publisher(ledger: ledger_csv([row]), title: title)
 
-      _rows, newly_published = publisher.send(:update_archives, File.basename(mp3_path), "", used_news_given: false)
+      _rows, newly_published = publisher.send(:build_archives, File.basename(mp3_path), "", used_news_given: false)
 
       expect(newly_published).to be true
     end
