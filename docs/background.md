@@ -427,8 +427,9 @@ R2 のキー構成:
   `node_modules/web-push`（`npm install` 済み）が必須になる。これが無いまま
   `wrangler deploy` を実行すると esbuild の解決エラーでパイプライン終盤の
   deploy 段階まで進んでから初めて落ちる。これを避けるため、`miyamai_news.rb`
-  は起動直後に `Internal::NodeDeps.validate_wrangler_build!` を呼び、
-  `wrangler deploy --dry-run`（空の一時ディレクトリを `--assets` に渡し、
+  は起動時に `Internal::NodeDeps.validate_wrangler_build!` を呼び（実際に deploy
+  へ到達する起動に限る。呼び出し条件は次項参照）、`wrangler deploy --dry-run`
+  （空の一時ディレクトリを `--assets` に渡し、
   実アップロードなしでビルドと設定検証だけを行わせる）で fail fast させている。
   `node_modules/web-push` の有無だけを見るファイル存在チェックにせず実際に
   `wrangler` を動かしているのは、依存の欠落に限らず `wrangler.jsonc` の
@@ -533,7 +534,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   に渡るようにするため）。priority が同順位の entry 同士では、config の
   `rss_feed_sources` 記載順（`items_per_source.flatten` 順）で先勝ち。
 - `fetched_news?` は「この実行で一度でも新規 RSS 収集が発生したか」を表す
-  フラグで、呼び出し側（miyamai_news.rb）が publish 到達時に
+  フラグで、呼び出し側（`Pipeline#run_full`）が publish 到達時に
   `confirm_immediately!`（fetch あり）と `confirm!`（fetch なし、pending
   ベース）のどちらの経路で収集window を確定するか判断するのに使う。
   digest→generate と同一インスタンスで複数回工程を呼んでも、一度 true に
@@ -575,8 +576,8 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
 （`lib/internal/episode_logger.rb`）はこれを `work/<date_tag>_<slot>.log` に
 プレーンテキストで追記するだけの薄い記録係で、以下の不変条件を持つ。
 
-- **Config と同じモジュールレベルのグローバル状態**。`miyamai_news.rb` の
-  `main` 内で episode 確定後・`WORK_DIR` 作成後に一度だけ `configure(path)` する。
+- **Config と同じモジュールレベルのグローバル状態**。`Pipeline#setup_episode!`
+  内で episode 確定後・`WORK_DIR` 作成後に一度だけ `configure(path)` する。
   `AiCli`（呼び出し元のインスタンス状態を参照しない設計）や、`Publisher` 経由で
   呼ばれ episode の概念を持たない `UsedNewsFormatter`、`FeedCache` の下位層で
   episode を知らない `HttpFetcher` など、経路の異なる全呼び出し元に個別に
@@ -617,9 +618,9 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
   済み）。そのためプロンプト全文を argv 経由で渡す現状の実装は、ARG_MAX
   超過リスク（Issue #90）を認識した上での制約であり、stdin/一時ファイルへの
   切り替えでは解決できない。
-- `work_globs(work_dir)` は `work/*.log` を返し、`miyamai_news.rb` の
-  `clean_work_dir` が他コンポーネントの `work_globs` と合算して `--clean` の
-  対象にする（`ScriptGenerator`/`VoiceSynthesizer` と同じホワイトリスト方式）。
+- `work_globs(work_dir)` は `work/*.log` を返し、`Pipeline#clean_work_dir` が
+  他コンポーネントの `work_globs` と合算して `--clean` の対象にする
+  （`ScriptGenerator`/`VoiceSynthesizer` と同じホワイトリスト方式）。
 
 ### used_news の表示フォーマット（Markdown サブセット）
 
@@ -827,12 +828,15 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 ### miyamai_news.rb（CLIエントリポイント）
 
 - CLI 起動時の config 検証: `--ui-only`/`--clean`/`--clean-archive` は
-  `pipeline.mode` とは無関係だが公開先（R2・Workers）を触るため
-  `cloudflare` を要求する（`Config.validate_publish_target!`）。
-  `--confirm-fetch`/`--restore-fetch` は `work/last_fetch.json` のみを触り
-  公開先も pipeline.mode も伴わないので検証を全てスキップする。それ以外は各コンポーネントが実行中に
-  MissingKeyError で落ちて中途半端に失敗するのを避けるため、起動直後に必要な
-  config が揃っているか一括で検証する（`Config.validate_for!`）。
+  `pipeline.mode` とは無関係だが公開先（R2・Workers）を触るため個別に検証する
+  （`--ui-only` は `assets` も参照するため `Config.validate_sections!("cloudflare",
+  "assets")`、`--clean`/`--clean-archive` は `deploy_site` を呼ばないため
+  `cloudflare` のみで足りる `Config.validate_publish_target!`。詳細は前掲
+  「Publisher / Internal::Site」節参照）。`--confirm-fetch`/`--restore-fetch` は
+  `work/last_fetch.json` のみを触り公開先も pipeline.mode も伴わないので検証を
+  全てスキップする。それ以外は各コンポーネントが実行中に MissingKeyError で
+  落ちて中途半端に失敗するのを避けるため、起動直後に必要な config が揃っているか
+  一括で検証する（`Config.validate_for!`）。
 - `--config` のパス解決は cwd 基準（一般的な CLI の期待動作。`__dir__` 基準だと
   スクリプト位置基準になり、リポジトリ外のディレクトリから相対パスを指定したときに
   意図と異なる場所を読んでしまう）。
@@ -901,8 +905,8 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   slot。ファイル名・ストレージのオブジェクト名・ログパス・Publisher のアーカイブ表示に使う）
   は独立した概念で、混同しないこと。`now` の消費者は `ScriptGenerator` 経由で
   `FeedCache`（`seen_at` 記録）・`LastFetchStore`（`since` 判定の起点）のみ。
-  `miyamai_news.rb` は `--date`/`--slot` 指定時に `date:`/`slot:` は明示上書きするが、
-  `now:` には常に `Time.now`（実行時の実時刻）を渡す。`--date` で過去日を指定した際に
+  `Pipeline#setup_episode!` は `--date`/`--slot` 指定時に `date:`/`slot:` は明示上書き
+  するが、`now:` には常に `Time.now`（実行時の実時刻）を渡す。`--date` で過去日を指定した際に
   `now` まで過去に飛ばすと、その実行で新規に見つかった記事の `seen_at` が過去時刻で
   記録され、`confirmed_at`（実時刻ベース）以下として `select_since_for` に弾かれる。
   `seen_at` は一度設定されると二度と更新されないため、これは一時的な欠落ではなく
