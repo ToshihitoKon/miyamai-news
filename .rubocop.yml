@@ -27,6 +27,10 @@ Layout/ArgumentAlignment:
 Layout/HashAlignment:
   EnforcedHashRocketStyle: key
   EnforcedColonStyle: key
+# 複数行にまたがるメソッド呼び出しの継続行も、他の折り返し（FirstArgumentIndentation等）
+# と同じく呼び出し先頭の位置に揃えず、一定量だけインデントする。
+Layout/MultilineMethodCallIndentation:
+  EnforcedStyle: indented
 
 Lint:
   Enabled: true
@@ -75,3 +79,6 @@ Style/BarePercentLiterals:
   Enabled: false
 Style/Lambda:
   EnforcedStyle: literal
+# %<name>s のような名前付きトークンは要求しない。%s/%04d 等の位置指定のままでよい。
+Style/FormatStringToken:
+  EnforcedStyle: unannotated

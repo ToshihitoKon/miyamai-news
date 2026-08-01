@@ -273,8 +273,8 @@ class ScriptGenerator
   # タイトルの重複除去（大文字小文字・空白を無視）。同順位内は先勝ち。
   def dedup_by_title(items)
     items.each_with_index.group_by { |i, _idx| i[:title].downcase.gsub(/\s+/, "") }
-                         .values
-                         .map { |group| group.min_by { |i, idx| [DEDUP_PRIORITY_RANK.fetch(i[:priority], 1), idx] }.first }
+      .values
+      .map { |group| group.min_by { |i, idx| [DEDUP_PRIORITY_RANK.fetch(i[:priority], 1), idx] }.first }
   end
 
   # 1ソース分の新着記事を FeedCache から全件取得し、メタ情報を付けて返す。

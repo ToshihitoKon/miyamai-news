@@ -76,7 +76,7 @@ class VoiceSynthesizer
 
   def wav_chunk_path(wav_dir, index, text)
     digest = Digest::SHA256.hexdigest(text)[0, 8]
-    File.join(wav_dir, format("%<index>04d_%<digest>s.wav", index: index, digest: digest))
+    File.join(wav_dir, format("%04d_%s.wav", index, digest))
   end
 
   def voicepeak_bin = Config.voicepeak.bin
@@ -171,15 +171,15 @@ class VoiceSynthesizer
 
     # 末尾に空文字列＋タグなしの組が必ず1つ余分に付くため取り除く。
     text_and_pause = normalized.scan(TEXT_WITH_FOLLOWING_TAG)
-                               .map { |text, tag| [text, tag&.to_sym] }
+      .map { |text, tag| [text, tag&.to_sym] }
     text_and_pause.pop if text_and_pause.last == ["", nil]
 
     chunks = []
     text_and_pause.each do |text, pause|
       sentences = text.split(/(?<=。)/) # 「。」の直後で分割（句点は各文に残す）
-                      .map(&:strip)
-                      .reject(&:empty?)
-                      .flat_map { |sentence| split_long_sentence(sentence) }
+        .map(&:strip)
+        .reject(&:empty?)
+        .flat_map { |sentence| split_long_sentence(sentence) }
       # タグ直後に文が続かない場合、この pause はどのチャンクにも乗らず捨てられる。
       next if sentences.empty?
 
