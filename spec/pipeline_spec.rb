@@ -48,7 +48,7 @@ RSpec.describe Pipeline do
       allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
       allow(ScriptGenerator).to receive(:work_globs).and_return([])
       allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
-      allow(Publisher).to receive(:new).and_return(instance_double(Publisher, object_exists?: false))
+      allow(Publisher).to receive(:new).and_return(instance_double(Publisher, published_episode_files: []))
 
       build_pipeline(clean: true).run
 

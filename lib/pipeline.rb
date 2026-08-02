@@ -111,9 +111,9 @@ class Pipeline
     mp3s = Dir.glob(File.join(@dist_dir, "miyamai_news_*.mp3"))
     return if mp3s.empty?
 
-    publisher = Publisher.new
+    published = Publisher.new.published_episode_files
     mp3s.each do |mp3|
-      if publisher.object_exists?(File.basename(mp3))
+      if published.include?(File.basename(mp3))
         dir = File.dirname(mp3)
         episode_files = Publisher.episode_object_names(File.basename(mp3)).map { |name| File.join(dir, name) }
         FileUtils.rm_f(episode_files)
@@ -141,7 +141,7 @@ class Pipeline
   def run_publish_only
     ensure_mode_allows!("publish")
     run_publish
-    ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: LastFetchStore.confirm!(work_dir: @work_dir))
+    confirm_fetch_and_record_history!
   end
 
   def run_digest_only
@@ -172,8 +172,13 @@ class Pipeline
       LastFetchStore.confirm_immediately!(work_dir: @work_dir, at: @generator.collect_since_anchor)
       ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: @generator.episode_key)
     else
-      ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: LastFetchStore.confirm!(work_dir: @work_dir))
+      confirm_fetch_and_record_history!
     end
+  end
+
+  def confirm_fetch_and_record_history!
+    episode_key = LastFetchStore.confirm!(work_dir: @work_dir)
+    ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: episode_key)
   end
 
   def ensure_mode_allows!(required_mode)

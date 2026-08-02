@@ -523,6 +523,9 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   `ScriptGenerator.record_used_news_history!` が `Config.collect` を参照するため、
   検証を先に済ませないと「pending は解消済みなのに履歴記録だけ失敗する」
   中途半端な状態になり、`pending_episode` が既に消えていて後から追記もできない。
+- `confirm!`/`rollback!` は、直前の `confirmed_at`/`pending_at` を捨てる前に
+  `rollback_at` へ退避してから `last_op` を記録する。誤って `confirm!`/`rollback!` を
+  呼んでしまっても `restore!` で1段だけ巻き戻せるようにするため。
 - `resolve_pending!` の確認プロンプトで無回答（Enter/N）の既定はロールバック
   （＝ confirmed_at を進めない）。理由: 記事を取りこぼす（confirmed_at を進めて
   しまうと二度と収集対象に戻らない）よりも、次回また同じ記事が候補に上がる
