@@ -53,8 +53,7 @@ module LastFetchStore
     episode_key
   end
 
-  # pending_at を捨てる（confirmed_at は変えない）。誤って rollback しても .restore! で
-  # 復旧できるよう、捨てた値を rollback_at に退避する。pending_at が無ければ何もしない。
+  # pending_at を捨てる（confirmed_at は変えない）。pending_at が無ければ何もしない。
   # 破棄した回は履歴に残さないので pending_episode もクリアする（restore! では復元しない）。
   def rollback!(work_dir:)
     data = load(work_dir)

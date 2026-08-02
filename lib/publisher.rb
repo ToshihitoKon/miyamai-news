@@ -69,8 +69,8 @@ class Publisher
     puts "done (UI only): #{public_url('index.html')}"
   end
 
-  def object_exists?(object)
-    @site.episode_file_exist?(object)
+  def published_episode_files
+    @site.published_episode_files
   end
 
   def clean_archive

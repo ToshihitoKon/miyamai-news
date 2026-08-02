@@ -81,7 +81,8 @@ module Config
 
     # target_mode 自身とそれより手前の全 mode の必須セクションを合算する（加算方式）。
     def required_sections_for(target_mode)
-      MODE_ORDER[target_mode].downto(0).flat_map { |order| REQUIRED_SECTIONS_DELTA.fetch(MODE_ORDER.key(order)) }
+      modes = MODE_ORDER.keys.first(MODE_ORDER[target_mode] + 1)
+      modes.flat_map { |mode| REQUIRED_SECTIONS_DELTA.fetch(mode) }
     end
 
     def app_config

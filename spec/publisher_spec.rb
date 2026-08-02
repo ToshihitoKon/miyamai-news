@@ -385,27 +385,15 @@ RSpec.describe Publisher do
     end
   end
 
-  describe "#object_exists?" do
-    it "returns true when the object is present" do
+  describe "#published_episode_files" do
+    it "returns object base names under the episode prefix" do
       publisher = build_publisher
-      s3.stub_responses(:head_object, {})
+      s3.stub_responses(:list_objects_v2, {
+        contents: [{ key: "episodes/foo.mp3" }, { key: "episodes/foo.used.txt" }],
+        is_truncated: false,
+      })
 
-      expect(publisher.object_exists?("foo.mp3")).to be true
-    end
-
-    it "returns false on genuine absence" do
-      publisher = build_publisher
-      s3.stub_responses(:head_object, "NotFound")
-
-      expect(publisher.object_exists?("foo.mp3")).to be false
-    end
-
-    # 確認失敗を「存在しない」と誤ると既存台帳を上書き消失させる。
-    it "raises instead of returning false on a transient failure" do
-      publisher = build_publisher
-      s3.stub_responses(:head_object, "InternalError")
-
-      expect { publisher.object_exists?("foo.mp3") }.to raise_error(Aws::S3::Errors::ServiceError)
+      expect(publisher.published_episode_files).to contain_exactly("foo.mp3", "foo.used.txt")
     end
   end
 
