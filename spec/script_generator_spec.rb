@@ -84,6 +84,40 @@ RSpec.describe ScriptGenerator do
     end
   end
 
+  describe "#digest と #generate を同一インスタンスで連続実行した場合" do
+    # pipeline.rb の run_full は同一 generator に対して digest → generate の順で呼ぶ。
+    # digest_news は両方から呼ばれる冪等関数なので、メモ化しないと2回目の呼び出しで
+    # 「今まさに自分が生成したファイル」を reuse と誤って報告してしまう。
+    it "digest_news の中身を再実行せず、facts抽出までのAI呼び出しは1回で済む" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+      success_status = instance_double(Process::Status, success?: true, exitstatus: 0)
+      call_count = 0
+
+      allow(Open3).to receive(:capture3) do |*_cmd, **_opts|
+        call_count += 1
+        case call_count
+        when 1
+          File.write(generator.send(:news_selected_path), "## 生成AI\n1. Title A\n   https://example.com/a\n   (meta)\n")
+        when 2
+          File.write(generator.send(:news_facts_path), "## Title A\n概要です。\n")
+        when 3
+          File.write(generator.send(:script_path), "宮舞モカです。こんにちは、今日のニュースです。\n")
+          File.write(generator.send(:used_news_path), "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n")
+        when 4
+          File.write(generator.send(:tts_script_path), "宮舞モカです。こんにちは、今日のニュースです（整形済み）。\n")
+        end
+        ["", "", success_status]
+      end
+
+      expect(generator).not_to receive(:warn).with(/\Areuse: /)
+
+      generator.digest
+      generator.generate
+
+      expect(call_count).to eq(4)
+    end
+  end
+
   describe "selector プロンプトへの紹介済みニュース履歴の反映" do
     # selector（1回目の AI 呼び出し）に渡した stdin を捕捉して返す。
     def capture_selector_stdin(generator)
