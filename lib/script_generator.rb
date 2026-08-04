@@ -113,10 +113,12 @@ class ScriptGenerator
   def provisional_used_news_path = self.class.provisional_used_news_path(@work_dir, episode_key)
 
   def digest_news
+    return @digest_news if @digest_news
+
     load_or_collect_news
     selected_news = select_news
     extract_news_facts(selected_news)
-    selected_news
+    @digest_news = selected_news
   end
 
   def select_news
