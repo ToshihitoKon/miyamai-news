@@ -52,7 +52,7 @@ module UsedNewsMarkdown
       elsif line.strip.empty?
         # 空行は項目区切り。何もしない。
       elsif in_item
-        html << %(<p class="news-sum">#{h(line.strip)}</p>\n)
+        html << %(<div class="news-sum">#{h(line.strip)}</div>\n)
       end
     end
     close_category.call

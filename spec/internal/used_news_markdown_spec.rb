@@ -36,7 +36,7 @@ RSpec.describe UsedNewsMarkdown do
       expect(result.html).to include(
         '<div class="news-title"><a href="https://example.com/gemini" target="_blank" rel="noopener">Gemini 3.5 Pro が延期か</a></div>'
       )
-      expect(result.html).to include('<p class="news-sum">次世代 LLM の開発が難航しているという観測。</p>')
+      expect(result.html).to include('<div class="news-sum">次世代 LLM の開発が難航しているという観測。</div>')
       expect(result.html).to include('<div class="news-meta">(2026-07-17 / 財経新聞)</div>')
       expect(result.html).to include('<div class="news-cat">セキュリティ</div>')
     end
