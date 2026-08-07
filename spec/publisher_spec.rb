@@ -595,11 +595,11 @@ RSpec.describe Publisher do
       it "renders structured HTML with the title linked, surviving both decode steps" do
         xml_decoded = CGI.unescapeHTML(render(used_news))
 
-        expect(xml_decoded).to include('<div class="news-cat">生成AI</div>')
+        expect(xml_decoded).to include('<h3 class="news-cat">生成AI</h3>')
         expect(xml_decoded).to include(
-          '<div class="news-title"><a href="https://example.com/gemini" target="_blank" rel="noopener">Gemini 3.5 Pro が延期か</a></div>'
+          '<p class="news-title"><strong><a href="https://example.com/gemini" target="_blank" rel="noopener">Gemini 3.5 Pro が延期か</a></strong></p>'
         )
-        expect(xml_decoded).to include('<div class="news-meta">(2026-07-17 / 財経新聞)</div>')
+        expect(xml_decoded).to include('<p class="news-meta">(2026-07-17 / 財経新聞)</p>')
       end
 
       it "escapes markup in the source text so it does not become real tags" do

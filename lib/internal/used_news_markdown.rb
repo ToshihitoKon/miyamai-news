@@ -40,19 +40,19 @@ module UsedNewsMarkdown
     lines.each do |line|
       if (m = line.match(RE_CATEGORY))
         close_category.call
-        html << %(<div class="news-cat">#{h(m[1])}</div>\n<div class="news-cat-body">\n)
+        html << %(<h3 class="news-cat">#{h(m[1])}</h3>\n<div class="news-cat-body">\n)
         in_category = true
       elsif (m = line.match(RE_TITLE))
         orphan = true unless in_category
         close_item.call
-        html << %(<div class="news-item"><div class="news-title">#{anchor(m[1], m[2])}</div>\n)
+        html << %(<div class="news-item"><p class="news-title"><strong>#{anchor(m[1], m[2])}</strong></p>\n)
         in_item = true
       elsif (m = line.match(RE_META))
-        html << %(<div class="news-meta">#{h("(#{m[1]})")}</div>\n) if in_item
+        html << %(<p class="news-meta">#{h("(#{m[1]})")}</p>\n) if in_item
       elsif line.strip.empty?
         # 空行は項目区切り。何もしない。
       elsif in_item
-        html << %(<div class="news-sum">#{h(line.strip)}</div>\n)
+        html << %(<p class="news-sum">#{h(line.strip)}</p>\n)
       end
     end
     close_category.call

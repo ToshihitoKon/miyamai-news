@@ -28,17 +28,17 @@ RSpec.describe UsedNewsMarkdown do
   USED
 
   describe ".render" do
-    it "wraps categories, titles, summaries, and meta in the expected divs" do
+    it "wraps categories, titles, summaries, and meta in the expected tags" do
       result = described_class.render(NEW_FORMAT)
 
       expect(result.ok).to be true
-      expect(result.html).to include('<div class="news-cat">生成AI</div>')
+      expect(result.html).to include('<h3 class="news-cat">生成AI</h3>')
       expect(result.html).to include(
-        '<div class="news-title"><a href="https://example.com/gemini" target="_blank" rel="noopener">Gemini 3.5 Pro が延期か</a></div>'
+        '<p class="news-title"><strong><a href="https://example.com/gemini" target="_blank" rel="noopener">Gemini 3.5 Pro が延期か</a></strong></p>'
       )
-      expect(result.html).to include('<div class="news-sum">次世代 LLM の開発が難航しているという観測。</div>')
-      expect(result.html).to include('<div class="news-meta">(2026-07-17 / 財経新聞)</div>')
-      expect(result.html).to include('<div class="news-cat">セキュリティ</div>')
+      expect(result.html).to include('<p class="news-sum">次世代 LLM の開発が難航しているという観測。</p>')
+      expect(result.html).to include('<p class="news-meta">(2026-07-17 / 財経新聞)</p>')
+      expect(result.html).to include('<h3 class="news-cat">セキュリティ</h3>')
     end
 
     it "links the title to the article URL" do
@@ -74,7 +74,7 @@ RSpec.describe UsedNewsMarkdown do
 
       expect(result.ok).to be true
       expect(result.html).not_to include("<a ")
-      expect(result.html).to include('<div class="news-title">クリック</div>')
+      expect(result.html).to include('<p class="news-title"><strong>クリック</strong></p>')
     end
 
     it "HTML-escapes titles, summaries, and meta" do
