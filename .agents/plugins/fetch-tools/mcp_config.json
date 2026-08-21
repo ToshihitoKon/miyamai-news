@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "mcp-fetch-server@1.1.2"],
+      "env": {
+        "DEFAULT_LIMIT": "20000"
+      }
+    }
+  }
+}

@@ -20,6 +20,10 @@ RSS feed から最新のニュースを AI で要約し、宮舞モカによる�
 - Ruby
 - AI Agent CLI (Claude Code or Antigravity)
 
+Antigravity を使う場合に追加で必要
+
+- Node.js 18 以降（ニュース抽出処理が `npx` 経由で MCP サーバーを起動するため）
+
 mode:synthesize, publish の場合に追加で必要
 
 - ffmpeg
