@@ -577,9 +577,10 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   判断する用途には使わない。
 - writer ステップ（台本執筆）は、既に抽出済みの facts シートに基づいて執筆させる
   よう**プロンプト側**で指示している（Web への再アクセスによる手戻り・情報の
-  食い違いを防ぐため）。`allowedTools` は全 AI CLI 呼び出しで共通の
-  `"Read Write WebFetch"` に固定しており（`Internal::AiCli.run` 参照）、
-  呼び出し元ごとにツールを絞ってはいない（実害のあるツールではなく、
+  食い違いを防ぐため）。`--allowedTools "Read Write WebFetch"` は `claude` 分岐
+  専用の引数（`Internal::AiCli.run` 参照）で、agy 分岐には同種のツール制限が
+  存在しない（`--dangerously-skip-permissions` で全ツール許可）。ツール制限を
+  呼び出し元ごとに絞っていないのは claude 分岐も同様（実害のあるツールではなく、
   用途ごとに出し分ける利点が薄いため）。
 - `category_details` は「AI への執筆方針の指示」と「used_news のカテゴリ見出し
   （`## ラベル名`）として使う正式なラベル一覧」を兼ねる。`UsedNewsFormatter.strip_preamble`
@@ -769,6 +770,74 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   文字列として埋め込むのをやめ、`news_collected_path` の絶対パスを渡して
   「Read ツールで読め」と指示する形に変更した（プロンプト全体のサイズを削り、
   書き込み指示の相対的な埋没を避けるため）。
+- extractor.prompt.erb は `bin`（agy/claude）を直接見分けず、「`fetch_readable`
+  ツールが利用可能ならそれを使い、無ければ `WebFetch` を使う」というツールの
+  有無で分岐する指示にしている。プロンプト内で「agy を使っている場合は」と
+  バイナリ名で自己判定させる書き方は、agy 上で動くモデルが自分の実行バイナリ名
+  （プロダクト名は Antigravity）を認識している保証がなく、条件が成立せず
+  どちらの分岐にも該当しないまま `read_url_content` にフォールバックしてクラッシュが
+  再発しかねないため避けている。
+- agy のビルトイン WebFetch（`read_url_content`）は、レスポンスが不正な UTF-8
+  バイト列を含むとツール結果を agy 自身のモデルリクエストに詰める際の protobuf
+  シリアライズで例外を起こし、`agy` プロセスごと異常終了する（`proto: field
+  google.protobuf.Value.string_value contains invalid UTF-8`。extractor で
+  ITmedia の記事 URL を読んだ際に発生を確認済み）。ITmedia を含む一部の
+  ニュースサイトは HTML を Shift_JIS で配信しており、UTF-8 としては不正な
+  バイト列になるため、`read_url_content` がこれらのサイトに当たるたびに
+  再現しうる。agy には `read_url_content` を無効化したり `--allowedTools` の
+  ように呼び出し可能なツールを制限する引数が無い（前掲の通り）ため、この
+  クラッシュを止める手段はプロンプト側で「使うな」と指示すること以外にない。
+  extractor.prompt.erb はこの理由で `read_url_content` の使用を明示的に禁止し、
+  代わりに MCP 経由の `fetch_readable`（後述）を使うよう指示している。
+- 上記の対策として `fetch-mcp`（zcaceres/fetch-mcp、npm パッケージ名
+  `mcp-fetch-server`）を project scope の agy プラグイン
+  （`.agents/plugins/fetch-tools/{plugin.json,mcp_config.json}`）として導入した。
+  agy の MCP 登録には project scope が無く `agy mcp add` はホームディレクトリ側の
+  `~/.gemini/config/mcp_config.json` に書き込まれグローバルに効いてしまう
+  （検証済み）ため、リポジトリにコミットして共有できる project scope プラグイン
+  （`.agents/plugins/<name>/`。ワークスペースを開いている間だけ自動的に読み込まれる）
+  を使っている。`mcp_config.json` の `npx` 引数にはパッケージバージョンを固定して
+  いる（`mcp-fetch-server@1.1.2`）。バージョン未固定だと 6 時台の cron 実行のたびに
+  npm から最新版を解決するため、上流の破壊的変更やレジストリ障害がそのまま
+  本番パイプライン障害になる。`DEFAULT_LIMIT` を環境変数で 20000 に上げているのは、
+  既定の 5000 文字では extractor がメイン候補に要求する「仕組み・インパクト・
+  深掘りポイント」の3観点を書くには本文が短く切れすぎるため（`0` にして無制限には
+  しない。ニュース10本分の本文がまるごとプロンプトに乗るとトークンが膨らむため）。
+- **`fetch-mcp` は Shift_JIS サイトの日本語本文を修復不可能な形で破壊する。**
+  `fetch_html`/`fetch_markdown`/`fetch_txt`/`fetch_readable` は全ツールが共通の
+  `Fetcher.readResponseText`（`src/Fetcher.ts`）を通るが、ここで使っている
+  `new TextDecoder()` はエンコーディング指定なし＝常に UTF-8 固定デコードで、
+  レスポンスの `Content-Type` の charset を一切見ない。ITmedia の記事で実機
+  検証したところ、英数字・URL・Markdown 構造（リンク・見出し）は無傷で残る一方、
+  日本語部分（マルチバイト文字）だけが読めるラテン文字の羅列に化けており、
+  この壊れた文字列から元の日本語を機械的に復元する方法は無い（Ruby 側で同じ
+  HTML を Shift_JIS として `force_encoding` → `encode("UTF-8")` すれば完全に
+  正しく復元できることは確認済みなので、原因は fetch-mcp 側の decode 実装に
+  限定される）。この既知の欠陥を受けて、extractor.prompt.erb には
+  「`fetch_readable` の結果が文字化けしていたら、その記事は読み取れなかった
+  ものとしてメイン候補・補欠候補いずれにも採用せず、ファクトシート・暫定
+  ニュース一覧（used_news）のどちらにも書かない」という指示を入れている
+  （タイトルやフィードの要約からの推測で埋め合わせることを防ぐため）。
+  **結果として、Shift_JIS で配信しているニュースサイトの記事は番組から
+  恒常的に落ちる**（agy のクラッシュを止めるためのトレードオフとして許容した
+  仕様であり、別のバグではない）。ITmedia の実記事 1 本と Publickey の実記事
+  1 本を同時に extractor プロンプトへ渡す実機検証で、Publickey 側は3観点入りの
+  ファクトシートが正しく書かれ、ITmedia 側だけがファクトシート・used_news
+  両方から欠落することを確認済み（出力フォーマット指示自体は無視されていない
+  ことの確認も兼ねる）。
+- project scope の agy プラグイン（`.agents/plugins/`）は、agy 実行時の
+  ワークスペース（`Dir.pwd` / `--add-dir`）から解決される。extractor.prompt.erb の
+  `fetch_readable` が使えない場合のフォールバック先である `WebFetch` は
+  agy には存在しないツール名（claude 専用）のため、何らかの理由で
+  `.agents/plugins/fetch-tools` が読み込まれないワークスペースで agy を
+  実行すると、フォールバックが機能せず `read_url_content` に戻ってクラッシュが
+  再発しうる。現状の実行経路（`Internal::AiCli.run` はプロセスの `Dir.pwd` を
+  `--add-dir` に渡すのみで、cron 運用ではリポジトリルート）では起きない想定だが、
+  実行ディレクトリを変える変更を加える際は本項目を確認すること。
+- extractor ステップは `npx`（Node.js 18+）が実行時に必要になった
+  （project scope プラグイン経由で `mcp-fetch-server` を起動するため）。
+  ruby/voicepeak/ffmpeg 等と同様、実行環境にこれが無いと 6 時台の cron が
+  ここで失敗する。
 
 ### UsedNewsHistory（紹介済みニュース履歴）
 
