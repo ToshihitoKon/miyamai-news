@@ -49,9 +49,7 @@ module Slot
   DATE_TAG_PATTERN = /(\d{8})_(#{JA_LABELS.keys.join('|')})(?:\.mp3)?\z/
 
   # ファイル名（mp3 でも "<date_tag>_<slot>" 形式の episode_key でもよい）から
-  # [date_tag, 日内順] を取り出す。比較・ソートに使う。Array は Comparable を
-  # 持たないため <=> で比較すること。抽出できなければ nil を返す（slot を
-  # 持たない旧ファイル名など、呼び出し側で個別に判定できるようにするため）。
+  # [date_tag, 日内順] を取り出す。抽出できなければ nil を返す。
   def sort_key_from_filename(filename)
     m = filename.match(DATE_TAG_PATTERN)
     return nil unless m
@@ -61,11 +59,10 @@ module Slot
 
   DATE_ONLY_PATTERN = /(\d{8})(?:\.mp3)?\z/
 
-  # 台帳の境界計算専用: slot を含まないファイル名でも date_tag だけは
-  # 取り出し、その日の最初（sort_key 最小値）として扱う保守的なキーを返す。
-  # 台帳に混在する slot なし旧形式の行を境界計算から単純に無視すると、
-  # 境界が実際より新しい方へ繰り上がり、まだ保持期間内のはずの未公開ファイル
-  # まで削除対象になってしまうため、安全側（より古い扱い）に倒す。
+  # 台帳の境界計算専用: slot なし旧形式でも date_tag だけ取り出し、
+  # その日の最初（sort_key 最小値）として扱う。境界計算からその行を
+  # 単純に無視すると境界が繰り上がり、保持期間内の未公開ファイルまで
+  # 削除対象になるため安全側に倒す。
   def conservative_sort_key_from_filename(filename)
     sort_key_from_filename(filename) || begin
       m = filename.match(DATE_ONLY_PATTERN)

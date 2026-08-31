@@ -70,9 +70,7 @@ class Publisher
   end
 
   # 渡された mp3 ファイル名のうち、台帳に filename が実在するか、台帳の
-  # 現存範囲より古い（＝削除してよい）ものだけを返す。台帳が空の場合は
-  # 境界を定義できないため常に空集合を返す（何も publish していないので、
-  # 削除してよいものは存在しない）。
+  # 現存範囲より古い（＝削除してよい）ものだけを返す。
   def prunable_from_dist(mp3_filenames)
     rows = fetch_existing_archives
     return [] if rows.empty?
