@@ -76,7 +76,7 @@ class Publisher
     return [] if rows.empty?
 
     ledger_names = rows.map { |r| r[1] }.compact
-    oldest = ledger_names.filter_map { |name| Slot.conservative_sort_key_from_filename(name) }.min
+    oldest = ledger_names.filter_map { |name| Slot.lenient_sort_key_from_filename(name) }.min
 
     mp3_filenames.select do |filename|
       next true if ledger_names.include?(filename)

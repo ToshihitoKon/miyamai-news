@@ -46,26 +46,24 @@ module Slot
     m ? ja_label(m[1]) : ""
   end
 
-  DATE_TAG_PATTERN = /(\d{8})_(#{JA_LABELS.keys.join('|')})(?:\.mp3)?\z/
+  RE_DATE_TAG = /(\d{8})_(#{JA_LABELS.keys.join('|')})(?:\.mp3)?\z/
 
   # ファイル名（mp3 でも "<date_tag>_<slot>" 形式の episode_key でもよい）から
   # [date_tag, 日内順] を取り出す。抽出できなければ nil を返す。
   def sort_key_from_filename(filename)
-    m = filename.match(DATE_TAG_PATTERN)
+    m = filename.match(RE_DATE_TAG)
     return nil unless m
 
     [m[1], sort_key(m[2])]
   end
 
-  DATE_ONLY_PATTERN = /(\d{8})(?:\.mp3)?\z/
+  RE_DATE_ONLY = /(\d{8})(?:\.mp3)?\z/
 
-  # 台帳の境界計算専用: slot を含まないファイル名でも date_tag だけ取り出し、
-  # その日の最初（sort_key 最小値）として扱う。境界計算からその行を
-  # 単純に無視すると境界が繰り上がり、保持期間内の未公開ファイルまで
-  # 削除対象になるため安全側に倒す。
-  def conservative_sort_key_from_filename(filename)
+  # sort_key_from_filename と同じ [date_tag, 日内順] を返すが、slot を
+  # 抽出できなければ date_tag だけからその日の最初（-1）として補う。
+  def lenient_sort_key_from_filename(filename)
     sort_key_from_filename(filename) || begin
-      m = filename.match(DATE_ONLY_PATTERN)
+      m = filename.match(RE_DATE_ONLY)
       m ? [m[1], -1] : nil
     end
   end

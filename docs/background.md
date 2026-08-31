@@ -989,7 +989,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `#clean_published_dist` の判定（`Publisher#prunable_from_dist`）は、R2 の
   オブジェクト一覧列挙（`episodes/`/`archived/` の list）をせず、台帳
   （`archives.csv`）の内容と命名規則（`Slot.sort_key_from_filename`/
-  `Slot.conservative_sort_key_from_filename`）だけで行う。`archives.csv`
+  `Slot.lenient_sort_key_from_filename`）だけで行う。`archives.csv`
   自体の読み取りには `archives_exist?`（HeadObject）と `read_ledger`
   （GetObject）で R2 への往復が発生するが、ストレージの物理配置（今どの
   プレフィックスに実在するか）は判定材料にしないという意味でこう呼んで
@@ -1013,7 +1013,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
     - dist 側（`prunable_from_dist` の引数）は `Slot.sort_key_from_filename`
       で厳密に判定し、抽出できなければ境界比較を諦めて台帳との
       メンバーシップ判定だけで扱う。
-    - 台帳側（`archives.csv` の行）は `Slot.conservative_sort_key_from_filename`
+    - 台帳側（`archives.csv` の行）は `Slot.lenient_sort_key_from_filename`
       で判定し、slot を抽出できなくても date_tag だけからその日の最初
       （sort_key 最小値）として境界計算に含める。台帳の現存最古行が
       たまたま slot を含まない行だった場合に、その行を境界計算から
