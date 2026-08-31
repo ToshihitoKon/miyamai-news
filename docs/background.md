@@ -1008,18 +1008,18 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
     返す配列）の `<=>` で行う（date のみで判定すると同日複数 slot の境界を
     取り違える。`Array` は `Comparable` を include していないため `<` は
     使えない）。
-  - **dist 側と台帳側で、slot を持たない旧形式ファイル名
-    （`miyamai_news_<date_tag>.mp3`、`Slot.ja_label_from_filename` の
-    後方互換仕様と同じ対象）の扱いが非対称になっている**。
+  - **dist 側と台帳側で、slot を含まないファイル名（`miyamai_news_<date_tag>.mp3`）
+    の扱いが非対称になっている**。
     - dist 側（`prunable_from_dist` の引数）は `Slot.sort_key_from_filename`
       で厳密に判定し、抽出できなければ境界比較を諦めて台帳との
       メンバーシップ判定だけで扱う。
     - 台帳側（`archives.csv` の行）は `Slot.conservative_sort_key_from_filename`
       で判定し、slot を抽出できなくても date_tag だけからその日の最初
       （sort_key 最小値）として境界計算に含める。台帳の現存最古行が
-      たまたま旧形式だった場合に、その行を境界計算から単純に無視すると
-      境界が実際より新しい方へ繰り上がり、まだ保持期間内のはずの
-      未公開ファイルまで誤って削除対象になってしまうため。
+      たまたま slot を含まない行だった場合に、その行を境界計算から
+      単純に無視すると境界が実際より新しい方へ繰り上がり、まだ
+      保持期間内のはずの未公開ファイルまで誤って削除対象になって
+      しまうため。
     - 台帳の行が CSV の列欠損で filename（`r[1]`）が `nil` になっている
       場合は `compact` で読み飛ばす（`Slot.sort_key_from_filename(nil)` は
       `nil` に `match` が無く例外になるため、境界計算に混ぜない）。

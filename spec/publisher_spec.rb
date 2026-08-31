@@ -438,7 +438,7 @@ RSpec.describe Publisher do
       expect(result).to eq(["miyamai_news_20260601_morning.mp3"])
     end
 
-    # slot を含まない旧形式ファイル名は境界比較できないため、
+    # slot を含まないファイル名は境界比較できないため、
     # 台帳とのメンバーシップ判定だけで扱う（例外にしない）。
     it "keeps legacy filenames without a slot when they are not in the ledger" do
       publisher = build_publisher(ledger: ledger_csv([
@@ -449,7 +449,7 @@ RSpec.describe Publisher do
       expect(publisher.prunable_from_dist(["miyamai_news_20260501.mp3"])).to be_empty
     end
 
-    # 台帳の現存最古行が slot を持たない旧形式でも、date_tag だけで
+    # 台帳の現存最古行が slot を含まない filename でも、date_tag だけで
     # 保守的な境界を作り、まだ保持期間内のはずの未公開ファイルを
     # 誤って削除しない（境界計算からその行を単純に無視すると、
     # 境界が実際より新しい方へ繰り上がってしまう）。
