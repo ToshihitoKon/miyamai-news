@@ -61,11 +61,9 @@ module UsedNewsHistory
   private_class_method :prune
 
   # episode_key（"<date_tag>_<slot>"）を [date_tag, slot の日内順] に分解する。
+  # 未知形式は末尾（最古扱い）に寄せる。
   def episode_sort_key(episode_key)
-    date_tag, slot = episode_key.rpartition("_").values_at(0, 2)
-    [date_tag, Slot.sort_key(slot)]
-  rescue KeyError
-    ["", -1]
+    Slot.sort_key_from_filename(episode_key) || ["", -1]
   end
   private_class_method :episode_sort_key
 

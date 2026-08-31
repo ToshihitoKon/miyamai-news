@@ -111,15 +111,18 @@ class Pipeline
     mp3s = Dir.glob(File.join(@dist_dir, "miyamai_news_*.mp3"))
     return if mp3s.empty?
 
-    published = Publisher.new.published_episode_files
+    filenames = mp3s.map { |mp3| File.basename(mp3) }
+    prunable = Publisher.new.prunable_from_dist(filenames)
+
     mp3s.each do |mp3|
-      if published.include?(File.basename(mp3))
+      filename = File.basename(mp3)
+      if prunable.include?(filename)
         dir = File.dirname(mp3)
-        episode_files = Publisher.episode_object_names(File.basename(mp3)).map { |name| File.join(dir, name) }
+        episode_files = Publisher.episode_object_names(filename).map { |name| File.join(dir, name) }
         FileUtils.rm_f(episode_files)
-        warn "published, deleted: #{mp3}"
+        warn "pruned: #{mp3}"
       else
-        warn "unpublished, kept: #{mp3}"
+        warn "kept: #{mp3}"
       end
     end
   end

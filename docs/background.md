@@ -986,8 +986,53 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   `--synthesize-only` は synthesize 相当、`--publish-only` は publish 相当以上の
   config が検証されていないと実行できないようにする。満たさなければ、必要な config が
   未検証のまま実行が進んで途中で失敗するのを防ぐためここで止める。
-- `#clean_published_dist` は、ストレージ上に同名オブジェクトが存在する（＝公開済みの）
-  mp3 のみを削除する。未公開の回を誤って消さないための存在確認。
+- `#clean_published_dist` の判定（`Publisher#prunable_from_dist`）は、R2 の
+  オブジェクト一覧列挙（`episodes/`/`archived/` の list）をせず、台帳
+  （`archives.csv`）の内容と命名規則（`Slot.sort_key_from_filename`/
+  `Slot.lenient_sort_key_from_filename`）だけで行う。`archives.csv`
+  自体の読み取りには `archives_exist?`（HeadObject）と `read_ledger`
+  （GetObject）で R2 への往復が発生するが、ストレージの物理配置（今どの
+  プレフィックスに実在するか）は判定材料にしないという意味でこう呼んで
+  いる。削除対象は「台帳に filename が実在する（＝現在公開中）」か「台帳の
+  現存最古行より古い（＝rotation 済みか、そもそも一度も publish されな
+  かった超古いファイル。両者を区別しない）」のいずれかで、逆に「台帳に無く、
+  かつ境界内（＝publish 前の作業中の回）」だけが kept になる。以前の実装
+  （R2 の `episodes/` プレフィックスへの存在確認）では、保持件数
+  （`retention_episodes`）超過分が `archived/` へ rotation されるたびに
+  `episodes/` から消え、rotation 済みの回が「一度も公開されていない」と
+  誤判定されて dist/ に永久に残り続けるバグがあった（`archives.csv` も
+  `build_archives` で retention 件数に切り詰められるため、台帳を見ても
+  この誤判定は解消しない。境界そのものを「現存する最古行」として扱うことで
+  解決する）。
+  - 境界の比較は `[date_tag, 日内順]`（`Slot.sort_key_from_filename` 等が
+    返す配列）の `<=>` で行う（date のみで判定すると同日複数 slot の境界を
+    取り違える。`Array` は `Comparable` を include していないため `<` は
+    使えない）。
+  - **dist 側と台帳側で、slot を含まないファイル名（`miyamai_news_<date_tag>.mp3`）
+    の扱いが非対称になっている**。
+    - dist 側（`prunable_from_dist` の引数）は `Slot.sort_key_from_filename`
+      で厳密に判定し、抽出できなければ境界比較を諦めて台帳との
+      メンバーシップ判定だけで扱う。
+    - 台帳側（`archives.csv` の行）は `Slot.lenient_sort_key_from_filename`
+      で判定し、slot を抽出できなくても date_tag だけからその日の最初
+      （sort_key 最小値）として境界計算に含める。台帳の現存最古行が
+      たまたま slot を含まない行だった場合に、その行を境界計算から
+      単純に無視すると境界が実際より新しい方へ繰り上がり、まだ
+      保持期間内のはずの未公開ファイルまで誤って削除対象になって
+      しまうため。
+    - 台帳の行が CSV の列欠損で filename（`r[1]`）が `nil` になっている
+      場合は `compact` で読み飛ばす（`Slot.sort_key_from_filename(nil)` は
+      `nil` に `match` が無く例外になるため、境界計算に混ぜない）。
+  - **意図した挙動の変更点**: 保持期間の境界より古い「未公開のまま放置
+    された回」（`--date` を使わずとも、synthesize はしたが publish しない
+    まま retention 件数分の間隔が経過した場合など）も削除対象になる。
+    以前の実装はこのケースを保護していたが、ストレージの物理配置を見ない
+    設計に変えたことで意図的に失われるガードである。削除はローカルの
+    `dist/` 配下のみで、公開済みのバケット（index.html/feed.xml/archives.csv
+    等）には一切書き込まない。
+  - `Slot.sort_key_from_filename` をファイル名からの `[date_tag, 日内順]`
+    抽出の基本実装とし、`UsedNewsHistory#episode_sort_key` もこれに
+    委譲する（同じ判定ロジックを複数箇所に持つと基準がドリフトするため）。
 - `#setup_episode!` が `Episode.new` に渡す `now:` は `--date`/`--slot` の指定有無に
   関わらず常に `Time.now`（後掲「横断的な注意点」の `Episode#now` と
   `Episode#date`/`date_tag`/`slot` の独立性を参照）。

@@ -91,12 +91,6 @@ module Internal
         content_type: content_type, cache_control: cache_control)
     end
 
-    # 公開済みエピソード資材のオブジェクト名一覧（プレフィックスを除いたベース名）。
-    def published_episode_files
-      prefix = @storage.episode_key("")
-      @storage.list(prefix).map { |key| key.delete_prefix(prefix) }
-    end
-
     # 退避先は資材プレフィックスの外。
     def retire_episode_file(object)
       @storage.move(@storage.episode_key(object), @storage.archive_key(object))
