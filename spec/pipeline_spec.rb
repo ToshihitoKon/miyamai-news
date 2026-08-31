@@ -48,11 +48,31 @@ RSpec.describe Pipeline do
       allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
       allow(ScriptGenerator).to receive(:work_globs).and_return([])
       allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
-      allow(Publisher).to receive(:new).and_return(instance_double(Publisher, published_episode_files: []))
+      allow(Publisher).to receive(:new).and_return(instance_double(Publisher, prunable_from_dist: []))
 
       build_pipeline(clean: true).run
 
       expect(Internal::EpisodeLogger.instance_variable_get(:@path)).to be_nil
+    end
+
+    it "--clean は Publisher#prunable_from_dist が削除可と判定した mp3 とその兄弟ファイルだけを dist/ から消す" do
+      allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
+      allow(ScriptGenerator).to receive(:work_globs).and_return([])
+      allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
+      pruned_mp3 = "miyamai_news_20260601_morning.mp3"
+      kept_mp3 = "miyamai_news_20260801_morning.mp3"
+      [pruned_mp3, kept_mp3].each do |name|
+        File.write(File.join(dist_dir, name), "fake mp3")
+        File.write(File.join(dist_dir, name.sub(/\.mp3\z/, ".used.txt")), "fake used")
+      end
+      allow(Publisher).to receive(:new).and_return(instance_double(Publisher, prunable_from_dist: [pruned_mp3]))
+
+      build_pipeline(clean: true).run
+
+      expect(File.exist?(File.join(dist_dir, pruned_mp3))).to be false
+      expect(File.exist?(File.join(dist_dir, pruned_mp3.sub(/\.mp3\z/, ".used.txt")))).to be false
+      expect(File.exist?(File.join(dist_dir, kept_mp3))).to be true
+      expect(File.exist?(File.join(dist_dir, kept_mp3.sub(/\.mp3\z/, ".used.txt")))).to be true
     end
 
     it "--ui-only は republish_ui のみ呼ぶ" do

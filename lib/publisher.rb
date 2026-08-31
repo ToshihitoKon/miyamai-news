@@ -69,8 +69,25 @@ class Publisher
     puts "done (UI only): #{public_url('index.html')}"
   end
 
-  def published_episode_files
-    @site.published_episode_files
+  # 渡された mp3 ファイル名のうち、台帳に filename が実在するか、台帳の
+  # 現存範囲より古い（＝削除してよい）ものだけを返す。台帳が空の場合は
+  # 境界を定義できないため常に空集合を返す（何も publish していないので、
+  # 削除してよいものは存在しない）。
+  def prunable_from_dist(mp3_filenames)
+    rows = fetch_existing_archives
+    return [] if rows.empty?
+
+    ledger_names = rows.map { |r| r[1] }.compact
+    oldest = ledger_names.filter_map { |name| Slot.conservative_sort_key_from_filename(name) }.min
+
+    mp3_filenames.select do |filename|
+      next true if ledger_names.include?(filename)
+
+      key = Slot.sort_key_from_filename(filename)
+      next false if key.nil? || oldest.nil?
+
+      (key <=> oldest) == -1
+    end
   end
 
   def clean_archive

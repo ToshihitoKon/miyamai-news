@@ -135,7 +135,7 @@ bundle exec ruby miyamai_news.rb --publish-only    # dist/ の該当回を公開
 bundle exec ruby miyamai_news.rb --ui-only         # 新しい回を公開せず index.html / manifest.json だけ再生成
 
 # cleaner
-bundle exec ruby miyamai_news.rb --clean         # work/ を掃除し、公開済みの dist/ 成果物を削除
+bundle exec ruby miyamai_news.rb --clean         # work/ を掃除し、公開済みまたは保持期間を過ぎた dist/ 成果物を削除
 bundle exec ruby miyamai_news.rb --clean-archive # archived/ 配下の退避済み成果物を完全削除
 
 # last_fetched_at (RSS Feed 最終 fetch 時刻）の管理
