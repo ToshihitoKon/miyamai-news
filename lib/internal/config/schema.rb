@@ -52,6 +52,8 @@ module Internal
       attribute? :used_fix_effort, Types::Strict::String
       # フォーマット修復の最大リトライ回数。
       attribute? :used_fix_max_retries, Types::Strict::Integer.default(2)
+      # agy の --print-timeout に渡す値（Go の time.Duration 表記、例 "15m"）。
+      attribute? :print_timeout, Types::Strict::String.default("15m")
 
       def model_for(role)
         public_send(:"#{role}_model") || model

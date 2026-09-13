@@ -11,6 +11,8 @@ module Internal
   module AiCli
     module_function
 
+    PARTIAL_OUTPUT_MARKER = "returning partial output"
+
     def run(spinner_message, prompt, model_override: nil, effort_override: :default, fatal: true)
       bin = ::Config.ai_agent.bin
       model = model_override || ::Config.ai_agent.model
@@ -32,6 +34,7 @@ module Internal
           "#{spinner_message} [#{bin}]",
           "AI CLI failed",
           bin, "--model", model, "--dangerously-skip-permissions",
+          "--print-timeout", ::Config.ai_agent.print_timeout,
           "--add-dir", Dir.pwd, "-p", prompt,
           fatal: fatal, log_meta: log_meta
         )
@@ -52,12 +55,14 @@ module Internal
       EpisodeLogger.record(spinner_message, **log_meta, exit_code: status.exitstatus,
         duration_sec: EpisodeLogger.elapsed_since(start), stdout: stdout, stderr: stderr)
 
-      unless status.success?
+      timed_out = stderr.include?(PARTIAL_OUTPUT_MARKER)
+      unless status.success? && !timed_out
         spinner.error("(failed)")
         warn stderr
         return nil unless fatal
 
-        abort "#{error_message} (exit #{status.exitstatus})"
+        exit_desc = timed_out ? "print timeout" : "exit #{status.exitstatus}"
+        abort "#{error_message} (#{exit_desc})"
       end
 
       spinner.success("(done)")

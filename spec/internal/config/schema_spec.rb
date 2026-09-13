@@ -31,6 +31,18 @@ RSpec.describe Internal::Config do
 
       expect(agent.used_fix_max_retries).to eq(0)
     end
+
+    it "defaults print_timeout to 15m when absent" do
+      agent = described_class.new(bin: "agy", model: "gemini-3.8-flash-high")
+
+      expect(agent.print_timeout).to eq("15m")
+    end
+
+    it "keeps an explicit print_timeout" do
+      agent = described_class.new(bin: "agy", model: "gemini-3.8-flash-high", print_timeout: "20m")
+
+      expect(agent.print_timeout).to eq("20m")
+    end
   end
 
   describe Internal::Config::RssFeedSource do

@@ -838,6 +838,16 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   （project scope プラグイン経由で `mcp-fetch-server` を起動するため）。
   ruby/voicepeak/ffmpeg 等と同様、実行環境にこれが無いと 6 時台の cron が
   ここで失敗する。
+- agy は `--print-timeout`（既定 `5m0s`）で turn を打ち切ると、exit code は
+  `0` のまま stderr に `[agy] print timeout after 5m0s with turn in progress;
+  returning partial output` とだけ出して終了する。異常終了ではないため
+  `Open3.capture3` の `status.success?` だけでは検知できない。extractor
+  ステップの候補ニュース件数・本文量によっては既定の5分に実際に到達する
+  ことを確認済み（2026-09-12、`selecting news` は再実行で成功したが
+  `extracting news facts` は3回連続で到達）。`Internal::AiCli.run` は
+  `ai_agent.print_timeout`（既定 `15m`。Go の `time.Duration` 表記）を
+  `--print-timeout` として渡し、`run_with_spinner` は上記メッセージの
+  有無で timeout を失敗として扱う。
 
 ### UsedNewsHistory（紹介済みニュース履歴）
 
