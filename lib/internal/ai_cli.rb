@@ -13,7 +13,8 @@ module Internal
 
     PARTIAL_OUTPUT_MARKER = "returning partial output"
 
-    def run(spinner_message, prompt, model_override: nil, effort_override: :default, fatal: true)
+    def run(spinner_message, prompt, model_override: nil, effort_override: :default, fatal: true,
+            cleanup_paths_on_timeout: [])
       bin = ::Config.ai_agent.bin
       model = model_override || ::Config.ai_agent.model
 
@@ -27,7 +28,8 @@ module Internal
           "#{spinner_message} [#{bin}]",
           "AI CLI failed",
           bin, "-p", "--model", model, *effort_args, "--allowedTools", "Read Write WebFetch",
-          stdin_data: prompt, fatal: fatal, log_meta: log_meta
+          stdin_data: prompt, fatal: fatal, log_meta: log_meta,
+          cleanup_paths_on_timeout: cleanup_paths_on_timeout
         )
       else
         run_with_spinner(
@@ -36,7 +38,7 @@ module Internal
           bin, "--model", model, "--dangerously-skip-permissions",
           "--print-timeout", ::Config.ai_agent.print_timeout,
           "--add-dir", Dir.pwd, "-p", prompt,
-          fatal: fatal, log_meta: log_meta
+          fatal: fatal, log_meta: log_meta, cleanup_paths_on_timeout: cleanup_paths_on_timeout
         )
       end
     end
@@ -45,7 +47,8 @@ module Internal
 
     # fatal: false のとき、コマンドが失敗しても abort せず nil を返す（best-effort 用途）。
     # cmd（プロンプト本文を含みうる argv）はログに残さない。
-    def run_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil, fatal: true, log_meta: {})
+    def run_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil, fatal: true, log_meta: {},
+                         cleanup_paths_on_timeout: [])
       spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
       spinner.auto_spin
 
@@ -59,6 +62,7 @@ module Internal
       unless status.success? && !timed_out
         spinner.error("(failed)")
         warn stderr
+        cleanup_paths_on_timeout.each { |path| File.delete(path) if File.exist?(path) } if timed_out
         return nil unless fatal
 
         exit_desc = timed_out ? "print timeout" : "exit #{status.exitstatus}"
