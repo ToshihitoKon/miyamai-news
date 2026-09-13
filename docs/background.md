@@ -850,10 +850,10 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   有無で timeout を失敗として扱う。timeout 検知時は `cleanup_paths_on_timeout`
   に渡されたパスを abort 前に削除する（agy が Write ツールで対象ファイルを
   書き終えた直後に打ち切られた場合、次回実行が `File.exist?` の reuse 判定で
-  途中出力を拾わないようにするため）。この timeout 検知は claude/agy 双方の
-  呼び出しが通る `run_with_spinner` 一箇所にあるため、`used_news_formatter`
-  の `used_fix`（`fatal: false` 呼び出し）が1回あたり待てる時間も従来の
-  5分から `print_timeout` の値（既定15分）に伸びる。
+  途中出力を拾わないようにするため）。`--print-timeout` は `bin != "claude"`
+  の呼び出し全てに渡るため、`used_news_formatter` の `used_fix`
+  （`fatal: false` 呼び出し）が1回あたり待てる時間も従来の agy 既定5分から
+  `print_timeout` の値（既定15分）に伸びる。
 
 ### UsedNewsHistory（紹介済みニュース履歴）
 
