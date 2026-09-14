@@ -32,6 +32,15 @@ RSpec.describe Internal::HttpFetcher do
       expect(fetcher.get("https://example.com/feed.xml")).to eq("ok")
     end
 
+    it "sends a self-identifying User-Agent instead of Net::HTTP's default" do
+      allow(Net::HTTP).to receive(:get_response).and_return(success_response("ok"))
+
+      fetcher.get("https://example.com/feed.xml")
+
+      expect(Net::HTTP).to have_received(:get_response)
+        .with(anything, { "User-Agent" => Internal::HttpFetcher::USER_AGENT })
+    end
+
     it "follows an absolute Location header" do
       responses = [
         redirect_response("301", "https://other.example.com/feed2.xml"),
@@ -41,7 +50,7 @@ RSpec.describe Internal::HttpFetcher do
 
       expect(fetcher.get("https://example.com/feed.xml")).to eq("moved")
       expect(Net::HTTP).to have_received(:get_response)
-        .with(URI.parse("https://other.example.com/feed2.xml"))
+        .with(URI.parse("https://other.example.com/feed2.xml"), { "User-Agent" => described_class::USER_AGENT })
     end
 
     it "resolves a relative Location header against the previous URL" do
@@ -53,7 +62,7 @@ RSpec.describe Internal::HttpFetcher do
 
       expect(fetcher.get("https://example.com/old-feed.xml")).to eq("relative ok")
       expect(Net::HTTP).to have_received(:get_response)
-        .with(URI.parse("https://example.com/new-feed.xml"))
+        .with(URI.parse("https://example.com/new-feed.xml"), { "User-Agent" => described_class::USER_AGENT })
     end
 
     it "follows multiple redirect hops" do

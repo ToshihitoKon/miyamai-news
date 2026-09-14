@@ -11,6 +11,8 @@ module Internal
     # 追従するリダイレクトの上限ホップ数。
     MAX_REDIRECTS = 5
 
+    USER_AGENT = "miyamai-news-bot/1.0 (+https://github.com/ToshihitoKon/miyamai-news)"
+
     # @param max_retries [Integer] 最大リトライ回数
     # @param retry_base_sec [Float] 指数バックオフの初期待機秒数
     def initialize(max_retries: 3, retry_base_sec: 2.0)
@@ -47,7 +49,7 @@ module Internal
       current = URI.parse(url)
 
       MAX_REDIRECTS.times do
-        res = Net::HTTP.get_response(current)
+        res = Net::HTTP.get_response(current, { "User-Agent" => USER_AGENT })
         return res.body if res.is_a?(Net::HTTPSuccess)
         raise "HTTP #{res.code}" unless res.is_a?(Net::HTTPRedirection)
 

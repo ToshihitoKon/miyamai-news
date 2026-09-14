@@ -101,6 +101,10 @@
   サーバーがあるため。
 - リダイレクト先の `Location` ヘッダーは相対 URI のことがある（RFC 7231 で許容されており
   実サーバーでも一般的）ため、直前の URL を基点に `URI#merge` で解決する。
+- `USER_AGENT` を明示するのは、Net::HTTP のデフォルト UA が文字列 `"Ruby"` そのもので
+  あるため。dev.to（Fastly/Varnish 経由の CDN）はこの UA を持つリクエストに 403 を
+  返す一方、UA 未指定の curl や、ブラウザ相当・自己申告 bot いずれの UA でも通す
+  （2026-09-14 に実地確認）。
 
 ### TemplateRenderer（ERB テンプレート描画）
 
