@@ -838,6 +838,22 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   （project scope プラグイン経由で `mcp-fetch-server` を起動するため）。
   ruby/voicepeak/ffmpeg 等と同様、実行環境にこれが無いと 6 時台の cron が
   ここで失敗する。
+- agy は `--print-timeout`（既定 `5m0s`）で turn を打ち切ると、exit code は
+  `0` のまま stderr に `[agy] print timeout after 5m0s with turn in progress;
+  returning partial output` とだけ出して終了する。異常終了ではないため
+  `Open3.capture3` の `status.success?` だけでは検知できない。extractor
+  ステップの候補ニュース件数・本文量によっては既定の5分に実際に到達する
+  ことを確認済み（2026-09-12、`selecting news` は再実行で成功したが
+  `extracting news facts` は3回連続で到達）。`Internal::AiCli.run` は
+  `ai_agent.print_timeout`（既定 `15m`。Go の `time.Duration` 表記）を
+  `--print-timeout` として渡し、`run_with_spinner` は上記メッセージの
+  有無で timeout を失敗として扱う。timeout 検知時は `cleanup_paths_on_timeout`
+  に渡されたパスを abort 前に削除する（agy が Write ツールで対象ファイルを
+  書き終えた直後に打ち切られた場合、次回実行が `File.exist?` の reuse 判定で
+  途中出力を拾わないようにするため）。`--print-timeout` は `bin != "claude"`
+  の呼び出し全てに渡るため、`used_news_formatter` の `used_fix`
+  （`fatal: false` 呼び出し）が1回あたり待てる時間も従来の agy 既定5分から
+  `print_timeout` の値（既定15分）に伸びる。
 
 ### UsedNewsHistory（紹介済みニュース履歴）
 

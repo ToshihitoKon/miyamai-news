@@ -84,6 +84,33 @@ RSpec.describe ScriptGenerator do
     end
   end
 
+  describe "#digest でのタイムアウト検知後のクリーンアップ" do
+    context "extractor が対象ファイルを書いた直後に agy が print timeout した場合" do
+      it "deletes the partial news_facts file before aborting, so a retry does not reuse it" do
+        generator = described_class.new(work_dir: work_dir, episode: episode)
+        success_status = instance_double(Process::Status, success?: true, exitstatus: 0)
+        call_count = 0
+
+        allow(Open3).to receive(:capture3) do |*_cmd, **_opts|
+          call_count += 1
+          case call_count
+          when 1
+            File.write(generator.send(:news_selected_path), "## 生成AI\n1. Title A\n   https://example.com/a\n   (meta)\n")
+            ["", "", success_status]
+          when 2
+            File.write(generator.send(:news_facts_path), "truncated by agy before it timed out")
+            timeout_status = instance_double(Process::Status, success?: true, exitstatus: 0)
+            ["", "[agy] print timeout after 5m0s with turn in progress; returning partial output\n", timeout_status]
+          end
+        end
+
+        expect { generator.digest }.to raise_error(SystemExit)
+
+        expect(File.exist?(generator.send(:news_facts_path))).to be false
+      end
+    end
+  end
+
   describe "#digest と #generate を同一インスタンスで連続実行した場合" do
     # pipeline.rb の run_full は同一 generator に対して digest → generate の順で呼ぶ。
     # digest_news は両方から呼ばれる冪等関数なので、メモ化しないと2回目の呼び出しで

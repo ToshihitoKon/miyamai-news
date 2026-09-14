@@ -128,7 +128,8 @@ class ScriptGenerator
     end
 
     selector_model = Internal::AiCli.model_for(:selector)
-    Internal::AiCli.run("selecting news", selector_prompt, model_override: selector_model)
+    Internal::AiCli.run("selecting news", selector_prompt, model_override: selector_model,
+      cleanup_paths_on_timeout: [news_selected_path])
 
     rewrite_file(news_selected_path) { |text| strip_facts_preamble(text) }
     warn "news (selected): #{news_selected_path}"
@@ -142,7 +143,8 @@ class ScriptGenerator
     end
 
     extractor_model = Internal::AiCli.model_for(:extractor)
-    Internal::AiCli.run("extracting news facts", extractor_prompt(selected_news), model_override: extractor_model)
+    Internal::AiCli.run("extracting news facts", extractor_prompt(selected_news), model_override: extractor_model,
+      cleanup_paths_on_timeout: [news_facts_path, provisional_used_news_path])
 
     rewrite_file(news_facts_path) { |text| strip_facts_preamble(text) }
     warn "news facts: #{news_facts_path}"
@@ -165,7 +167,8 @@ class ScriptGenerator
     writer_model = Internal::AiCli.model_for(:writer)
     news_facts = File.read(news_facts_path)
     Internal::AiCli.run("writing script and used news",
-      writer_prompt(selected_news, news_facts), model_override: writer_model)
+      writer_prompt(selected_news, news_facts), model_override: writer_model,
+      cleanup_paths_on_timeout: [script_path, used_news_path])
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
     abort "expected file not written: #{used_news_path}" unless File.exist?(used_news_path)
@@ -180,7 +183,8 @@ class ScriptGenerator
     end
 
     formatter_model = Internal::AiCli.model_for(:formatter)
-    Internal::AiCli.run("formatting for VOICEPEAK", format_prompt, model_override: formatter_model)
+    Internal::AiCli.run("formatting for VOICEPEAK", format_prompt, model_override: formatter_model,
+      cleanup_paths_on_timeout: [tts_script_path])
 
     rewrite_file(tts_script_path) { |text| strip_preamble(text) }
     warn "tts script: #{tts_script_path}"

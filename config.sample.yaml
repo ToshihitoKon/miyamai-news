@@ -61,6 +61,8 @@ ai_agent:
   used_fix_model: 'Gemini 3.5 Flash (Low)'
   # フォーマット修復の最大リトライ回数（未指定時は 2）。0 で修復自体を無効化します。
   used_fix_max_retries: 2
+  # agy の --print-timeout に渡す値（Go の time.Duration 表記。未指定時は "15m"）。
+  print_timeout: '15m'
 
 # Claude Code CLI (claude) を使う場合の設定例。
 # ai_agent:
