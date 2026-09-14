@@ -31,9 +31,10 @@ voicepeak:
 
 ai_agent:
   bin: agy
-  model: 'gemini-3.6-flash-high'
-  used_fix_model: 'gemini-3.6-flash-low'
+  model: 'gemini-3.8-flash-high'
+  used_fix_model: 'gemini-3.8-flash-low'
   used_fix_max_retries: 2
+  print_timeout: '15m'
 
 program_details:
   total_news_count: 10
@@ -151,6 +152,8 @@ rss_feed_sources:
     url: "https://www.infoq.com/jp/feed/"
   - name: "DevelopersIO"
     url: "https://dev.classmethod.jp/feed/"
+  - name: "dev.to"
+    url: "https://dev.to/feed"
   # まとめ系・コミュニティ系は玉石混交かつ流量が多いので priority: low で優先度を下げる。
   # はてブはホットエントリと新着の両フィードを読む（RSS は各30件が上限で、オフセット
   # 等のパラメータは効かない）。
