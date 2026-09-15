@@ -52,6 +52,41 @@ RSpec.describe ScriptGenerator do
     end
   end
 
+  describe "#collect_source" do
+    let(:old_arxiv_link) { "https://arxiv.org/abs/1912.08786" }
+    let(:fresh_arxiv_link) { "https://arxiv.org/abs/2609.15989" }
+    let(:arxiv_items) do
+      [
+        { link: old_arxiv_link, title: "Old paper", date: nil, seen_at: now.iso8601, extra: nil },
+        { link: fresh_arxiv_link, title: "Fresh paper", date: nil, seen_at: now.iso8601, extra: nil }
+      ]
+    end
+
+    def src(max_age_days: nil)
+      attrs = { name: "arXiv cs.AI", url: "http://export.arxiv.org/rss/cs.AI" }
+      attrs[:max_age_days] = max_age_days if max_age_days
+      Internal::Config::RssFeedSource.new(attrs)
+    end
+
+    it "drops entries older than max_age_days when the source configures it" do
+      allow(fake_feed_cache).to receive(:fetch).and_return(arxiv_items)
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      result = generator.send(:collect_source, src(max_age_days: 30), now - 3600)
+
+      expect(result.map { |i| i[:link] }).to eq([fresh_arxiv_link])
+    end
+
+    it "keeps every entry when the source does not configure max_age_days (no other feed is affected)" do
+      allow(fake_feed_cache).to receive(:fetch).and_return(arxiv_items)
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      result = generator.send(:collect_source, src, now - 3600)
+
+      expect(result.map { |i| i[:link] }).to contain_exactly(old_arxiv_link, fresh_arxiv_link)
+    end
+  end
+
   describe "#digest" do
     context "AI CLI mocked via Open3.capture3" do
       it "stops after selector and extractor, without writing script/tts_script" do

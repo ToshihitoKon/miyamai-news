@@ -5,6 +5,7 @@ require "fileutils"
 require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/hatena_bookmarks"
+require_relative "internal/arxiv"
 require_relative "feed_cache"
 require_relative "internal/last_fetch_store"
 require_relative "internal/used_news_history"
@@ -284,6 +285,7 @@ class ScriptGenerator
   def collect_source(src, since)
     items = @feed_cache.fetch(src.url, now: @episode.now, since: since,
       extra_extractor: Internal::HatenaBookmarks)
+    items = items.reject { |item| Internal::Arxiv.old?(item[:link], max_age_days: src.max_age_days, now: @episode.now) } if src.max_age_days
 
     items.map do |item|
       picked = { title: item[:title], link: item[:link], date: item[:date],
