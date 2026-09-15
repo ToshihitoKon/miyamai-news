@@ -11,10 +11,13 @@ require_relative "internal/last_fetch_store"
 require_relative "internal/used_news_history"
 require_relative "internal/ai_cli"
 require_relative "internal/preamble_stripper"
+require_relative "internal/relative_path"
 
 class ScriptGenerator
   OPENING_GREETING = "宮舞モカです。"
   DEDUP_PRIORITY_RANK = { "high" => 0, "low" => 2 }.freeze
+
+  CollectStats = Struct.new(:per_source, :total_before_dedup, :total_after_dedup, keyword_init: true)
 
   def self.feed_cache_dir(work_dir) = File.join(work_dir, "feed_cache")
   def self.legacy_feed_cache_path(work_dir) = File.join(work_dir, "feed_cache.json")
@@ -75,6 +78,8 @@ class ScriptGenerator
     tts_script_path
   end
 
+  attr_reader :collect_stats
+
   def script_file = script_path
   def used_news_file = used_news_path
   def fetched_news? = @fetched_news == true
@@ -86,6 +91,8 @@ class ScriptGenerator
   end
 
   private
+
+  def relative(path) = Internal::RelativePath.from_root(path)
 
   # --- 設定値 ---
 
@@ -124,7 +131,7 @@ class ScriptGenerator
 
   def select_news
     if File.exist?(news_selected_path)
-      warn "reuse: #{news_selected_path}"
+      warn "reuse: #{relative(news_selected_path)}"
       return File.read(news_selected_path)
     end
 
@@ -133,13 +140,13 @@ class ScriptGenerator
       cleanup_paths_on_timeout: [news_selected_path])
 
     rewrite_file(news_selected_path) { |text| strip_facts_preamble(text) }
-    warn "news (selected): #{news_selected_path}"
+    warn "news (selected): #{relative(news_selected_path)}"
     File.read(news_selected_path)
   end
 
   def extract_news_facts(selected_news)
     if File.exist?(news_facts_path)
-      warn "reuse: #{news_facts_path}"
+      warn "reuse: #{relative(news_facts_path)}"
       return
     end
 
@@ -148,7 +155,6 @@ class ScriptGenerator
       cleanup_paths_on_timeout: [news_facts_path, provisional_used_news_path])
 
     rewrite_file(news_facts_path) { |text| strip_facts_preamble(text) }
-    warn "news facts: #{news_facts_path}"
 
     finalize_optional_used_news
   end
@@ -156,12 +162,12 @@ class ScriptGenerator
   def finalize_optional_used_news
     return unless File.exist?(provisional_used_news_path)
 
-    warn "used news (provisional): #{provisional_used_news_path}"
+    warn "used news (provisional): #{relative(provisional_used_news_path)}"
   end
 
   def write_script_and_used(selected_news)
     if File.exist?(script_path) && File.exist?(used_news_path)
-      warn "reuse: #{script_path}"
+      warn "reuse: #{relative(script_path)}"
       return
     end
 
@@ -172,14 +178,14 @@ class ScriptGenerator
       cleanup_paths_on_timeout: [script_path, used_news_path])
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
-    abort "expected file not written: #{used_news_path}" unless File.exist?(used_news_path)
-    warn "script: #{script_path}"
-    warn "used news: #{used_news_path}"
+    abort "expected file not written: #{relative(used_news_path)}" unless File.exist?(used_news_path)
+    warn "script: #{relative(script_path)}"
+    warn "used news: #{relative(used_news_path)}"
   end
 
   def format_tts_script
     if File.exist?(tts_script_path)
-      warn "reuse: #{tts_script_path}"
+      warn "reuse: #{relative(tts_script_path)}"
       return
     end
 
@@ -188,7 +194,7 @@ class ScriptGenerator
       cleanup_paths_on_timeout: [tts_script_path])
 
     rewrite_file(tts_script_path) { |text| strip_preamble(text) }
-    warn "tts script: #{tts_script_path}"
+    warn "tts script: #{relative(tts_script_path)}"
   end
 
   def strip_facts_preamble(text)
@@ -200,7 +206,7 @@ class ScriptGenerator
   end
 
   def rewrite_file(path)
-    abort "expected file not written: #{path}" unless File.exist?(path)
+    abort "expected file not written: #{relative(path)}" unless File.exist?(path)
 
     File.write(path, yield(File.read(path)))
   end
@@ -211,7 +217,7 @@ class ScriptGenerator
   # として残し、あれば再利用する。
   def load_or_collect_news
     if File.exist?(news_collected_path)
-      warn "reuse: #{news_collected_path}"
+      warn "reuse: #{relative(news_collected_path)}"
       return File.read(news_collected_path)
     end
 
@@ -219,8 +225,16 @@ class ScriptGenerator
     news_body = collect_news
     File.write(news_collected_path, news_body)
     LastFetchStore.mark_pending!(work_dir: @work_dir, at: collect_since_anchor, episode_key:)
-    warn "news: #{news_collected_path}"
+    warn "news: #{relative(news_collected_path)}"
+    report_collect_stats
     news_body
+  end
+
+  def report_collect_stats
+    return unless @collect_stats
+
+    @collect_stats.per_source.each { |name, count| warn "new articles from #{name}: #{count}" }
+    warn "new articles total: #{@collect_stats.total_after_dedup} (#{@collect_stats.total_before_dedup} before dedup)"
   end
 
   def collect_since
@@ -235,8 +249,15 @@ class ScriptGenerator
     record_used_news_history!(confirmed_episode)
 
     since = collect_since
-    items_per_source = fetch_sources_in_parallel(sources, since)
+    target_sources = sources
+    items_per_source = fetch_sources_in_parallel(target_sources, since)
     items = dedup_by_title(items_per_source.flatten)
+
+    @collect_stats = CollectStats.new(
+      per_source: target_sources.zip(items_per_source).map { |src, srcitems| [src.name, srcitems.size] },
+      total_before_dedup: items_per_source.sum(&:size),
+      total_after_dedup: items.size
+    )
 
     render_news_text(items)
   rescue FeedCache::FetchError => e

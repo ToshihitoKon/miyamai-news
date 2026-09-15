@@ -624,6 +624,29 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - フィード取得（`FeedCache#fetch`）が 1 つでも失敗したら実行全体を中断する。
   ニュースが揃わないまま後段の AI 呼び出しに進み、不完全な情報を元にトークンを
   浪費するのを防ぐため。
+- `collect_news` が集計する `CollectStats#per_source`（ソース別件数）の単純合計と
+  `total_after_dedup`（実際に選定対象へ回る件数）は一致しないことがある。
+  `dedup_by_title` がソース間のタイトル重複を除去するため。両方を別フィールドで
+  持つのはこのため（合計しか出さないと「ソース別の内訳が総数と合わない」という
+  誤解を招く）。
+- `collect_stats` は `news_collected_path` の既存スナップショットを再利用した
+  場合（`load_or_collect_news` が早期 return する経路）は `nil` のままになる。
+  実際には収集していないため、0件という偽の値を出すのではなく出力自体を
+  スキップする方が正しい。
+- `report_collect_stats`（新規記事の件数表示）は `Pipeline` ではなく
+  `ScriptGenerator` 側に置く。`load_or_collect_news` が `warn "news: ..."` を
+  出す直後という「収集イベントに最も近い場所」で出すためで、収集完了を検知
+  できるのは収集処理自体を持つ `ScriptGenerator` だけのため。
+
+### Pipeline（フェーズ計測）
+
+- `Internal::PhaseTimer#measure` の `"digest"` ラベルは `run_digest`（`--digest-only`
+  の到達点、digest だけで終わる実行）と `run_script`（`--script-only`。digest の
+  直後に `"writer"` へ進む実行）の両方で使う。どちらも計測する処理の実体
+  （collect→select→facts）は同じだが、実行文脈（この後 writer が続くか
+  どうか）は異なる。ラベルは「どの処理を計測したか」を表す名前であり、
+  「その実行が最終的にどこまで進んだか」までは表さない。複数回の実行ログを
+  横断して `digest:` の値を集計する際は、この2つの文脈が混ざる前提で扱うこと。
 
 ### EpisodeLogger（実行ログ）
 
@@ -657,8 +680,13 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
   (Process::CLOCK_MONOTONIC)` を返すだけの薄いヘルパー）で開始時刻を取り、
   処理の直後に `EpisodeLogger.elapsed_since(start)` で経過秒数を計算して
   `record` に渡す（`Time.now` の差ではなく monotonic clock を使うのは NTP
-  補正の影響を受けないため）。ブロックで包む API（`measure { ... }` 相当）は、
-  呼び出し元の主処理がブロックの中に埋もれて読みにくくなるため採用していない。
+  補正の影響を受けないため）。これらの呼び出し元ではブロックで包む API
+  （`measure { ... }` 相当）を採用していない。個々の呼び出しの主処理が
+  ブロックの中に埋もれて読みにくくなるため。一方 `Internal::PhaseTimer#measure`
+  はフェーズ（digest/writer/voice/publish 等）という粗い単位の計測で、
+  ブロック自体がそのフェーズの処理本体そのものを表すため埋没しない。
+  両者は計測の粒度が異なるだけで、`start_timer`/`elapsed_since` という
+  計測手段自体は共通して使う。
 - `Internal::AiCli.run_with_spinner` は stdout/stderr に加え `log_meta`
   （`bin`/`model` をまとめたハッシュ）・`exit_code`・`duration_sec` を記録
   するが、実行した argv（`cmd`）自体はログに含めない。`bin != "claude"`
