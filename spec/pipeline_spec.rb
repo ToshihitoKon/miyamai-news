@@ -23,6 +23,7 @@ RSpec.describe Pipeline do
   let(:fake_publisher) { instance_double(Publisher, run: nil) }
   let(:fake_voice_synthesizer) { instance_double(VoiceSynthesizer, synthesize: "voice_path") }
   let(:fake_audio_mixer) { instance_double(AudioMixer, mix: nil) }
+  let(:phase_timer) { Internal::PhaseTimer.new }
 
   before do
     allow(ScriptGenerator).to receive(:new).and_return(fake_generator)
@@ -40,7 +41,21 @@ RSpec.describe Pipeline do
   after { FileUtils.remove_entry(base_dir) }
 
   def build_pipeline(args)
-    described_class.new(args: args, base_dir: base_dir, work_dir: work_dir, dist_dir: dist_dir)
+    described_class.new(args: args, base_dir: base_dir, work_dir: work_dir, dist_dir: dist_dir, phase_timer: phase_timer)
+  end
+
+  def collect_warnings(pipeline)
+    messages = []
+    allow(pipeline).to receive(:warn) { |msg| messages << msg }
+    allow(phase_timer).to receive(:warn) { |msg| messages << msg }
+    messages
+  end
+
+  def phase_duration_lines(messages)
+    header_index = messages.index("phase duration:")
+    return [] unless header_index
+
+    messages[(header_index + 1)..].take_while { |m| m.start_with?("  ") }
   end
 
   describe "Episode非依存の独立コマンド" do
@@ -168,14 +183,13 @@ RSpec.describe Pipeline do
 
     it "--script-only は digest してから generate(format: false) を呼び、digest/writerの2フェーズとして計測する" do
       pipeline = build_pipeline(script_only: true, date: now, slot: "afternoon")
-      messages = []
-      allow(pipeline).to receive(:warn) { |msg| messages << msg }
+      messages = collect_warnings(pipeline)
 
       pipeline.run
 
       expect(fake_generator).to have_received(:digest)
       expect(fake_generator).to have_received(:generate).with(format: false)
-      duration_labels = messages.grep(/\Aphase duration: /).map { |l| l[/phase duration: (\w+)=/, 1] }
+      duration_labels = phase_duration_lines(messages).map { |l| l[/\A  (\w+):/, 1] }
       expect(duration_labels).to eq(%w[digest writer])
       expect(messages).to include("news facts: news_facts_path")
     end
@@ -222,15 +236,15 @@ RSpec.describe Pipeline do
       allow(LastFetchStore).to receive(:confirm!).with(work_dir: work_dir).and_return("20260714_afternoon")
 
       pipeline = build_pipeline(date: now, slot: "afternoon")
-      messages = []
-      allow(pipeline).to receive(:warn) { |msg| messages << msg }
+      messages = collect_warnings(pipeline)
 
       pipeline.run
 
-      duration_lines = messages.grep(/\Aphase duration: /)
+      expect(messages).to include("phase duration:")
+      duration_lines = phase_duration_lines(messages)
       expect(duration_lines.size).to eq(4)
-      expect(duration_lines).to all(match(/\Aphase duration: (digest|writer|voice|publish)=[\d.]+s\z/))
-      expect(duration_lines.map { |l| l[/phase duration: (\w+)=/, 1] }).to eq(%w[digest writer voice publish])
+      expect(duration_lines).to all(match(/\A  (digest|writer|voice|publish): [\d.]+s\z/))
+      expect(duration_lines.map { |l| l[/\A  (\w+):/, 1] }).to eq(%w[digest writer voice publish])
     end
 
     it "publish フェーズの abort 後にもサマリが出力され、失敗したフェーズにだけ(failed)が付く" do
@@ -239,15 +253,15 @@ RSpec.describe Pipeline do
       allow(fake_audio_mixer).to receive(:mix)
 
       pipeline = build_pipeline(date: now, slot: "afternoon")
-      messages = []
-      allow(pipeline).to receive(:warn) { |msg| messages << msg }
+      messages = collect_warnings(pipeline)
 
       expect { pipeline.run }.to raise_error(SystemExit)
 
-      duration_lines = messages.grep(/\Aphase duration: /)
-      expect(duration_lines.map { |l| l[/phase duration: (\w+)=/, 1] }).to eq(%w[digest writer voice publish])
+      expect(messages).to include("phase duration:")
+      duration_lines = phase_duration_lines(messages)
+      expect(duration_lines.map { |l| l[/\A  (\w+):/, 1] }).to eq(%w[digest writer voice publish])
       expect(duration_lines[0..2]).to all(satisfy { |l| !l.include?("(failed)") })
-      expect(duration_lines.last).to match(/\Aphase duration: publish=[\d.]+s \(failed\)\z/)
+      expect(duration_lines.last).to match(/\A  publish: [\d.]+s \(failed\)\z/)
     end
 
     it "--clean のような独立コマンドではサマリが出力されない" do
@@ -257,12 +271,12 @@ RSpec.describe Pipeline do
       allow(Publisher).to receive(:new).and_return(instance_double(Publisher, prunable_from_dist: []))
 
       pipeline = build_pipeline(clean: true)
-      messages = []
-      allow(pipeline).to receive(:warn) { |msg| messages << msg }
+      messages = collect_warnings(pipeline)
 
       pipeline.run
 
-      expect(messages.grep(/\Aphase duration: /)).to be_empty
+      expect(messages).not_to include("phase duration:")
+      expect(phase_duration_lines(messages)).to be_empty
     end
 
     it "run_synthesize は writer/voice の2フェーズとして計測される（synthesizeという単一ラベルでは出ない）" do
@@ -270,12 +284,11 @@ RSpec.describe Pipeline do
       allow(LastFetchStore).to receive(:confirm!).with(work_dir: work_dir).and_return("20260714_afternoon")
 
       pipeline = build_pipeline(date: now, slot: "afternoon")
-      messages = []
-      allow(pipeline).to receive(:warn) { |msg| messages << msg }
+      messages = collect_warnings(pipeline)
 
       pipeline.run
 
-      duration_labels = messages.grep(/\Aphase duration: /).map { |l| l[/phase duration: (\w+)=/, 1] }
+      duration_labels = phase_duration_lines(messages).map { |l| l[/\A  (\w+):/, 1] }
       expect(duration_labels).to include("writer", "voice")
       expect(duration_labels).not_to include("synthesize")
     end

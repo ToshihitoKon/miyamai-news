@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-require "English"
 require "fileutils"
 require_relative "episode"
 require_relative "internal/config"
 require_relative "internal/last_fetch_store"
 require_relative "internal/episode_logger"
+require_relative "internal/phase_timer"
 require_relative "internal/relative_path"
 require_relative "script_generator"
 require_relative "voice_synthesizer"
@@ -14,12 +14,12 @@ require_relative "publisher"
 
 # miyamai_news.rb の CLI フラグに応じた工程の呼び分けを担うオーケストレーター。
 class Pipeline
-  def initialize(args:, base_dir:, work_dir:, dist_dir:)
+  def initialize(args:, base_dir:, work_dir:, dist_dir:, phase_timer: Internal::PhaseTimer.new)
     @args = args
     @base_dir = base_dir
     @work_dir = work_dir
     @dist_dir = dist_dir
-    @phase_durations = {}
+    @phase_timer = phase_timer
   end
 
   def self.target_mode_for(args)
@@ -60,28 +60,12 @@ class Pipeline
       end
     end
   ensure
-    report_phase_durations
+    @phase_timer.report
   end
 
   private
 
   def relative(path) = Internal::RelativePath.from_root(path)
-
-  def measure_phase(name)
-    start = Internal::EpisodeLogger.start_timer
-    yield
-  ensure
-    @phase_durations[name] = { sec: Internal::EpisodeLogger.elapsed_since(start), ok: $ERROR_INFO.nil? }
-  end
-
-  def report_phase_durations
-    return if @phase_durations.empty?
-
-    @phase_durations.each do |name, d|
-      status = d[:ok] ? "" : " (failed)"
-      warn "phase duration: #{name}=#{d[:sec]}s#{status}"
-    end
-  end
 
   # --- Episode非依存の独立コマンド --------------------------------------
 
@@ -215,16 +199,16 @@ class Pipeline
 
   # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
   def run_digest
-    facts_path = measure_phase("digest") { @generator.digest }
+    facts_path = @phase_timer.measure("digest") { @generator.digest }
 
     warn "news facts: #{relative(facts_path)}"
   end
 
   def run_script
-    facts_path = measure_phase("digest") { @generator.digest }
+    facts_path = @phase_timer.measure("digest") { @generator.digest }
     warn "news facts: #{relative(facts_path)}"
 
-    script_path = measure_phase("writer") { @generator.generate(format: false) }
+    script_path = @phase_timer.measure("writer") { @generator.generate(format: false) }
     warn "script: #{relative(script_path)}"
   end
 
@@ -235,8 +219,8 @@ class Pipeline
     used_news_output = episode_used_path
     transcript_output = episode_transcript_path
 
-    tts_script_path = measure_phase("writer") { @generator.generate }
-    measure_phase("voice") do
+    tts_script_path = @phase_timer.measure("writer") { @generator.generate }
+    @phase_timer.measure("voice") do
       voice_path = VoiceSynthesizer.new(work_dir: @work_dir, episode: @episode).synthesize(tts_script_path)
       AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
     end
@@ -250,7 +234,7 @@ class Pipeline
   end
 
   def run_publish
-    measure_phase("publish") do
+    @phase_timer.measure("publish") do
       mp3_path = episode_mp3_path
       abort "mp3 not found: #{relative(mp3_path)} (run --synthesize-only first)" unless File.exist?(mp3_path)
 

@@ -621,13 +621,13 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 
 ### Pipeline（フェーズ計測）
 
-- `Pipeline#measure_phase` の `"digest"` ラベルは `run_digest`（`--digest-only`
+- `Internal::PhaseTimer#measure` の `"digest"` ラベルは `run_digest`（`--digest-only`
   の到達点、digest だけで終わる実行）と `run_script`（`--script-only`。digest の
   直後に `"writer"` へ進む実行）の両方で使う。どちらも計測する処理の実体
   （collect→select→facts）は同じだが、実行文脈（この後 writer が続くか
   どうか）は異なる。ラベルは「どの処理を計測したか」を表す名前であり、
   「その実行が最終的にどこまで進んだか」までは表さない。複数回の実行ログを
-  横断して `digest=` の値を集計する際は、この2つの文脈が混ざる前提で扱うこと。
+  横断して `digest:` の値を集計する際は、この2つの文脈が混ざる前提で扱うこと。
 
 ### EpisodeLogger（実行ログ）
 
@@ -663,7 +663,7 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
   `record` に渡す（`Time.now` の差ではなく monotonic clock を使うのは NTP
   補正の影響を受けないため）。これらの呼び出し元ではブロックで包む API
   （`measure { ... }` 相当）を採用していない。個々の呼び出しの主処理が
-  ブロックの中に埋もれて読みにくくなるため。一方 `Pipeline#measure_phase`
+  ブロックの中に埋もれて読みにくくなるため。一方 `Internal::PhaseTimer#measure`
   はフェーズ（digest/writer/voice/publish 等）という粗い単位の計測で、
   ブロック自体がそのフェーズの処理本体そのものを表すため埋没しない。
   両者は計測の粒度が異なるだけで、`start_timer`/`elapsed_since` という
