@@ -89,6 +89,7 @@ module Internal
       attribute :name, Types::Strict::String
       attribute :url, Types::Strict::String
       attribute? :priority, Priority
+      attribute? :max_age_days, Types::Strict::Integer
     end
 
     class Mixer < Base

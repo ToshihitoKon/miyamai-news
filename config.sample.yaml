@@ -118,6 +118,8 @@ rss_feed_sources:
   #     運用例:
   #       high: 公式ブログ・公式リリースノートなどの一次情報源
   #       low: まとめ系・コミュニティ系などで流量が多いソース
+  #   max_age_days: 投稿から指定日数を超えた記事を候補から除外する（arXiv 等、
+  #     改訂やクロスリストで古い記事が再浮上するフィード向け）。未指定なら判定しない。
   - name: "Hacker News (AI)"
     url: "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT&points=50"
 

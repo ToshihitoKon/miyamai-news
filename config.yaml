@@ -99,6 +99,7 @@ rss_feed_sources:
   - name: "arXiv cs.AI"
     url: "http://export.arxiv.org/rss/cs.AI"
     priority: high
+    max_age_days: 30
   - name: "OpenAI Blog"
     url: "https://openai.com/news/rss.xml"
     priority: high
