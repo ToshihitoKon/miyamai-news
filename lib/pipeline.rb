@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
+require "English"
 require "fileutils"
 require_relative "episode"
 require_relative "internal/config"
 require_relative "internal/last_fetch_store"
 require_relative "internal/episode_logger"
+require_relative "internal/relative_path"
 require_relative "script_generator"
 require_relative "voice_synthesizer"
 require_relative "audio_mixer"
@@ -17,6 +19,7 @@ class Pipeline
     @base_dir = base_dir
     @work_dir = work_dir
     @dist_dir = dist_dir
+    @phase_durations = {}
   end
 
   def self.target_mode_for(args)
@@ -56,9 +59,29 @@ class Pipeline
         run_full
       end
     end
+  ensure
+    report_phase_durations
   end
 
   private
+
+  def relative(path) = Internal::RelativePath.from_root(path)
+
+  def measure_phase(name)
+    start = Internal::EpisodeLogger.start_timer
+    yield
+  ensure
+    @phase_durations[name] = { sec: Internal::EpisodeLogger.elapsed_since(start), ok: $ERROR_INFO.nil? }
+  end
+
+  def report_phase_durations
+    return if @phase_durations.empty?
+
+    @phase_durations.each do |name, d|
+      status = d[:ok] ? "" : " (failed)"
+      warn "phase duration: #{name}=#{d[:sec]}s#{status}"
+    end
+  end
 
   # --- Episode非依存の独立コマンド --------------------------------------
 
@@ -104,7 +127,7 @@ class Pipeline
     patterns = ScriptGenerator.work_globs(@work_dir) + VoiceSynthesizer.work_globs(@work_dir) +
                Internal::EpisodeLogger.work_globs(@work_dir)
     FileUtils.rm_rf(patterns.flat_map { |pat| Dir.glob(pat) })
-    warn "reset work dir: #{@work_dir}"
+    warn "reset work dir: #{relative(@work_dir)}"
   end
 
   def clean_published_dist
@@ -120,9 +143,9 @@ class Pipeline
         dir = File.dirname(mp3)
         episode_files = Publisher.episode_object_names(filename).map { |name| File.join(dir, name) }
         FileUtils.rm_f(episode_files)
-        warn "pruned: #{mp3}"
+        warn "pruned: #{relative(mp3)}"
       else
-        warn "kept: #{mp3}"
+        warn "kept: #{relative(mp3)}"
       end
     end
   end
@@ -192,15 +215,17 @@ class Pipeline
 
   # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
   def run_digest
-    facts_path = @generator.digest
+    facts_path = measure_phase("digest") { @generator.digest }
 
-    warn "news facts: #{facts_path}"
+    warn "news facts: #{relative(facts_path)}"
   end
 
   def run_script
-    script_path = @generator.generate(format: false)
+    facts_path = measure_phase("digest") { @generator.digest }
+    warn "news facts: #{relative(facts_path)}"
 
-    warn "script: #{script_path}"
+    script_path = measure_phase("writer") { @generator.generate(format: false) }
+    warn "script: #{relative(script_path)}"
   end
 
   # 台本執筆・tts整形・音声合成・BGM合成までを実行する。pipeline.mode: synthesize の到達点。
@@ -210,29 +235,33 @@ class Pipeline
     used_news_output = episode_used_path
     transcript_output = episode_transcript_path
 
-    tts_script_path = @generator.generate
-    voice_path = VoiceSynthesizer.new(work_dir: @work_dir, episode: @episode).synthesize(tts_script_path)
-    AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
+    tts_script_path = measure_phase("writer") { @generator.generate }
+    measure_phase("voice") do
+      voice_path = VoiceSynthesizer.new(work_dir: @work_dir, episode: @episode).synthesize(tts_script_path)
+      AudioMixer.new(bgm_path: bgm_path).mix(voice_path, output_path)
+    end
 
     FileUtils.cp(@generator.used_news_file, used_news_output)
     FileUtils.cp(@generator.script_file, transcript_output)
 
-    warn "audio: #{output_path}"
-    warn "used news: #{used_news_output}"
-    warn "transcript: #{transcript_output}"
+    warn "audio: #{relative(output_path)}"
+    warn "used news: #{relative(used_news_output)}"
+    warn "transcript: #{relative(transcript_output)}"
   end
 
   def run_publish
-    mp3_path = episode_mp3_path
-    abort "mp3 not found: #{mp3_path} (run --synthesize-only first)" unless File.exist?(mp3_path)
+    measure_phase("publish") do
+      mp3_path = episode_mp3_path
+      abort "mp3 not found: #{relative(mp3_path)} (run --synthesize-only first)" unless File.exist?(mp3_path)
 
-    used_path = episode_used_path
-    used_path = nil unless used_path && File.exist?(used_path)
+      used_path = episode_used_path
+      used_path = nil unless used_path && File.exist?(used_path)
 
-    transcript_path = episode_transcript_path
-    transcript_path = nil unless transcript_path && File.exist?(transcript_path)
+      transcript_path = episode_transcript_path
+      transcript_path = nil unless transcript_path && File.exist?(transcript_path)
 
-    Publisher.new(date: @episode.date).run(mp3_path, used_path, transcript_path)
+      Publisher.new(date: @episode.date).run(mp3_path, used_path, transcript_path)
+    end
   end
 
   # dist/ に置く成果物のパス。generate と publish で同じ命名規則を共有する。

@@ -18,7 +18,7 @@ RSpec.describe Pipeline do
     instance_double(ScriptGenerator,
       digest: "news_facts_path", generate: "tts_script_path", fetched_news?: false,
       collect_since_anchor: now, episode_key: "20260714_afternoon",
-      used_news_file: "used_news_file", script_file: "script_file")
+      used_news_file: "used_news_file", script_file: "script_file", collect_stats: nil)
   end
   let(:fake_publisher) { instance_double(Publisher, run: nil) }
   let(:fake_voice_synthesizer) { instance_double(VoiceSynthesizer, synthesize: "voice_path") }
@@ -166,10 +166,18 @@ RSpec.describe Pipeline do
       expect(LastFetchStore).not_to have_received(:mark_pending!)
     end
 
-    it "--script-only は generate(format: false) を呼ぶ" do
-      build_pipeline(script_only: true, date: now, slot: "afternoon").run
+    it "--script-only は digest してから generate(format: false) を呼び、digest/writerの2フェーズとして計測する" do
+      pipeline = build_pipeline(script_only: true, date: now, slot: "afternoon")
+      messages = []
+      allow(pipeline).to receive(:warn) { |msg| messages << msg }
 
+      pipeline.run
+
+      expect(fake_generator).to have_received(:digest)
       expect(fake_generator).to have_received(:generate).with(format: false)
+      duration_labels = messages.grep(/\Aphase duration: /).map { |l| l[/phase duration: (\w+)=/, 1] }
+      expect(duration_labels).to eq(%w[digest writer])
+      expect(messages).to include("news facts: news_facts_path")
     end
 
     it "フラグなし実行は pipeline.mode(publish) まで digest→synthesize→publish を進める" do
@@ -205,6 +213,71 @@ RSpec.describe Pipeline do
       expect(fake_generator).to have_received(:generate).with(no_args)
       expect(fake_publisher).not_to have_received(:run)
       expect(LastFetchStore).not_to have_received(:mark_pending!)
+    end
+  end
+
+  describe "フェーズ所要時間のサマリ出力" do
+    it "正常終了時は digest/writer/voice/publish の4行が出力され、いずれも(failed)が付かない" do
+      allow(fake_generator).to receive(:fetched_news?).and_return(false)
+      allow(LastFetchStore).to receive(:confirm!).with(work_dir: work_dir).and_return("20260714_afternoon")
+
+      pipeline = build_pipeline(date: now, slot: "afternoon")
+      messages = []
+      allow(pipeline).to receive(:warn) { |msg| messages << msg }
+
+      pipeline.run
+
+      duration_lines = messages.grep(/\Aphase duration: /)
+      expect(duration_lines.size).to eq(4)
+      expect(duration_lines).to all(match(/\Aphase duration: (digest|writer|voice|publish)=[\d.]+s\z/))
+      expect(duration_lines.map { |l| l[/phase duration: (\w+)=/, 1] }).to eq(%w[digest writer voice publish])
+    end
+
+    it "publish フェーズの abort 後にもサマリが出力され、失敗したフェーズにだけ(failed)が付く" do
+      allow(fake_generator).to receive(:fetched_news?).and_return(false)
+      # run_publish 冒頭の mp3 未検出チェックで abort させるため、mix によるファイル作成を止める。
+      allow(fake_audio_mixer).to receive(:mix)
+
+      pipeline = build_pipeline(date: now, slot: "afternoon")
+      messages = []
+      allow(pipeline).to receive(:warn) { |msg| messages << msg }
+
+      expect { pipeline.run }.to raise_error(SystemExit)
+
+      duration_lines = messages.grep(/\Aphase duration: /)
+      expect(duration_lines.map { |l| l[/phase duration: (\w+)=/, 1] }).to eq(%w[digest writer voice publish])
+      expect(duration_lines[0..2]).to all(satisfy { |l| !l.include?("(failed)") })
+      expect(duration_lines.last).to match(/\Aphase duration: publish=[\d.]+s \(failed\)\z/)
+    end
+
+    it "--clean のような独立コマンドではサマリが出力されない" do
+      allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
+      allow(ScriptGenerator).to receive(:work_globs).and_return([])
+      allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
+      allow(Publisher).to receive(:new).and_return(instance_double(Publisher, prunable_from_dist: []))
+
+      pipeline = build_pipeline(clean: true)
+      messages = []
+      allow(pipeline).to receive(:warn) { |msg| messages << msg }
+
+      pipeline.run
+
+      expect(messages.grep(/\Aphase duration: /)).to be_empty
+    end
+
+    it "run_synthesize は writer/voice の2フェーズとして計測される（synthesizeという単一ラベルでは出ない）" do
+      allow(fake_generator).to receive(:fetched_news?).and_return(false)
+      allow(LastFetchStore).to receive(:confirm!).with(work_dir: work_dir).and_return("20260714_afternoon")
+
+      pipeline = build_pipeline(date: now, slot: "afternoon")
+      messages = []
+      allow(pipeline).to receive(:warn) { |msg| messages << msg }
+
+      pipeline.run
+
+      duration_labels = messages.grep(/\Aphase duration: /).map { |l| l[/phase duration: (\w+)=/, 1] }
+      expect(duration_labels).to include("writer", "voice")
+      expect(duration_labels).not_to include("synthesize")
     end
   end
 

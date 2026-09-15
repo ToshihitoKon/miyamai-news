@@ -50,6 +50,83 @@ RSpec.describe ScriptGenerator do
         end
       end
     end
+
+    describe "#collect_stats" do
+      it "計算後、全ソース分の per_source と dedup 前後の合計を保持する" do
+        generator = described_class.new(work_dir: work_dir, episode: episode)
+        sources = generator.send(:sources)
+
+        generator.send(:collect_news)
+        stats = generator.collect_stats
+
+        expect(stats.per_source.size).to eq(sources.size)
+        expect(stats.per_source.map(&:first)).to eq(sources.map(&:name))
+        expect(stats.total_before_dedup).to eq(stats.per_source.sum { |_name, count| count })
+      end
+
+      it "ソース間でタイトルが重複する場合、dedup前合計がdedup後合計を上回る" do
+        # fake_feed_cache は全ソースに同じ2件（Title A/B）を返すため、
+        # 複数ソースを持つ fixture では既にタイトル重複が起きている。
+        generator = described_class.new(work_dir: work_dir, episode: episode)
+
+        generator.send(:collect_news)
+        stats = generator.collect_stats
+
+        expect(stats.total_before_dedup).to be > stats.total_after_dedup
+        expect(stats.total_after_dedup).to eq(news_items.size)
+      end
+
+      it "全ソース0件のときも per_source の各要素が [name, 0] のまま欠落しない" do
+        allow(fake_feed_cache).to receive(:fetch).and_return([])
+        generator = described_class.new(work_dir: work_dir, episode: episode)
+        sources = generator.send(:sources)
+
+        generator.send(:collect_news)
+        stats = generator.collect_stats
+
+        expect(stats.per_source).to eq(sources.map { |src| [src.name, 0] })
+        expect(stats.total_before_dedup).to eq(0)
+        expect(stats.total_after_dedup).to eq(0)
+      end
+
+      it "news_collected_path の既存スナップショットを再利用する場合は nil のまま" do
+        generator = described_class.new(work_dir: work_dir, episode: episode)
+        File.write(generator.send(:news_collected_path), "1. Title A\n")
+
+        generator.send(:load_or_collect_news)
+
+        expect(generator.collect_stats).to be_nil
+      end
+    end
+
+    describe "#report_collect_stats（収集直後の出力）" do
+      it "load_or_collect_news 完了直後にソース別・合計行を出力する" do
+        generator = described_class.new(work_dir: work_dir, episode: episode)
+        sources = generator.send(:sources)
+        messages = []
+        allow(generator).to receive(:warn) { |msg| messages << msg }
+
+        generator.send(:load_or_collect_news)
+
+        news_index = messages.index { |m| m.start_with?("news: ") }
+        expect(news_index).not_to be_nil
+        sources.each do |src|
+          expect(messages[news_index + 1..]).to include("new articles from #{src.name}: #{news_items.size}")
+        end
+        expect(messages.last).to match(/\Anew articles total: \d+ \(\d+ before dedup\)\z/)
+      end
+
+      it "news_collected_path の既存スナップショットを再利用する場合は件数行を出力しない" do
+        generator = described_class.new(work_dir: work_dir, episode: episode)
+        File.write(generator.send(:news_collected_path), "1. Title A\n")
+        messages = []
+        allow(generator).to receive(:warn) { |msg| messages << msg }
+
+        generator.send(:load_or_collect_news)
+
+        expect(messages.grep(/\Anew articles/)).to be_empty
+      end
+    end
   end
 
   describe "#digest" do
