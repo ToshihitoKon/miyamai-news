@@ -401,6 +401,68 @@ RSpec.describe ScriptGenerator do
     end
   end
 
+  describe "#generate with ai_agent.bin: openai" do
+    let(:client) { instance_double(Internal::OpenAiClient) }
+    let(:calls) { [] }
+
+    let(:outputs_by_names) do
+      {
+        %w[news_selected] => { "news_selected" => "## 生成AI\n1. Title A\n   https://example.com/a\n   (meta)\n" },
+        %w[news_facts used_news] => {
+          "news_facts" => "## Title A\n概要です。\n",
+          "used_news" => "## 生成AI\n### [Title A](https://example.com/a)\n   暫定の要約です。\n   (2026-07-14 / SourceA)\n"
+        },
+        %w[script used_news] => {
+          "script" => "宮舞モカです。こんにちは、今日のニュースです。\n",
+          "used_news" => "## 生成AI\n### [Title A](https://example.com/a)\n   要約です。\n   (2026-07-14 / SourceA)\n"
+        },
+        %w[tts_script] => { "tts_script" => "宮舞モカです。こんにちは、今日のニュースです（整形済み）。\n" }
+      }
+    end
+
+    before do
+      allow(Config.ai_agent).to receive(:bin).and_return("openai")
+      allow(Internal::OpenAiClient).to receive(:new).and_return(client)
+      allow(client).to receive(:generate) do |prompt, output_names:, web_search:, **|
+        calls << { prompt: prompt, output_names: output_names, web_search: web_search }
+        Internal::OpenAiClient::Result.new(outputs: outputs_by_names.fetch(output_names), usage: {})
+      end
+    end
+
+    it "writes every step's outputs from the API response without invoking a CLI" do
+      allow(Open3).to receive(:capture3)
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      tts_path = generator.generate
+
+      expect(calls.map { |c| c[:output_names] }).to eq(outputs_by_names.keys)
+      expect(File.read(tts_path)).to include("整形済み")
+      expect(File.read(generator.used_news_file)).to include("要約です")
+      expect(File.read(generator.send(:provisional_used_news_path))).to include("暫定の要約です")
+      expect(Open3).not_to have_received(:capture3)
+    end
+
+    it "embeds inputs in the prompts instead of asking the model to read or write files" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      generator.generate
+
+      selector, extractor, writer, formatter = calls.map { |c| c[:prompt] }
+      expect(selector).to include("<news_collected>", "Title A")
+      expect(formatter).to include("<script>", "今日のニュースです。")
+      calls.each { |c| expect(c[:prompt]).not_to include("Write ツール", "Read ツール", work_dir) }
+      expect([selector, extractor, writer, formatter]).to all(include("出力 JSON"))
+    end
+
+    it "enables web_search only for the extractor" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      generator.generate
+
+      expect(calls.map { |c| c[:web_search] }).to eq([false, true, false, false])
+    end
+  end
+
   describe "#dedup_by_title" do
     def dedup(items)
       described_class.new(work_dir: work_dir, episode: episode).send(:dedup_by_title, items)

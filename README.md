@@ -18,7 +18,7 @@ RSS feed から最新のニュースを AI で要約し、宮舞モカによる�
 ## Prerequisites
 
 - Ruby
-- AI Agent CLI (Claude Code or Antigravity)
+- AI Agent CLI (Claude Code or Antigravity)、または OpenAI API キー
 
 Antigravity を使う場合に追加で必要
 
@@ -41,8 +41,14 @@ bundle install
 cp config.sample.yaml config.yaml
 ```
 
-publish には以下の環境変数が必要。config.yaml には書かない（config.yaml は機密を
-持たない前提で運用しているため）。
+`ai_agent.bin: openai`（OpenAI API）を使う場合は、以下の環境変数が必要。
+config.yaml には書かない（config.yaml は機密を持たない前提で運用しているため）。
+
+| 環境変数 | 用途 |
+| --- | --- |
+| `OPENAI_API_KEY` | OpenAI API の認証 |
+
+publish には以下の環境変数が必要。同じく config.yaml には書かない。
 
 | 環境変数 | 用途 |
 | --- | --- |

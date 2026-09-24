@@ -68,7 +68,7 @@ ai_agent:
 # ai_agent:
 #   bin: claude
 #   model: claude-opus-4-8
-#   # effort は claude 固有の引数。bin が claude 以外なら無視される。
+#   # effort は claude / openai で使う引数。bin が agy なら無視される。
 #   effort: xhigh
 #   selector_model: claude-sonnet-5
 #   extractor_model: claude-opus-4-8
@@ -77,6 +77,16 @@ ai_agent:
 #   # 修復は軽いモデル・低 effort で十分。
 #   used_fix_model: claude-haiku-4-5
 #   used_fix_effort: low
+
+# OpenAI API を直接呼ぶ場合の設定例（CLI が使えない CI 環境向け）。
+# API キーは config には書かず、環境変数 OPENAI_API_KEY で渡す。
+# ai_agent:
+#   bin: openai
+#   model: <OpenAI のモデル名>
+#   # Responses API の reasoning.effort にそのまま渡す（未指定なら送らない）。
+#   effort: medium
+#   # 1 リクエストの応答を待つ最大秒数（未指定時は 900）。
+#   request_timeout_sec: 900
 
 # 番組構成設定。
 program_details:

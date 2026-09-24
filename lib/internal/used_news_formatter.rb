@@ -64,14 +64,16 @@ module UsedNewsFormatter
   end
   private_class_method :repair
 
-  # 修復専用の非致命的な AI 呼び出し。tmp file に Write させ、Ruby 側が読んで返す。
+  # 修復専用の非致命的な AI 呼び出し。tmp file に書かせ、Ruby 側が読んで返す。
   def run_fix_cli(broken_text)
     Dir.mktmpdir("used_news_formatter") do |dir|
       output_path = File.join(dir, "fixed.txt")
       prompt = TemplateRenderer.render("fix_format.prompt", PROMPT_CONTEXT,
-        format_spec: FORMAT_SPEC, broken_content: broken_text, output_path: output_path)
+        file_io: Internal::AiCli.file_io?, format_spec: FORMAT_SPEC, broken_content: broken_text,
+        output_path: output_path)
 
       Internal::AiCli.run("repairing used news format", prompt,
+        outputs: { "fixed" => output_path },
         model_override: Internal::AiCli.model_for(:used_fix),
         effort_override: ::Config.ai_agent.used_fix_effort,
         fatal: false)

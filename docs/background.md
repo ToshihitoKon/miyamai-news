@@ -780,22 +780,22 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   「新規エピソードで壊れた used_news がそのまま公開される」事態を防ぐため。
   used_news が無い回（空文字列）は早期 return し、AI 呼び出し・abort を行わない）。
 - 修復 AI の呼び出しは `templates/fix_format.prompt.erb`。出力は stdout ではなく
-  tmp file（Write→Read）で受け渡す（stdout は前置き・コードフェンス等のノイズが
-  混入しやすいため）。修復 AI が記事を捏造/欠落させないよう、整形後の URL 集合が
+  tmp file（Write→Read。OpenAI API では Ruby 側が `fixed` 出力を書く）で受け渡す
+  （stdout は前置き・コードフェンス等のノイズが混入しやすいため）。修復 AI が記事を捏造/欠落させないよう、整形後の URL 集合が
   入力と一致することを Ruby 側で機械的に強制する（`preserves_urls?`）。
 - 修復の最大リトライ回数は `ai_agent.used_fix_max_retries`（既定 2）で config 化
   している。`0` を指定すると `Integer#times` が一度も回らず、AI を一切呼ばずに
   即座に修復失敗として扱う（＝修復機能そのものを無効化できる）。
-- AI CLI の実行ロジックは `Internal::AiCli`（`lib/internal/ai_cli.rb`）に集約して
-  あり、`ScriptGenerator`（selector/extractor/writer/format）と `UsedNewsFormatter`
+- AI の実行ロジック（CLI・OpenAI API とも）は `Internal::AiCli`（`lib/internal/ai_cli.rb`）
+  に集約してあり、`ScriptGenerator`（selector/extractor/writer/format）と `UsedNewsFormatter`
   （修復）の両方が `Internal::AiCli.run`/`.model_for` を直接呼ぶ（ラッパーは持たない）。
   非致命化パラメータは `fatal:`（既定 `true`）で統一し、失敗時に abort するかどうかを
-  直接的に表す。`effort_override:`（既定 `:default`）は claude 用の effort を
-  呼び出し元で明示的に差し替えるための引数で、`nil` を渡すと `Config.ai_agent.effort`
+  直接的に表す。`effort_override:`（既定 `:default`）は claude / OpenAI API 用の effort を
+  呼び出し元で明示的に差し替えるための引数で、`:default` のままなら `Config.ai_agent.effort`
   を使う。
 - `UsedNewsFormatter::PROMPT_CONTEXT`（空オブジェクト）で足りるのは、
-  `fix_format.prompt.erb` が `format_spec`/`broken_content`/`output_path` のローカル
-  変数のみを参照し、`ScriptGenerator`/`Publisher` いずれのインスタンスメソッドにも
+  `fix_format.prompt.erb` が `file_io`/`format_spec`/`broken_content`/`output_path` の
+  ローカル変数のみを参照し、`ScriptGenerator`/`Publisher` いずれのインスタンスメソッドにも
   依存しないため。
 - `strip_preamble` は、想定した「## から始まる」構造が見つからなければ入力をそのまま
   返す。機械的に何かを削ぎ落として誤魔化すより、人間が壊れた入力に気づける形にする
@@ -906,6 +906,43 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   （`fatal: false` 呼び出し）が1回あたり待てる時間も従来の agy 既定5分から
   `print_timeout` の値（既定15分）に伸びる。
 
+#### OpenAI API バックエンド（`ai_agent.bin: openai`）
+
+agy/claude が使えない CI 環境で台本生成まで行うために追加した、CLI ではなく
+OpenAI Responses API を直接呼ぶバックエンド（`Internal::OpenAiClient`）。
+
+- API には AI が自分でファイルを読み書きするツールが無い。`Internal::AiCli.file_io?`
+  が false のとき、テンプレートは入力（selector の候補一覧・format の台本）を
+  プロンプトに埋め込み、出力は「出力 JSON の `<名前>` フィールドに入れろ」と指示する。
+  `AiCli.run` の `outputs:`（出力名 => 書き込み先パス）の名前がそのまま JSON Schema の
+  プロパティ名になり、Ruby 側が各パスへ書く。以降の `rewrite_file`（前置き除去）や
+  `File.exist?` による reuse 判定は CLI と同じ経路に乗る。
+- CLI 系で入力をパス渡し（Read）にしている理由は前掲の agy の不具合対策なので、
+  API 側に埋め込みを採っても矛盾しない。テンプレートは `file_io` で入出力の指示だけを
+  切り替え、本文（選定・執筆ルール）は共有する。
+- 出力は Structured Outputs（`text.format` の `json_schema`、`strict: true`）で受ける。
+  extractor/writer は 1 回の呼び出しで 2 つの出力（facts と暫定 used、台本と used）を
+  返す必要があり、区切り文字の自己申告より壊れにくいため。
+- extractor だけ `web_search` ツールを有効にする（`AiCli.run(web_search: true)`）。
+  CLI 系の `fetch_readable`/`WebFetch` と違い、web_search は指定 URL を必ず開く保証が
+  ない（OpenAI のドキュメント上、URL を開く `open_page` は reasoning モデルでのみ
+  使われうるアクション）。プロンプトでは URL を開けなければ同じ記事を検索させ、
+  それでも本文を読めなければ採用しないよう指示している。
+- 出力は API 呼び出しが成功した後にしか書かないので、agy の print timeout のような
+  途中出力の掃除（`cleanup_paths_on_timeout`）は不要。
+- リトライは 429/5xx と接続確立前後のネットワークエラーのみ。`Net::ReadTimeout`
+  （応答待ちの打ち切り）はリトライせず `OpenAiClient::Error` に変換して失敗させる
+  （`fatal:` に従って abort / nil になる）。クライアント側で打ち切っても API 側では
+  生成が続いて課金されうるので、再送すると 1 回分の出力に二重に払うことになるため。応答待ちの上限は
+  `ai_agent.request_timeout_sec`（既定 900 秒。agy の `print_timeout` 既定 15 分に揃えた）。
+- API キーは `OPENAI_API_KEY` 環境変数で渡す（config.yaml に機密を置かない方針、
+  後掲「Config」節参照）。未設定なら HTTP を送る前に失敗させる。
+- レスポンスの `output` には `message` 以外に `web_search_call` 等の項目も混ざるため、
+  `OpenAiClient#output_text` は `message` 内の `output_text` だけを連結して JSON として
+  読む（`refusal` があれば失敗扱い）。
+- トークン使用量（レスポンスの `usage`）は `EpisodeLogger.record` のヘッダー行に
+  `usage=<JSON>` として残す。
+
 ### UsedNewsHistory（紹介済みニュース履歴）
 
 - なぜ必要か: `last_fetched_at` を跨いで別ソースが同じ話題を配信すると、FeedCache の
@@ -966,9 +1003,9 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 
 ### Config
 
-- `ai_agent.effort` は現状 `bin == "claude"` のときだけ `Internal::AiCli.run` が
-  参照する。実装上対応しているのは claude のみだが、将来 effort に対応する別の
-  AI CLI が増えたときに使い回す想定でこのフィールドを用意している。
+- `ai_agent.effort` は `bin` が `claude`（`--effort`）と `openai`（`reasoning.effort`）の
+  ときに `Internal::AiCli.run` が参照する。agy では使わない。値は各バックエンドへ
+  そのまま渡すので、受け付ける値は使うバックエンドの仕様に従う。
 - `Config.validate_publish_target!` は、mode 判定を通らずに公開先を触る CLI 操作
   （`--clean` / `--clean-archive`）のために独立して存在する。これを通さないと、
   生成物を作りきってからデプロイ段階で落ちる。`--ui-only` は `assets` も参照する

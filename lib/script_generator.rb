@@ -137,6 +137,7 @@ class ScriptGenerator
 
     selector_model = Internal::AiCli.model_for(:selector)
     Internal::AiCli.run("selecting news", selector_prompt, model_override: selector_model,
+      outputs: { "news_selected" => news_selected_path },
       cleanup_paths_on_timeout: [news_selected_path])
 
     rewrite_file(news_selected_path) { |text| strip_facts_preamble(text) }
@@ -152,6 +153,8 @@ class ScriptGenerator
 
     extractor_model = Internal::AiCli.model_for(:extractor)
     Internal::AiCli.run("extracting news facts", extractor_prompt(selected_news), model_override: extractor_model,
+      outputs: { "news_facts" => news_facts_path, "used_news" => provisional_used_news_path },
+      web_search: true,
       cleanup_paths_on_timeout: [news_facts_path, provisional_used_news_path])
 
     rewrite_file(news_facts_path) { |text| strip_facts_preamble(text) }
@@ -175,6 +178,7 @@ class ScriptGenerator
     news_facts = File.read(news_facts_path)
     Internal::AiCli.run("writing script and used news",
       writer_prompt(selected_news, news_facts), model_override: writer_model,
+      outputs: { "script" => script_path, "used_news" => used_news_path },
       cleanup_paths_on_timeout: [script_path, used_news_path])
 
     rewrite_file(script_path) { |text| strip_preamble(text) }
@@ -191,6 +195,7 @@ class ScriptGenerator
 
     formatter_model = Internal::AiCli.model_for(:formatter)
     Internal::AiCli.run("formatting for VOICEPEAK", format_prompt, model_override: formatter_model,
+      outputs: { "tts_script" => tts_script_path },
       cleanup_paths_on_timeout: [tts_script_path])
 
     rewrite_file(tts_script_path) { |text| strip_preamble(text) }
@@ -325,11 +330,14 @@ class ScriptGenerator
   # 本文は templates/*.prompt.erb に置き、ここではテンプレートに渡す変数を
   # 用意して描画するだけにする。プロンプトの調整はテンプレート側で完結する。
 
-  # ニュース選定用タスク。全候補（AI に Read させるファイルパス）・カテゴリの
-  # 分類観点・合計目安件数・選定結果の書き込み先パスに加え、直近の紹介済みニュースを渡す。
+  # ニュース選定用タスク。全候補（file_io なら AI に Read させるファイルパス、そうでなければ
+  # 本文）・カテゴリの分類観点・合計目安件数・選定結果の書き込み先パスに加え、直近の
+  # 紹介済みニュースを渡す。
   def selector_prompt
     TemplateRenderer.render("selector.prompt", self,
+      file_io: Internal::AiCli.file_io?,
       news_collected_path: File.expand_path(news_collected_path),
+      news_collected: File.read(news_collected_path),
       today_ja: @episode.today_ja,
       category_details:,
       total_news_count:,
@@ -340,6 +348,7 @@ class ScriptGenerator
   # facts に加え、紹介済みニュース履歴の元になる暫定 used_news の書き込み先も渡す。
   def extractor_prompt(selected_news)
     TemplateRenderer.render("extractor.prompt", self,
+      file_io: Internal::AiCli.file_io?,
       selected_news:,
       today_ja: @episode.today_ja,
       category_details:,
@@ -352,6 +361,7 @@ class ScriptGenerator
   # 書き込み先パスを渡す。
   def writer_prompt(selected_news, news_facts)
     TemplateRenderer.render("writer.prompt", self,
+      file_io: Internal::AiCli.file_io?,
       selected_news:,
       news_facts:,
       today_ja: @episode.today_ja,
@@ -363,10 +373,12 @@ class ScriptGenerator
   end
 
   # 整形用タスク。読み込む台本(script)と書き込む tts_script のパスを渡す
-  # （Claude が Read/Write）。
+  # （file_io でなければ台本の本文を埋め込む）。
   def format_prompt
     TemplateRenderer.render("format.prompt", self,
+      file_io: Internal::AiCli.file_io?,
       script_path: File.expand_path(script_path),
+      script: File.read(script_path),
       tts_script_path: File.expand_path(tts_script_path))
   end
 end
