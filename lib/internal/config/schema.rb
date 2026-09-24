@@ -54,6 +54,8 @@ module Internal
       attribute? :used_fix_max_retries, Types::Strict::Integer.default(2)
       # agy の --print-timeout に渡す値（Go の time.Duration 表記、例 "15m"）。
       attribute? :print_timeout, Types::Strict::String.default("15m")
+      # bin: openai のとき、1 リクエストの応答を待つ最大秒数。
+      attribute? :request_timeout_sec, Types::Strict::Integer.default(900)
 
       def model_for(role)
         public_send(:"#{role}_model") || model

@@ -1,27 +1,37 @@
 # frozen_string_literal: true
 
+require "json"
 require "open3"
 require "tty-spinner"
 require_relative "config"
 require_relative "episode_logger"
+require_relative "openai_client"
 
-# claude/agy 等の AI CLI をサブプロセスとして実行する共通ロジック。ScriptGenerator
+# claude/agy 等の AI CLI、または OpenAI API を呼ぶ共通ロジック。ScriptGenerator
 # （selector/extractor/writer/format）と UsedNewsFormatter（used_fix）の双方が使う。
 module Internal
   module AiCli
     module_function
 
     PARTIAL_OUTPUT_MARKER = "returning partial output"
+    OPENAI_BIN = "openai"
 
-    def run(spinner_message, prompt, model_override: nil, effort_override: :default, fatal: true,
-            cleanup_paths_on_timeout: [])
+    # AI 自身がツールでファイルを読み書きするか（OpenAI API では false）。
+    def file_io? = ::Config.ai_agent.bin != OPENAI_BIN
+
+    # outputs: 出力名 => 書き込み先パス（file_io? でないときに Ruby 側が書く）。
+    def run(spinner_message, prompt, outputs:, model_override: nil, effort_override: :default, fatal: true,
+            web_search: false, cleanup_paths_on_timeout: [])
       bin = ::Config.ai_agent.bin
       model = model_override || ::Config.ai_agent.model
+      effort = effort_override == :default ? ::Config.ai_agent.effort : effort_override
 
       log_meta = { bin: bin, model: model }
 
-      if bin == "claude"
-        effort = effort_override == :default ? ::Config.ai_agent.effort : effort_override
+      if bin == OPENAI_BIN
+        run_openai("#{spinner_message} [#{bin}]", prompt, outputs: outputs, model: model, effort: effort,
+          web_search: web_search, fatal: fatal, log_meta: log_meta)
+      elsif bin == "claude"
         # effort 未設定なら --effort 自体を渡さず、claude CLI 側の既定に任せる。
         effort_args = effort ? ["--effort", effort] : []
         run_with_spinner(
@@ -73,5 +83,30 @@ module Internal
       stdout
     end
     private_class_method :run_with_spinner
+
+    # 成功時は outputs の各パスへ書き込んで true を返す。失敗時は何も書かない。
+    def run_openai(spinner_message, prompt, outputs:, model:, effort:, web_search:, fatal:, log_meta:)
+      spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
+      spinner.auto_spin
+
+      start = EpisodeLogger.start_timer
+      client = OpenAiClient.new(timeout_sec: ::Config.ai_agent.request_timeout_sec)
+      result = client.generate(prompt, model: model, output_names: outputs.keys, effort: effort, web_search: web_search)
+      EpisodeLogger.record(spinner_message, **log_meta, duration_sec: EpisodeLogger.elapsed_since(start),
+        usage: JSON.generate(result.usage), stdout: JSON.generate(result.outputs))
+
+      outputs.each { |name, path| File.write(path, result.outputs.fetch(name)) }
+      spinner.success("(done)")
+      true
+    rescue OpenAiClient::Error => e
+      EpisodeLogger.record(spinner_message, **log_meta, duration_sec: EpisodeLogger.elapsed_since(start),
+        stderr: e.message)
+      spinner.error("(failed)")
+      warn e.message
+      return nil unless fatal
+
+      abort "AI API failed (#{e.message})"
+    end
+    private_class_method :run_openai
   end
 end

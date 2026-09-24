@@ -14,7 +14,7 @@ RSpec.describe Internal::AiCli do
       allow(Config.ai_agent).to receive_messages(bin: "agy", model: "gemini-3.8-flash-high", print_timeout: "15m")
       allow(described_class).to receive(:run_with_spinner).and_return("ok")
 
-      described_class.run("doing thing", "prompt")
+      described_class.run("doing thing", "prompt", outputs: {})
 
       expect(described_class).to have_received(:run_with_spinner).with(
         anything, anything, "agy", "--model", "gemini-3.8-flash-high", "--dangerously-skip-permissions",
@@ -27,7 +27,7 @@ RSpec.describe Internal::AiCli do
       allow(Config.ai_agent).to receive_messages(bin: "claude", model: "claude-opus-4-8", effort: nil)
       allow(described_class).to receive(:run_with_spinner).and_return("ok")
 
-      described_class.run("doing thing", "prompt")
+      described_class.run("doing thing", "prompt", outputs: {})
 
       expect(described_class).to have_received(:run_with_spinner) do |*args|
         expect(args).not_to include("--print-timeout")
@@ -38,7 +38,7 @@ RSpec.describe Internal::AiCli do
       allow(Config.ai_agent).to receive_messages(bin: "agy", model: "gemini-3.8-flash-high", print_timeout: "15m")
       allow(described_class).to receive(:run_with_spinner).and_return("ok")
 
-      described_class.run("doing thing", "prompt", cleanup_paths_on_timeout: ["/tmp/news_facts.txt"])
+      described_class.run("doing thing", "prompt", outputs: {}, cleanup_paths_on_timeout: ["/tmp/news_facts.txt"])
 
       expect(described_class).to have_received(:run_with_spinner).with(
         anything, anything, "agy", "--model", "gemini-3.8-flash-high", "--dangerously-skip-permissions",
@@ -46,6 +46,65 @@ RSpec.describe Internal::AiCli do
         fatal: true, log_meta: { bin: "agy", model: "gemini-3.8-flash-high" },
         cleanup_paths_on_timeout: ["/tmp/news_facts.txt"]
       )
+    end
+  end
+
+  describe ".run with bin: openai" do
+    let(:client) { instance_double(Internal::OpenAiClient) }
+
+    before do
+      allow(Config.ai_agent).to receive_messages(bin: "openai", model: "gpt-test", effort: "high", request_timeout_sec: 60)
+      allow(Internal::OpenAiClient).to receive(:new).with(timeout_sec: 60).and_return(client)
+    end
+
+    it "writes each output to its path" do
+      Dir.mktmpdir do |dir|
+        facts_path = File.join(dir, "facts.txt")
+        used_path = File.join(dir, "used.txt")
+        allow(client).to receive(:generate).and_return(
+          Internal::OpenAiClient::Result.new(outputs: { "news_facts" => "facts", "used_news" => "used" }, usage: {})
+        )
+
+        described_class.run("doing thing", "prompt", outputs: { "news_facts" => facts_path, "used_news" => used_path },
+          web_search: true)
+
+        expect(client).to have_received(:generate).with(
+          "prompt", model: "gpt-test", output_names: %w[news_facts used_news], effort: "high", web_search: true
+        )
+        expect(File.read(facts_path)).to eq("facts")
+        expect(File.read(used_path)).to eq("used")
+      end
+    end
+
+    it "aborts without writing outputs when the API fails" do
+      Dir.mktmpdir do |dir|
+        facts_path = File.join(dir, "facts.txt")
+        allow(client).to receive(:generate).and_raise(Internal::OpenAiClient::Error, "boom")
+
+        expect do
+          described_class.run("doing thing", "prompt", outputs: { "news_facts" => facts_path })
+        end.to raise_error(SystemExit)
+
+        expect(File.exist?(facts_path)).to be false
+      end
+    end
+
+    it "returns nil instead of aborting when fatal: false" do
+      allow(client).to receive(:generate).and_raise(Internal::OpenAiClient::Error, "boom")
+
+      result = described_class.run("doing thing", "prompt", outputs: { "fixed" => "/unused" }, fatal: false)
+
+      expect(result).to be_nil
+    end
+  end
+
+  describe ".file_io?" do
+    it "is false only for bin: openai" do
+      allow(Config.ai_agent).to receive(:bin).and_return("openai")
+      expect(described_class.file_io?).to be false
+
+      allow(Config.ai_agent).to receive(:bin).and_return("agy")
+      expect(described_class.file_io?).to be true
     end
   end
 
