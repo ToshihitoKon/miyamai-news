@@ -207,21 +207,20 @@ RSpec.describe Pipeline do
       expect(messages).to include("news facts: news_facts_path")
     end
 
-    it "--date/--slot を省略した実行は、ローカルのタイムゾーンが JST でなければ abort する" do
-      allow(Time).to receive(:now).and_return(Time.new(2026, 7, 14, 3, 0, 0, "+00:00"))
+    it "--date/--slot を省略した実行は、端末のタイムゾーンによらず JST で現在の回を決める" do
+      allow(Time).to receive(:now).and_return(Time.new(2026, 7, 14, 3, 0, 0, "+00:00")) # JST 12:00
 
-      expect { build_pipeline({}).run }.to raise_error(SystemExit)
+      build_pipeline(digest_only: true).run
 
-      expect(fake_remote_state).not_to have_received(:checkout!)
-      expect(fake_handoff).not_to have_received(:exist?)
+      expect(fake_remote_state).to have_received(:checkout!).with(owner: "20260714_afternoon")
     end
 
-    it "--date と --slot を両方指定すればタイムゾーンによらず実行できる" do
-      allow(Time).to receive(:now).and_return(Time.new(2026, 7, 14, 3, 0, 0, "+00:00"))
+    it "JST の深夜 0〜5 時は前日の midnight の回として扱う" do
+      allow(Time).to receive(:now).and_return(Time.new(2026, 7, 14, 16, 0, 0, "+00:00")) # JST 7/15 01:00
 
-      build_pipeline(digest_only: true, date: now, slot: "afternoon").run
+      build_pipeline(digest_only: true).run
 
-      expect(fake_generator).to have_received(:digest)
+      expect(fake_remote_state).to have_received(:checkout!).with(owner: "20260714_midnight")
     end
 
     it "作業コピーを取り出すときは、この回の episode_key を owner として渡す" do

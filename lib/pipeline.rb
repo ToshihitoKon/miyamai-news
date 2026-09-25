@@ -111,15 +111,11 @@ class Pipeline
 
   # --- Episode依存の経路 --------------------------------------------------
 
-  JST_UTC_OFFSET_SEC = 9 * 3600
+  JST = "+09:00"
 
+  # 現在の回（date/slot）は端末のタイムゾーンによらず JST で決める。
   def setup_episode!
-    now = Time.now
-    if (@args[:date].nil? || @args[:slot].nil?) && now.utc_offset != JST_UTC_OFFSET_SEC
-      abort "the current episode (date/slot) is determined in JST, but the local timezone is UTC#{now.strftime('%:z')}. " \
-            "Run with TZ=Asia/Tokyo or pass both --date and --slot."
-    end
-    @episode = Episode.new(now: now, date: @args[:date]&.to_date, slot: @args[:slot])
+    @episode = Episode.new(now: Time.now.getlocal(JST), date: @args[:date]&.to_date, slot: @args[:slot])
 
     FileUtils.mkdir_p(@work_dir)
     FileUtils.mkdir_p(@dist_dir)
