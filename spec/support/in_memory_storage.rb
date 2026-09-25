@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "internal/object_storage"
 
 # R2Storage と同じ操作を Hash 上で行うテスト用ストレージ。
@@ -35,5 +36,24 @@ class InMemoryStorage
 
     @objects[to_key] = @objects.delete(from_key) { raise Internal::ObjectStorage::ObjectNotFound, from_key }
     :moved
+  end
+
+  def sync_down(prefix:, root:)
+    FileUtils.rm_rf(File.join(root, prefix))
+    FileUtils.mkdir_p(File.join(root, prefix))
+    list(prefix).each do |key|
+      path = File.join(root, key)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.binwrite(path, @objects[key])
+    end
+  end
+
+  def sync_up(prefix:, root:)
+    local_dir = File.join(root, prefix)
+    local_keys = Dir.glob("**/*", base: local_dir).select { |rel| File.file?(File.join(local_dir, rel)) }.map do |rel|
+      @objects[prefix + rel] = File.binread(File.join(local_dir, rel))
+      prefix + rel
+    end
+    (list(prefix) - local_keys).each { |key| @objects.delete(key) }
   end
 end

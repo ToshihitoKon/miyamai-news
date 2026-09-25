@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "aws-sdk-s3"
+require "fileutils"
 require_relative "config"
 require_relative "object_storage"
 
@@ -92,19 +93,39 @@ module Internal
       keys
     end
 
-    # DeleteObjects は 1 リクエスト最大 1000 キー。
-    def delete_prefix(prefix)
-      keys = list(prefix)
-      return 0 if keys.empty?
+    def delete_prefix(prefix) = delete_keys(list(prefix))
 
+    # prefix（"/" 終わり）以下を root/<prefix> にそのまま写す。R2 に無いローカルのファイルは消える。
+    def sync_down(prefix:, root:)
+      FileUtils.rm_rf(File.join(root, prefix))
+      transfer_manager.download_directory(root, bucket: @bucket, s3_prefix: prefix)
+      FileUtils.mkdir_p(File.join(root, prefix))
+    end
+
+    # root/<prefix> を prefix（"/" 終わり）以下にそのまま写す。ローカルに無い R2 のキーは消す。
+    def sync_up(prefix:, root:)
+      local_dir = File.join(root, prefix)
+      transfer_manager.upload_directory(local_dir, bucket: @bucket, s3_prefix: prefix.chomp("/"), recursive: true,
+        request_callback: ->(path, params) { params.merge(content_type: content_type_for(path)) })
+      local_keys = Dir.glob("**/*", base: local_dir).select { |rel| File.file?(File.join(local_dir, rel)) }.map { |rel| prefix + rel }
+      delete_keys(list(prefix) - local_keys)
+    end
+
+    private
+
+    # DeleteObjects は 1 リクエスト最大 1000 キー。
+    def delete_keys(keys)
       keys.each_slice(1000) do |batch|
-        client.delete_objects(bucket: @bucket,
-          delete: { objects: batch.map { |k| { key: k } } })
+        client.delete_objects(bucket: @bucket, delete: { objects: batch.map { |k| { key: k } } })
       end
       keys.size
     end
 
-    private
+    def transfer_manager = @transfer_manager ||= Aws::S3::TransferManager.new(client: client)
+
+    def content_type_for(path)
+      File.extname(path) == ".json" ? "application/json" : "text/plain; charset=utf-8"
+    end
 
     # 認証情報の要求は最初のリクエストまで遅らせる。
     def client

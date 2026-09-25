@@ -192,6 +192,59 @@ RSpec.describe Internal::R2Storage do
     end
   end
 
+  describe "#sync_down" do
+    it "mirrors the prefix into root/<prefix>, replacing whatever was there" do
+      Dir.mktmpdir do |root|
+        FileUtils.mkdir_p(File.join(root, "state"))
+        File.write(File.join(root, "state", "stale.json"), "stale")
+        client.stub_responses(:list_objects_v2, {
+          contents: [{ key: "state/last_fetch.json", size: 2 }, { key: "state/feed_cache/a.json", size: 2 }],
+          is_truncated: false,
+        })
+        client.stub_responses(:head_object, { content_length: 2, parts_count: nil })
+        client.stub_responses(:get_object, ->(ctx) { { body: ctx.params[:key].end_with?("last_fetch.json") ? "{}" : "[]" } })
+
+        storage.sync_down(prefix: "state/", root: root)
+
+        expect(File.read(File.join(root, "state", "last_fetch.json"))).to eq("{}")
+        expect(File.read(File.join(root, "state", "feed_cache", "a.json"))).to eq("[]")
+        expect(File.exist?(File.join(root, "state", "stale.json"))).to be false
+      end
+    end
+  end
+
+  describe "#sync_up" do
+    it "uploads root/<prefix> under the prefix and deletes keys that no longer exist locally" do
+      Dir.mktmpdir do |root|
+        FileUtils.mkdir_p(File.join(root, "state", "feed_cache"))
+        File.write(File.join(root, "state", "last_fetch.json"), "{}")
+        File.write(File.join(root, "state", "feed_cache", "a.json"), "[]")
+        put_keys = []
+        content_types = {}
+        client.stub_responses(:put_object, ->(ctx) {
+          put_keys << ctx.params[:key]
+          content_types[ctx.params[:key]] = ctx.params[:content_type]
+          {}
+        })
+        client.stub_responses(:list_objects_v2, {
+          contents: [{ key: "state/last_fetch.json" }, { key: "state/feed_cache/a.json" }, { key: "state/gone.txt" }],
+          is_truncated: false,
+        })
+        deleted = nil
+        client.stub_responses(:delete_objects, ->(ctx) {
+          deleted = ctx.params[:delete][:objects]
+          {}
+        })
+
+        storage.sync_up(prefix: "state/", root: root)
+
+        expect(put_keys).to contain_exactly("state/last_fetch.json", "state/feed_cache/a.json")
+        expect(content_types["state/last_fetch.json"]).to eq("application/json")
+        expect(deleted).to eq([{ key: "state/gone.txt" }])
+      end
+    end
+  end
+
   describe ".from_config" do
     it "builds from the cloudflare section" do
       built = described_class.from_config

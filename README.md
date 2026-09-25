@@ -42,7 +42,7 @@ cp config.sample.yaml config.yaml
 ```
 
 R2 の状態・台本置き場（後述）を使うため、`pipeline.mode` によらず `--help` 以外のほぼすべての
-実行（`--confirm-fetch`/`--restore-fetch`/`--clean` 系を含む）に以下の環境変数が必要。
+実行（`--restore-fetch`/`--clean` 系を含む）に以下の環境変数が必要。
 config.yaml には書かない（config.yaml は機密を持たない前提で運用しているため）。
 
 | 環境変数 | 用途 |
@@ -140,10 +140,10 @@ bundle exec ruby miyamai_news.rb --ui-only         # 新しい回を公開せず
 bundle exec ruby miyamai_news.rb --clean         # work/ を掃除し（未完了の実行の作業コピーも破棄）、公開済みまたは保持期間を過ぎた dist/ 成果物を削除
 bundle exec ruby miyamai_news.rb --clean-archive # archived/ 配下の退避済み成果物を完全削除
 
-# last_fetched_at (RSS Feed 最終 fetch 時刻）の管理（R2 の state/ を書き換える）
-bundle exec ruby miyamai_news.rb --confirm-fetch # pending の収集windowを確定する
-bundle exec ruby miyamai_news.rb --restore-fetch # 直前の確定/ロールバックを1段だけ巻き戻す
-bundle exec ruby miyamai_news.rb --ci            # 非対話モード: 前回分を確認せず自動確定し、プロンプト・スピナーを出さない（CI向け）
+# 収集window（RSS 収集の起点）の管理（R2 の state/ を書き換える）
+bundle exec ruby miyamai_news.rb --restore-fetch # 最新の確定を1件取り消す（直近3件まで遡れる）
+
+bundle exec ruby miyamai_news.rb --ci            # 非対話モード: スピナーを出さず進捗を1行ずつ出す（CI向け）
 
 # オプション一覧を表示
 bundle exec ruby miyamai_news.rb --help
@@ -170,13 +170,13 @@ JST でなければ中断する。
 
 ### パイプラインの内部状態（R2 の state/）
 
-`last_fetch.json`・`feed_cache/`・`used_news_history/` など、実行をまたいで保持するパイプラインの内部状態は R2 の
-`state/` が正で、台本を生成する実行は開始時に `work/` へ取り出し、R2 に台本を置いた後で
-書き戻す。途中で失敗した実行の作業コピーは `work/` に残り、R2 がその後更新されていなければ
+`last_fetch.json`・`feed_cache/`・`used_news_history/`・`news_snapshots/` など、実行をまたいで
+保持するパイプラインの内部状態は `work/state/` にまとめ、R2 の `state/` と同じ構成で同期する。
+正は R2 側で、台本を生成する実行は開始時に `work/state/` へ取り出し、台本を R2 に置く前に書き戻す。途中で失敗した実行の作業コピーは `work/` に残り、R2 がその後更新されていなければ
 次の実行がそのまま引き継ぐ。別の実行が先に R2 を更新していた場合は衝突として中断するので、
 `--clean` で手元の作業コピーを破棄してから実行し直す。
 
-初回だけ、手元の `work/` にある状態を R2 に置く。
+初回だけ、手元の状態を R2 に置く（`work/` 直下にある旧配置の状態は `work/state/` へ移してから置く）。
 
 ```sh
 bundle exec ruby scripts/seed_remote_state.rb                              # 計画のみ
@@ -185,23 +185,25 @@ envchain cloudflare bundle exec ruby scripts/seed_remote_state.rb --apply  # R2 
 
 ### 収集window（last_fetch）の確定フロー
 
-新規にRSS収集が発生した実行では、収集windowは `last_fetch.json` の `pending_at` に留まり、
-R2 に台本一式を置いた時点で確定する（音声合成・publish を待たない）。`--digest-only`/
-`--script-only` は状態を R2 へ書き戻さないので、収集windowは進まない。
-既存の `news_<date>_<slot>.txt` を再利用しただけの実行では pending 化も起きない。
+収集windowは、台本一式を R2 に置く直前に、その回（`<date_tag>_<slot>`）の確定として進む
+（音声合成・publish を待たない）。`last_fetch.json` には直近3回分の確定（回と収集時刻）を残し、
+次の回は直前の確定の収集時刻から収集する。その回の候補一覧も `news_snapshots/` に残す。`--digest-only`/`--script-only` は状態を
+R2 へ書き戻さないので、収集windowは進まない。
 
-収集の開始時に前回の `pending_at` が残っていれば、ダイアログで confirm か rollback かを選択する。
-CI等の非対話実行では `--ci` を付けて実行すると、確認なしで前回分を自動確定してから続行する（プロンプトは出さない）。
-`--ci` を付けずに標準入力が閉じた環境で実行した場合は、ロールバックせずに中断する。
+確定済みの回を作り直す場合（台本の受け渡しが揃わなかった等）は、残しておいた候補一覧を
+そのまま使い、紹介済み履歴からその回自身を除いて選定する。作り直せるのは最新の確定の回だけ。
+
+確定を取り消したい場合は `--restore-fetch` を使う。最新の確定を1件取り消し、その回の記事を
+次の回の候補に戻す（繰り返すと直近3件まで遡れる）。
 
 ### フィードキャッシュ
 
-各フィードの取得結果は `work/feed_cache/<hash>.json` に URL ごと1ファイルで保持する。
+各フィードの取得結果は `work/state/feed_cache/<hash>.json` に URL ごと1ファイルで保持する。
 同じフィードを最後に取得してから `collect.fetch_skip_minutes` 以内に再実行した場合はキャッシュから結果を返す。`0` にするとスキップを無効化する。
 
-#### deprecated: `work/feed_cache.json`
+#### deprecated: `work/state/feed_cache.json`
 
-旧・単一ファイル形式のキャッシュ `work/feed_cache.json` は、URL 別形式への移行後も
+旧・単一ファイル形式のキャッシュ `work/state/feed_cache.json` は、URL 別形式への移行後も
 seen_at の継承元として残している。
 安全に削除できるかどうかのチェックスクリプトを同梱している。
 

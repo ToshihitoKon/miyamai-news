@@ -38,7 +38,7 @@ RSpec.describe FeedCache do
   describe "#select_since_for" do
     let(:cache) { build_cache }
 
-    # since は「前回収集済みの起点」。収集起点(confirmed_at)は前回の実行の @now 由来で、
+    # since は「前回収集済みの起点」。収集起点（前の確定の at）は前回の実行の @now 由来で、
     # その実行で初登場した記事の seen_at も同じ @now なので、両者は毎回ちょうど一致する。
     # 境界を含める(>=)と、前回収集済みの記事が翌回に必ず再登場して二重紹介になる。
     it "excludes an entry whose seen_at is exactly since (already collected last time)" do

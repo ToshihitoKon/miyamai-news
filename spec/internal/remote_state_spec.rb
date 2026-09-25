@@ -22,16 +22,21 @@ RSpec.describe Internal::RemoteState do
 
   after { FileUtils.remove_entry(work_dir) }
 
-  def write_local(relative, body)
-    path = File.join(work_dir, relative)
+  # work/state/ 以下（内部状態）のパス。
+  def local(relative) = File.join(work_dir, "state", relative)
+
+  def write_local(relative, body) = write_file(local(relative), body)
+
+  # work/ 直下（回ごとの中間ファイル）。
+  def write_work(relative, body) = write_file(File.join(work_dir, relative), body)
+
+  def write_file(path, body)
     FileUtils.mkdir_p(File.dirname(path))
     File.write(path, body)
   end
 
-  def local(relative) = File.join(work_dir, relative)
-
   describe "#checkout!" do
-    it "pulls every state/ object into work_dir and records the revision it came from" do
+    it "pulls every state/ object into work/state/ and records the revision it came from" do
       expect(state.checkout!(owner: "20260714_afternoon")).to eq(:pulled)
 
       expect(File.read(local("last_fetch.json"))).to include("confirmed_at")
@@ -42,12 +47,12 @@ RSpec.describe Internal::RemoteState do
 
     it "removes local tracked files that do not exist in R2, but leaves per-episode intermediate files alone" do
       write_local("used_news_history/20260101_morning.txt", "stale")
-      write_local("news_20260714_afternoon.txt", "intermediate")
+      write_work("news_20260714_afternoon.txt", "intermediate")
 
       state.checkout!(owner: "20260714_afternoon")
 
       expect(File.exist?(local("used_news_history/20260101_morning.txt"))).to be false
-      expect(File.exist?(local("news_20260714_afternoon.txt"))).to be true
+      expect(File.exist?(File.join(work_dir, "news_20260714_afternoon.txt"))).to be true
     end
 
     it "keeps the local working copy of an unfinished run when R2 is still at the revision it came from" do
@@ -127,7 +132,7 @@ RSpec.describe Internal::RemoteState do
       File.delete(local("used_news_history/20260714_morning.txt"))
       write_local("used_news_history/20260714_afternoon.txt", "## 生成AI\n### 新しい話題\n")
       write_local("last_fetch.json", '{"confirmed_at":"2026-07-14T15:00:00+09:00"}')
-      write_local("news_20260714_afternoon.txt", "intermediate")
+      write_work("news_20260714_afternoon.txt", "intermediate")
 
       state.push!
 
@@ -136,7 +141,31 @@ RSpec.describe Internal::RemoteState do
       ])
       expect(storage.get("state/last_fetch.json")).to include("15:00:00")
       expect(storage.get("state_revision")).not_to eq("rev-1")
-      expect(File.exist?(local(described_class::BASE_REVISION_FILE))).to be false
+      expect(File.exist?(File.join(work_dir, described_class::BASE_REVISION_FILE))).to be false
+    end
+
+    it "advances the revision before syncing, so an interrupted sync resumes here and conflicts elsewhere" do
+      state.checkout!(owner: "20260714_afternoon")
+      other = described_class.new(storage: storage, work_dir: Dir.mktmpdir)
+      other.checkout!(owner: "20260714_afternoon")
+      allow(storage).to receive(:sync_up).and_raise(StandardError, "delete failed")
+
+      expect { state.push! }.to raise_error(StandardError, "delete failed")
+
+      expect(storage.get("state_revision")).not_to eq("rev-1")
+      expect(described_class.new(storage: storage, work_dir: work_dir).checkout!(owner: "20260714_afternoon")).to eq(:resumed)
+      expect { other.ensure_current! }.to raise_error(described_class::Conflict)
+    end
+
+    it "does not upload leftovers of interrupted tmp-then-rename writes" do
+      state.checkout!(owner: "20260714_afternoon")
+      write_local("last_fetch.json.tmp", "half written")
+      write_local("feed_cache/abc.json.tmp", "half written")
+
+      state.push!
+
+      expect(storage.list("state/").grep(/\.tmp\z/)).to be_empty
+      expect(File.exist?(local("last_fetch.json.tmp"))).to be false
     end
 
     it "refuses to overwrite R2 when another run pushed after checkout!" do
@@ -155,9 +184,8 @@ RSpec.describe Internal::RemoteState do
       write_local("last_fetch.json", "{}")
       write_local("feed_cache.json", "{}")
 
-      count = described_class.new(storage: empty_storage, work_dir: work_dir).seed!
+      described_class.new(storage: empty_storage, work_dir: work_dir).seed!
 
-      expect(count).to eq(2)
       expect(empty_storage.list("state/")).to eq(%w[state/feed_cache.json state/last_fetch.json])
       expect(empty_storage.exist?("state_revision")).to be true
     end

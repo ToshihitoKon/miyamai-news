@@ -1,298 +1,140 @@
 # frozen_string_literal: true
 
 require "spec_helper"
-require "fileutils"
 require "tmpdir"
+require "json"
 require "internal/last_fetch_store"
 
 RSpec.describe LastFetchStore do
   let(:work_dir) { Dir.mktmpdir }
+  let(:t1) { Time.utc(2026, 7, 13, 21, 0, 0) }
+  let(:t2) { Time.utc(2026, 7, 14, 3, 0, 0) }
+  let(:t3) { Time.utc(2026, 7, 14, 9, 0, 0) }
+  let(:t4) { Time.utc(2026, 7, 14, 15, 0, 0) }
 
   after { FileUtils.remove_entry(work_dir) }
 
-  describe ".mark_pending!" do
-    it "sets pending_at without moving confirmed_at" do
-      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      pending = Time.utc(2026, 7, 16, 9, 0, 0)
-      described_class.confirm_immediately!(work_dir: work_dir, at: confirmed)
+  def commit(key, at) = described_class.commit!(work_dir: work_dir, episode_key: key, at: at)
+  def episodes = described_class.commits(work_dir).map { |c| c["episode"] }
 
-      described_class.mark_pending!(work_dir: work_dir, at: pending)
+  it "stores the commits in work/state/last_fetch.json" do
+    commit("20260714_morning", t1)
 
-      expect(described_class.confirmed_at(work_dir)).to eq(confirmed)
-      expect(described_class.pending_at(work_dir)).to eq(pending)
+    expect(described_class.path(work_dir)).to eq(File.join(work_dir, "state", "last_fetch.json"))
+    expect(JSON.parse(File.read(described_class.path(work_dir))))
+      .to eq("commits" => [{ "episode" => "20260714_morning", "at" => t1.iso8601 }])
+  end
+
+  describe ".since_for" do
+    it "is nil when nothing has been committed" do
+      expect(described_class.since_for(work_dir, "20260714_morning")).to be_nil
     end
 
-    # 自動的な pending 化は人間の操作ではないので Undo 対象にしない。
-    it "is not restorable (clears the undo buffer)" do
-      described_class.mark_pending!(work_dir: work_dir, at: Time.utc(2026, 7, 15, 9, 0, 0))
-      described_class.rollback!(work_dir: work_dir)
+    it "is the collection time of the latest committed episode before the given one" do
+      commit("20260714_morning", t1)
+      commit("20260714_afternoon", t2)
 
-      described_class.mark_pending!(work_dir: work_dir, at: Time.utc(2026, 7, 16, 9, 0, 0))
-
-      expect(described_class.restorable?(work_dir)).to be false
+      expect(described_class.since_for(work_dir, "20260714_evening")).to eq(t2)
     end
 
-    it "works from an empty store (no prior confirmed_at)" do
-      pending = Time.utc(2026, 7, 16, 9, 0, 0)
+    it "skips the given episode itself when it is the latest commit (regenerating it)" do
+      commit("20260714_morning", t1)
+      commit("20260714_afternoon", t2)
 
-      described_class.mark_pending!(work_dir: work_dir, at: pending)
-
-      expect(described_class.confirmed_at(work_dir)).to be_nil
-      expect(described_class.pending_at(work_dir)).to eq(pending)
+      expect(described_class.since_for(work_dir, "20260714_afternoon")).to eq(t1)
     end
 
-    it "records the episode_key of the pending window" do
-      described_class.mark_pending!(
-        work_dir: work_dir, at: Time.utc(2026, 7, 16, 9, 0, 0), episode_key: "20260716_evening"
-      )
+    it "refuses an episode older than the latest committed one" do
+      commit("20260714_evening", t3)
 
-      expect(described_class.pending_episode(work_dir)).to eq("20260716_evening")
+      expect { described_class.since_for(work_dir, "20260714_afternoon") }
+        .to raise_error(described_class::OlderEpisodeError, /older than the latest committed episode 20260714_evening/)
     end
   end
 
-  describe ".confirm!" do
-    it "promotes pending_at to confirmed_at" do
-      described_class.confirm_immediately!(work_dir: work_dir, at: Time.utc(2026, 7, 14, 9, 0, 0))
-      pending = Time.utc(2026, 7, 16, 9, 0, 0)
-      described_class.mark_pending!(work_dir: work_dir, at: pending)
+  describe ".commit!" do
+    it "keeps only the latest KEEP_COMMITS episodes, newest first" do
+      commit("20260714_morning", t1)
+      commit("20260714_afternoon", t2)
+      commit("20260714_evening", t3)
+      commit("20260714_midnight", t4)
 
-      described_class.confirm!(work_dir: work_dir)
-
-      expect(described_class.confirmed_at(work_dir)).to eq(pending)
-      expect(described_class.pending_at(work_dir)).to be_nil
+      expect(episodes).to eq(%w[20260714_midnight 20260714_evening 20260714_afternoon])
     end
 
-    it "becomes restorable so an accidental confirm can be undone" do
-      described_class.confirm_immediately!(work_dir: work_dir, at: Time.utc(2026, 7, 14, 9, 0, 0))
-      described_class.mark_pending!(work_dir: work_dir, at: Time.utc(2026, 7, 16, 9, 0, 0))
+    it "replaces the commit of the same episode instead of stacking it" do
+      commit("20260714_morning", t1)
+      commit("20260714_afternoon", t2)
 
-      described_class.confirm!(work_dir: work_dir)
+      commit("20260714_afternoon", t3)
 
-      expect(described_class.restorable?(work_dir)).to be true
+      expect(episodes).to eq(%w[20260714_afternoon 20260714_morning])
+      expect(described_class.latest_commit(work_dir)["at"]).to eq(t3.iso8601)
     end
 
-    it "does nothing when there is no pending_at" do
-      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      described_class.confirm_immediately!(work_dir: work_dir, at: confirmed)
+    it "refuses an episode older than the latest committed one" do
+      commit("20260714_evening", t3)
 
-      described_class.confirm!(work_dir: work_dir)
-
-      expect(described_class.confirmed_at(work_dir)).to eq(confirmed)
-      expect(described_class.restorable?(work_dir)).to be false
+      expect { commit("20260714_morning", t1) }.to raise_error(described_class::OlderEpisodeError)
+      expect(episodes).to eq(%w[20260714_evening])
     end
 
-    it "returns the pending episode_key and clears it on confirm" do
-      described_class.mark_pending!(
-        work_dir: work_dir, at: Time.utc(2026, 7, 16, 9, 0, 0), episode_key: "20260716_evening"
-      )
+    it "orders commits by episode, not by the order they were written" do
+      commit("20260713_midnight", t1)
+      commit("20260714_morning", t2)
 
-      expect(described_class.confirm!(work_dir: work_dir)).to eq("20260716_evening")
-      expect(described_class.pending_episode(work_dir)).to be_nil
-    end
-
-    it "returns nil when there is no pending_at" do
-      expect(described_class.confirm!(work_dir: work_dir)).to be_nil
+      expect(episodes).to eq(%w[20260714_morning 20260713_midnight])
     end
   end
 
-  describe ".rollback!" do
-    it "keeps confirmed_at unchanged and clears pending_at" do
-      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      described_class.confirm_immediately!(work_dir: work_dir, at: confirmed)
-      described_class.mark_pending!(work_dir: work_dir, at: Time.utc(2026, 7, 16, 9, 0, 0))
+  describe ".revert_latest!" do
+    it "drops the latest commit so the next collection starts from the one before it" do
+      commit("20260714_morning", t1)
+      commit("20260714_afternoon", t2)
 
-      described_class.rollback!(work_dir: work_dir)
+      reverted = described_class.revert_latest!(work_dir: work_dir)
 
-      expect(described_class.confirmed_at(work_dir)).to eq(confirmed)
-      expect(described_class.pending_at(work_dir)).to be_nil
+      expect(reverted["episode"]).to eq("20260714_afternoon")
+      expect(described_class.since_for(work_dir, "20260714_afternoon")).to eq(t1)
     end
 
-    it "becomes restorable so an accidental rollback can be undone" do
-      described_class.confirm_immediately!(work_dir: work_dir, at: Time.utc(2026, 7, 14, 9, 0, 0))
-      described_class.mark_pending!(work_dir: work_dir, at: Time.utc(2026, 7, 16, 9, 0, 0))
-
-      described_class.rollback!(work_dir: work_dir)
-
-      expect(described_class.restorable?(work_dir)).to be true
-    end
-
-    it "does nothing when there is no pending_at" do
-      described_class.rollback!(work_dir: work_dir)
-
-      expect(described_class.restorable?(work_dir)).to be false
+    it "returns nil when there is no commit" do
+      expect(described_class.revert_latest!(work_dir: work_dir)).to be_nil
     end
   end
 
-  describe ".restore!" do
-    # confirm の取り消し: 昇格した confirmed を pending へ戻し、元の confirmed を戻す。
-    it "undoes a confirm, restoring both pending_at and the old confirmed_at" do
-      old_confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      pending = Time.utc(2026, 7, 16, 9, 0, 0)
-      described_class.confirm_immediately!(work_dir: work_dir, at: old_confirmed)
-      described_class.mark_pending!(work_dir: work_dir, at: pending)
-      described_class.confirm!(work_dir: work_dir)
-
-      described_class.restore!(work_dir: work_dir)
-
-      expect(described_class.pending_at(work_dir)).to eq(pending)
-      expect(described_class.confirmed_at(work_dir)).to eq(old_confirmed)
-      expect(described_class.restorable?(work_dir)).to be false
-    end
-
-    # discard の取り消し: 捨てた pending を戻すだけ。confirmed は動かさない。
-    it "undoes a rollback, restoring only the discarded pending_at" do
-      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      pending = Time.utc(2026, 7, 16, 9, 0, 0)
-      described_class.confirm_immediately!(work_dir: work_dir, at: confirmed)
-      described_class.mark_pending!(work_dir: work_dir, at: pending)
-      described_class.rollback!(work_dir: work_dir)
-
-      described_class.restore!(work_dir: work_dir)
-
-      expect(described_class.pending_at(work_dir)).to eq(pending)
-      expect(described_class.confirmed_at(work_dir)).to eq(confirmed)
-      expect(described_class.restorable?(work_dir)).to be false
-    end
-
-    it "does nothing when there is nothing to restore" do
-      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      described_class.confirm_immediately!(work_dir: work_dir, at: confirmed)
-
-      described_class.restore!(work_dir: work_dir)
-
-      expect(described_class.pending_at(work_dir)).to be_nil
-      expect(described_class.confirmed_at(work_dir)).to eq(confirmed)
-    end
-  end
-
-  describe ".confirm_immediately!" do
-    it "sets confirmed_at regardless of any pending state" do
-      described_class.mark_pending!(work_dir: work_dir, at: Time.utc(2026, 7, 14, 9, 0, 0))
-      published_at = Time.utc(2026, 7, 16, 9, 0, 0)
-
-      described_class.confirm_immediately!(work_dir: work_dir, at: published_at)
-
-      expect(described_class.confirmed_at(work_dir)).to eq(published_at)
-      expect(described_class.pending_at(work_dir)).to be_nil
-    end
-
-    # publish 時の即時確定は人間の対話操作ではないので Undo 対象にしない。
-    it "is not restorable (clears the undo buffer)" do
-      described_class.mark_pending!(work_dir: work_dir, at: Time.utc(2026, 7, 14, 9, 0, 0))
-      described_class.rollback!(work_dir: work_dir)
-
-      described_class.confirm_immediately!(work_dir: work_dir, at: Time.utc(2026, 7, 16, 9, 0, 0))
-
-      expect(described_class.restorable?(work_dir)).to be false
-    end
-  end
-
-  describe ".resolve_pending!" do
-    let(:confirmed) { Time.utc(2026, 7, 14, 9, 0, 0) }
-    let(:pending) { Time.utc(2026, 7, 16, 9, 0, 0) }
-
+  describe "legacy last_fetch.json (confirmed_at only)" do
     before do
-      described_class.confirm_immediately!(work_dir: work_dir, at: confirmed)
-      described_class.mark_pending!(work_dir: work_dir, at: pending)
-      # 対話の出力はテストログに混ぜない。
-      allow(described_class).to receive(:warn)
-      allow(described_class).to receive(:print)
+      FileUtils.mkdir_p(File.dirname(described_class.path(work_dir)))
+      File.write(described_class.path(work_dir), JSON.generate(
+        "confirmed_at" => t1.iso8601, "pending_at" => t2.iso8601, "pending_episode" => "20260714_afternoon",
+        "rollback_at" => nil, "last_op" => nil
+      ))
     end
 
-    it "auto-confirms without prompting when auto_confirm is true" do
-      expect($stdin).not_to receive(:gets)
-
-      described_class.resolve_pending!(work_dir: work_dir, auto_confirm: true)
-
-      expect(described_class.confirmed_at(work_dir)).to eq(pending)
-      expect(described_class.pending_at(work_dir)).to be_nil
+    it "treats confirmed_at as the oldest commit, so it becomes the start of the next collection" do
+      expect(described_class.since_for(work_dir, "20260714_afternoon")).to eq(t1)
     end
 
-    it "confirms when the user answers yes" do
-      allow($stdin).to receive(:gets).and_return("y\n")
+    it "ignores the pending window and rewrites the file in the new format on the next commit" do
+      commit("20260714_afternoon", t3)
 
-      described_class.resolve_pending!(work_dir: work_dir)
-
-      expect(described_class.confirmed_at(work_dir)).to eq(pending)
-    end
-
-    it "rolls back when the user answers no (the safe default)" do
-      allow($stdin).to receive(:gets).and_return("\n")
-
-      described_class.resolve_pending!(work_dir: work_dir)
-
-      expect(described_class.confirmed_at(work_dir)).to eq(confirmed)
-      expect(described_class.pending_at(work_dir)).to be_nil
-    end
-
-    it "aborts without rolling back when stdin has no answer (non-interactive run without --ci)" do
-      allow($stdin).to receive(:gets).and_return(nil)
-
-      expect { described_class.resolve_pending!(work_dir: work_dir) }.to raise_error(SystemExit)
-
-      expect(described_class.pending_at(work_dir)).to eq(pending)
-    end
-
-    it "does nothing when there is no pending" do
-      described_class.confirm!(work_dir: work_dir) # pending を消しておく
-      expect($stdin).not_to receive(:gets)
-
-      described_class.resolve_pending!(work_dir: work_dir)
-
-      expect(described_class.confirmed_at(work_dir)).to eq(pending)
+      expect(episodes).to eq(%w[20260714_afternoon legacy])
+      expect(JSON.parse(File.read(described_class.path(work_dir))).keys).to eq(["commits"])
     end
   end
 
-  describe ".confirmed_at / .pending_at" do
-    it "returns nil when the store is empty" do
-      expect(described_class.confirmed_at(work_dir)).to be_nil
-      expect(described_class.pending_at(work_dir)).to be_nil
-    end
+  it "aborts instead of overwriting a last_fetch.json that is valid JSON but not an object" do
+    FileUtils.mkdir_p(File.dirname(described_class.path(work_dir)))
+    File.write(described_class.path(work_dir), "[]")
 
-    it "returns nil when the stored timestamp is corrupt" do
-      FileUtils.mkdir_p(work_dir)
-      File.write(described_class.path(work_dir), JSON.generate("confirmed_at" => "not-a-timestamp", "pending_at" => nil, "rollback_at" => nil))
-
-      expect(described_class.confirmed_at(work_dir)).to be_nil
-    end
+    expect { described_class.commits(work_dir) }.to raise_error(SystemExit)
   end
 
-  describe ".load" do
-    it "returns all-nil defaults when last_fetch.json does not exist" do
-      expect(described_class.load(work_dir)).to eq("confirmed_at" => nil, "pending_at" => nil, "pending_episode" => nil, "rollback_at" => nil, "last_op" => nil)
-    end
+  it "treats an unparsable last_fetch.json as empty" do
+    FileUtils.mkdir_p(File.dirname(described_class.path(work_dir)))
+    File.write(described_class.path(work_dir), "{broken")
 
-    # last_op 導入前に書かれた新形式ファイルには last_op キーが無い。読み込み時に補う。
-    it "fills in last_op for a pre-last_op new-format file" do
-      confirmed = Time.utc(2026, 7, 14, 9, 0, 0)
-      File.write(described_class.path(work_dir), JSON.generate("confirmed_at" => confirmed.iso8601, "pending_at" => nil, "rollback_at" => nil))
-
-      data = described_class.load(work_dir)
-
-      expect(data["confirmed_at"]).to eq(confirmed.iso8601)
-      expect(data).to have_key("last_op")
-      expect(data["last_op"]).to be_nil
-    end
-
-    it "leaves a corrupt last_fetch.json untouched and returns defaults" do
-      FileUtils.mkdir_p(work_dir)
-      File.write(described_class.path(work_dir), "not-json")
-
-      expect(described_class.load(work_dir)).to eq("confirmed_at" => nil, "pending_at" => nil, "pending_episode" => nil, "rollback_at" => nil, "last_op" => nil)
-      expect(File.read(described_class.path(work_dir))).to eq("not-json")
-    end
-
-    # valid JSON だが Hash でない場合、デフォルトへ静かにフォールバックすると復旧の余地
-    # (confirmed_at 等) を失うので、代わりに abort してファイルを手つかずのまま残す。
-    ["null", "[]", "\"a-string\"", "42"].each do |raw|
-      it "aborts instead of silently defaulting when last_fetch.json is valid JSON but not an object (#{raw})" do
-        FileUtils.mkdir_p(work_dir)
-        File.write(described_class.path(work_dir), raw)
-
-        expect { described_class.load(work_dir) }.to raise_error(SystemExit)
-
-        expect(File.read(described_class.path(work_dir))).to eq(raw)
-      end
-    end
+    expect(described_class.commits(work_dir)).to be_empty
   end
 end

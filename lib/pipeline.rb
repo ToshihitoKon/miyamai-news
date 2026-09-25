@@ -4,6 +4,8 @@ require "fileutils"
 require_relative "episode"
 require_relative "internal/config"
 require_relative "internal/last_fetch_store"
+require_relative "internal/news_snapshot"
+require_relative "internal/used_news_history"
 require_relative "internal/episode_logger"
 require_relative "internal/phase_timer"
 require_relative "internal/relative_path"
@@ -30,7 +32,7 @@ class Pipeline
 
   def self.target_mode_for(args)
     return nil if args[:clean] || args[:clean_archive] || args[:ui_only]
-    return nil if args[:confirm_fetch] || args[:restore_fetch]
+    return nil if args[:restore_fetch]
     return "digest" if args[:digest_only]
     return "synthesize" if args[:script_only] || args[:synthesize_only] || args[:handoff_only]
 
@@ -47,7 +49,6 @@ class Pipeline
     return run_clean_command if @args[:clean]
     return run_clean_archive_command if @args[:clean_archive]
     return run_republish_ui_command if @args[:ui_only]
-    return run_confirm_fetch_command if @args[:confirm_fetch]
     return run_restore_fetch_command if @args[:restore_fetch]
 
     setup_episode!
@@ -71,35 +72,26 @@ class Pipeline
 
   # --- Episode非依存の独立コマンド --------------------------------------
 
-  def run_confirm_fetch_command
-    Config.validate_sections!("collect")
-    checkout = checkout_state!
-    pending = LastFetchStore.pending_at(@work_dir)
-    unless pending
-      remote_state.release! if checkout == :pulled
-      warn "no pending fetch window to confirm"
-      return
-    end
-
-    episode_key = LastFetchStore.confirm!(work_dir: @work_dir)
-    ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: episode_key)
-    push_state!
-    warn "confirmed fetch window: #{pending}"
-  rescue Config::MissingKeyError => e
-    abort e.message
-  end
-
+  # 最新の確定を取り消し、その回の履歴・収集結果も消す。
   def run_restore_fetch_command
     checkout = checkout_state!
-    unless LastFetchStore.restorable?(@work_dir)
+    reverted = LastFetchStore.revert_latest!(work_dir: @work_dir)
+    unless reverted
       remote_state.release! if checkout == :pulled
-      warn "no fetch window operation to restore"
+      warn "no committed fetch window to revert"
       return
     end
 
-    LastFetchStore.restore!(work_dir: @work_dir)
+    reverted_key = reverted["episode"]
+    UsedNewsHistory.remove!(work_dir: @work_dir, episode_key: reverted_key)
+    retain_news_snapshots!
+    published = Publisher.new.published?("miyamai_news_#{reverted_key}.mp3")
+    warn "moved the unpublished handoff #{reverted_key} to #{Internal::Handoff::REVERTED_PREFIX}/" if handoff.discard!(reverted_key).positive?
     push_state!
-    warn "restored fetch window to pending: #{LastFetchStore.pending_at(@work_dir)}"
+    warn "reverted the fetch window of #{reverted_key} (collected at #{reverted['at']})"
+    warn "#{reverted_key} is already published; its articles may be introduced again in the next episode" if published
+    remaining = LastFetchStore.commits(@work_dir).map { |c| "#{c['episode']} (#{c['at']})" }
+    warn "remaining committed fetch windows: #{remaining.empty? ? '(none)' : remaining.join(', ')}"
   end
 
   def run_republish_ui_command
@@ -163,11 +155,11 @@ class Pipeline
   # 内部状態の作業コピーを用意してから ScriptGenerator を作る。
   def setup_generator!
     checkout_state!
-    @generator = ScriptGenerator.new(work_dir: @work_dir, episode: @episode, auto_confirm: @args[:ci] || false)
+    @generator = ScriptGenerator.new(work_dir: @work_dir, episode: @episode)
   end
 
   # 戻り値は :pulled（R2 から取得）か :resumed（未完了の実行の作業コピーを引き継ぎ）。
-  def checkout_state!(owner: @episode ? episode_key : "fetch-window-command")
+  def checkout_state!(owner: @episode ? episode_key : "restore-fetch")
     previous_owner = remote_state.checked_out_by
     result = remote_state.checkout!(owner: owner)
     if result == :pulled
@@ -248,7 +240,7 @@ class Pipeline
     File.write(@generator.used_news_file, used_news)
 
     ensure_no_concurrent_run!
-    confirm_fetch_and_record_history_for_generated!
+    commit_episode!
     push_state!
     handoff.upload!(episode_key,
       tts_script: File.read(tts_script_path), script: File.read(@generator.script_file), used_news: used_news)
@@ -263,18 +255,18 @@ class Pipeline
     abort e.message
   end
 
-  def confirm_fetch_and_record_history_for_generated!
-    if @generator.fetched_news?
-      LastFetchStore.confirm_immediately!(work_dir: @work_dir, at: @generator.collect_since_anchor)
-      ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: @generator.episode_key)
-    else
-      confirm_fetch_and_record_history!
-    end
+  # この回の収集 window を確定して履歴に記録し、確定履歴に無い回の収集結果を消す。
+  def commit_episode!
+    snapshot = NewsSnapshot.load(@work_dir, episode_key) or abort "news snapshot not found for #{episode_key}"
+    LastFetchStore.commit!(work_dir: @work_dir, episode_key: episode_key, at: snapshot.at)
+    ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: episode_key)
+    retain_news_snapshots!
+  rescue LastFetchStore::OlderEpisodeError => e
+    abort e.message
   end
 
-  def confirm_fetch_and_record_history!
-    episode_key = LastFetchStore.confirm!(work_dir: @work_dir)
-    ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: episode_key)
+  def retain_news_snapshots!
+    NewsSnapshot.retain!(work_dir: @work_dir, keep_keys: LastFetchStore.commits(@work_dir).map { |c| c["episode"] })
   end
 
   def mark_handoff_done

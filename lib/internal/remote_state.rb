@@ -5,19 +5,17 @@ require "json"
 require "securerandom"
 require "time"
 require_relative "object_storage"
+require_relative "state_dir"
 
 module Internal
-  # 実行をまたいで保持するパイプラインの内部状態（収集 window・フィードキャッシュ・紹介済み履歴）を
-  # R2 の state/ プレフィックスと work_dir の間で同期する。正は R2 側で、work_dir は
+  # 実行をまたいで保持するパイプラインの内部状態（work/state/）を R2 の state/ プレフィックスと
+  # 同期する。正は R2 側で、work/state/ は
   # checkout! で取り出した作業コピー。書き戻した時点の revision を state_revision に置き、
   # 作業コピーの取得元 revision と取り出した実行（owner）を work_dir/.state_base_revision に記録する。
   class RemoteState
-    PREFIX = "state/"
+    PREFIX = "#{StateDir::NAME}/".freeze
     REVISION_KEY = "state_revision"
     BASE_REVISION_FILE = ".state_base_revision"
-
-    # work_dir からの相対 glob。
-    TRACKED_GLOBS = %w[last_fetch.json feed_cache.json feed_cache/*.json used_news_history/*.txt].freeze
 
     Missing = Class.new(StandardError)
     Conflict = Class.new(StandardError)
@@ -58,45 +56,40 @@ module Internal
       raise Conflict, conflict_message if remote.nil? || base != remote
     end
 
-    # 作業コピーで R2 を置き換え（作業コピーに無い R2 のキーは消す）、revision を進める。
+    # revision を進めて作業コピーの取得元にも記録してから、作業コピーで R2 を置き換える
+    # （作業コピーに無い R2 のキーは消す）。
     def push!
       ensure_current!
 
-      local_keys = upload_local_files
-      (@storage.list(PREFIX) - local_keys).each { |key| @storage.delete(key) }
-      @storage.put(REVISION_KEY, new_revision, content_type: "text/plain")
+      revision = new_revision
+      @storage.put(REVISION_KEY, revision, content_type: "text/plain")
+      write_base(revision, checked_out_by)
+      remove_partial_writes
+      @storage.sync_up(prefix: PREFIX, root: @work_dir)
       release!
-      local_keys.size
     end
 
-    # R2 側が空のときだけ、work_dir の対象ファイルをそのまま R2 へ置く（初回移行用）。
+    # R2 側が空のときだけ、work/state/ をそのまま R2 へ置く（初回移行用）。
     def seed!
       raise ArgumentError, "pipeline state already exists under #{PREFIX} in R2" unless @storage.list(PREFIX).empty?
 
-      count = upload_local_files.size
+      remove_partial_writes
+      @storage.sync_up(prefix: PREFIX, root: @work_dir)
       @storage.put(REVISION_KEY, new_revision, content_type: "text/plain")
-      count
     end
 
     def local_files
-      TRACKED_GLOBS.flat_map { |pat| Dir.glob(File.join(@work_dir, pat)) }.sort
+      Dir.glob(File.join(StateDir.path(@work_dir), "**", "*")).select { |path| File.file?(path) }.sort
     end
 
     private
 
-    # R2 の状態で work_dir の対象ファイルを置き換える（R2 に無いローカルのファイルは消す）。
+    # R2 の状態で work/state/ を置き換える。
     def pull!(remote, owner)
-      keys = @storage.list(PREFIX)
-      raise Missing, "no pipeline state found under #{PREFIX} in R2 (seed it with scripts/seed_remote_state.rb)" if keys.empty?
+      raise Missing, "no pipeline state found under #{PREFIX} in R2 (seed it with scripts/seed_remote_state.rb)" if @storage.list(PREFIX).empty?
 
-      FileUtils.rm_f(local_files)
-      keys.each do |key|
-        path = File.join(@work_dir, key.delete_prefix(PREFIX))
-        FileUtils.mkdir_p(File.dirname(path))
-        File.binwrite(path, @storage.get(key))
-      end
-      FileUtils.mkdir_p(@work_dir)
-      File.write(base_revision_path, JSON.generate("revision" => remote.to_s, "owner" => owner))
+      @storage.sync_down(prefix: PREFIX, root: @work_dir)
+      write_base(remote.to_s, owner)
       :pulled
     end
 
@@ -114,22 +107,19 @@ module Internal
     def base_revision = read_base&.fetch("revision")
     def base_revision_path = File.join(@work_dir, BASE_REVISION_FILE)
 
+    def write_base(revision, owner)
+      File.write(base_revision_path, JSON.generate("revision" => revision, "owner" => owner))
+    end
+
     def read_base
       File.exist?(base_revision_path) ? JSON.parse(File.read(base_revision_path)) : nil
     end
 
     def new_revision = "#{Time.now.utc.iso8601(6)}-#{SecureRandom.hex(4)}"
 
-    def upload_local_files
-      local_files.map do |path|
-        key = PREFIX + path.delete_prefix("#{@work_dir}/")
-        @storage.put_file(key, path, content_type: content_type_for(path))
-        key
-      end
-    end
-
-    def content_type_for(path)
-      File.extname(path) == ".json" ? "application/json" : "text/plain; charset=utf-8"
+    # tmp に書いてから rename する途中で落ちた書き込みの残骸。
+    def remove_partial_writes
+      FileUtils.rm_f(Dir.glob(File.join(StateDir.path(@work_dir), "**", "*.tmp")))
     end
   end
 end

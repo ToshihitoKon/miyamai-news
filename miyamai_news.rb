@@ -5,6 +5,7 @@ require "time"
 require "optparse"
 
 require_relative "lib/internal/config"
+require_relative "lib/internal/last_fetch_store"
 require_relative "lib/internal/node_deps"
 require_relative "lib/internal/progress"
 require_relative "lib/pipeline"
@@ -18,9 +19,8 @@ def parse_args(argv)
     o.on("--clean", "clean work/ and delete published dist/ artifacts") { opts[:clean] = true }
     o.on("--clean-archive", "permanently delete archived artifacts under archived/") { opts[:clean_archive] = true }
     o.on("--ui-only", "regenerate index.html / manifest.json only") { opts[:ui_only] = true }
-    o.on("--confirm-fetch", "confirm the pending fetch window (use after reviewing the artifacts)") { opts[:confirm_fetch] = true }
-    o.on("--restore-fetch", "restore the fetch window discarded by the last rollback (undo an accidental rollback)") { opts[:restore_fetch] = true }
-    o.on("--ci", "non-interactive mode: auto-confirm the pending fetch window, never prompt, no spinner animation") { opts[:ci] = true }
+    o.on("--restore-fetch", "revert the latest committed fetch window (repeatable up to #{LastFetchStore::KEEP_COMMITS} times)") { opts[:restore_fetch] = true }
+    o.on("--ci", "non-interactive mode: plain progress lines instead of spinner animation") { opts[:ci] = true }
     o.on("--digest-only", "generate news selection/summary only, then stop") { opts[:digest_only] = true }
     o.on("--script-only", "generate the script only, then stop") { opts[:script_only] = true }
     o.on("--handoff-only", "generate the script and upload it to R2 (handoff/), then stop") { opts[:handoff_only] = true }
@@ -52,7 +52,7 @@ begin
 
   if ARGS[:ui_only]
     Config.validate_sections!("cloudflare", "assets")
-  elsif ARGS[:clean] || ARGS[:clean_archive] || ARGS[:confirm_fetch] || ARGS[:restore_fetch]
+  elsif ARGS[:clean] || ARGS[:clean_archive] || ARGS[:restore_fetch]
     Config.validate_publish_target!
   elsif ARGS[:handoff_only]
     Config.validate_for!("digest")

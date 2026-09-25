@@ -1,155 +1,103 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "time"
 require "json"
+require_relative "../slot"
+require_relative "state_dir"
 
-# 収集 window の起点を work/last_fetch.json に永続化するモジュール。前回 pending の
-# 確定/ロールバックを人間に尋ねる .resolve_pending! も持つ。
+# 収集 window を確定した直近の回（commits）を work/state/last_fetch.json に永続化するモジュール。
+# 確定は episode_key 単位の { "episode" => "<date_tag>_<slot>", "at" => その回の収集時刻 } で、
+# 新しい回から KEEP_COMMITS 件まで残す。ある回の収集 window の起点は、その回より前の確定の
+# うち最新のものの at。
 module LastFetchStore
   module_function
 
-  def path(work_dir) = File.join(work_dir, "last_fetch.json")
+  KEEP_COMMITS = 3
+  LEGACY_EPISODE = "legacy"
 
-  # 全キーを保証して返す（欠けているキーは nil で補う）。
+  class OlderEpisodeError < StandardError; end
+
+  def path(work_dir) = File.join(StateDir.path(work_dir), "last_fetch.json")
+
+  # 確定履歴（新しい回から順）。
+  def commits(work_dir) = sort_newest_first(load(work_dir)["commits"])
+
+  def latest_commit(work_dir) = commits(work_dir).first
+
+  # episode_key の回の収集 window の起点。前の確定が無ければ nil。最新の確定より古い回
+  # （最新の確定の回そのものは除く）は後の回と収集範囲が重なるので OlderEpisodeError。
+  def since_for(work_dir, episode_key)
+    ensure_not_older!(work_dir, episode_key)
+    previous = commits(work_dir).find { |c| c["episode"] != episode_key }
+    previous && Time.iso8601(previous["at"])
+  end
+
+  # episode_key の回を確定する。同じ回の確定があれば置き換える（作り直した回の確定を
+  # 二重に積まない）。
+  def commit!(work_dir:, episode_key:, at:)
+    ensure_not_older!(work_dir, episode_key)
+    others = commits(work_dir).reject { |c| c["episode"] == episode_key }
+    write(work_dir, "commits" => [{ "episode" => episode_key, "at" => at.iso8601 }, *others].first(KEEP_COMMITS))
+  end
+
+  # 最新の確定を取り消して返す（無ければ nil）。起点は自動的に 1 つ前の確定の at に戻る。
+  def revert_latest!(work_dir:)
+    reverted, *rest = commits(work_dir)
+    return unless reverted
+
+    write(work_dir, "commits" => rest)
+    reverted
+  end
+
+  def ensure_not_older!(work_dir, episode_key)
+    latest = latest_commit(work_dir)
+    return if latest.nil? || latest["episode"] == episode_key
+    return if (sort_key(episode_key) <=> sort_key(latest["episode"])) == 1
+
+    raise OlderEpisodeError, "#{episode_key} is older than the latest committed episode #{latest['episode']}"
+  end
+  private_class_method :ensure_not_older!
+
+  # 確定履歴導入前の形式（confirmed_at だけ）は、起点として効く最古扱いの確定に読み替える。
   def load(work_dir)
-    return read_data(work_dir) if File.exist?(path(work_dir))
+    data = read_raw(work_dir) || {}
+    return { "commits" => data["commits"] } if data["commits"].is_a?(Array)
+    return { "commits" => [] } unless data["confirmed_at"]
 
-    default_data
+    { "commits" => [{ "episode" => LEGACY_EPISODE, "at" => data["confirmed_at"] }] }
   end
+  private_class_method :load
 
-  # 確定済みの収集window起点。無い/壊れていれば nil。
-  def confirmed_at(work_dir) = parse_time(load(work_dir)["confirmed_at"])
+  def sort_newest_first(commits) = commits.sort_by { |c| sort_key(c["episode"]) }.reverse
 
-  # 未確認の到達時刻。無い/壊れていれば nil。
-  def pending_at(work_dir) = parse_time(load(work_dir)["pending_at"])
-
-  # pending_at の回の episode_key（履歴追記対象の特定用）。無ければ nil。
-  def pending_episode(work_dir) = load(work_dir)["pending_episode"]
-
-  # .restore! で巻き戻せる状態があるか。無ければ nil。
-  def restorable?(work_dir) = !load(work_dir)["last_op"].nil?
-
-  # 新規収集が発生した実行の完了時に呼ぶ。confirmed_at は動かさず、pending_at を at に
-  # 進める。episode_key はこの回の紹介済みニュース履歴を confirm 時に追記するため保持する。
-  def mark_pending!(work_dir:, at:, episode_key: nil)
-    write(work_dir, load(work_dir).merge(
-      "pending_at" => at.iso8601, "pending_episode" => episode_key,
-      "rollback_at" => nil, "last_op" => nil
-    ))
-  end
-
-  # pending_at を confirmed_at へ昇格し、pending_at をクリアする。昇格前の confirmed_at は
-  # rollback_at へ退避し last_op を confirm にする。確定した回の episode_key を返す。
-  # pending_at が無ければ何もせず nil を返す（冪等）。
-  def confirm!(work_dir:)
-    data = load(work_dir)
-    return unless data["pending_at"]
-
-    episode_key = data["pending_episode"]
-    write(work_dir, data.merge(
-      "confirmed_at" => data["pending_at"], "pending_at" => nil, "pending_episode" => nil,
-      "rollback_at" => data["confirmed_at"], "last_op" => "confirm"
-    ))
-    episode_key
-  end
-
-  # pending_at を捨てる（confirmed_at は変えない）。pending_at が無ければ何もしない。
-  # 破棄した回は履歴に残さないので pending_episode もクリアする（restore! では復元しない）。
-  def rollback!(work_dir:)
-    data = load(work_dir)
-    return unless data["pending_at"]
-
-    write(work_dir, data.merge(
-      "pending_at" => nil, "pending_episode" => nil,
-      "rollback_at" => data["pending_at"], "last_op" => "discard"
-    ))
-  end
-
-  # 直前の人間操作（confirm!/rollback!）を1段だけ巻き戻す。last_op で分岐し、
-  # 巻き戻したら Undo バッファをクリアする（Redo はしない、冪等）。
-  def restore!(work_dir:)
-    data = load(work_dir)
-    case data["last_op"]
-    when "confirm"
-      write(work_dir, data.merge(
-        "pending_at" => data["confirmed_at"], "confirmed_at" => data["rollback_at"],
-        "rollback_at" => nil, "last_op" => nil
-      ))
-    when "discard"
-      write(work_dir, data.merge("pending_at" => data["rollback_at"], "rollback_at" => nil, "last_op" => nil))
-    end
-  end
-
-  # publish 完了時に呼ぶ。pending を経由せず confirmed_at を即座に at へ確定する。
-  # この回の履歴追記は呼び出し側が episode から直接行うので pending_episode は
-  # 残さずクリアする。
-  def confirm_immediately!(work_dir:, at:)
-    write(work_dir, load(work_dir).merge(
-      "confirmed_at" => at.iso8601, "pending_at" => nil, "pending_episode" => nil,
-      "rollback_at" => nil, "last_op" => nil
-    ))
-  end
-
-  # 前回 pending が残っていれば確定/ロールバックを尋ねて解決する（無ければ何もしない）。
-  # auto_confirm 時は対話せず自動確定する。既定(Enter/N)はロールバック側。
-  # 確定した場合はその回の episode_key を返す（呼び出し側が紹介済みニュース履歴へ追記する）。
-  # ロールバック・何もしない場合は nil を返す。
-  def resolve_pending!(work_dir:, auto_confirm: false)
-    pending = pending_at(work_dir)
-    return unless pending
-
-    if auto_confirm
-      episode_key = confirm!(work_dir: work_dir)
-      warn "auto-confirmed pending fetch window: #{pending}"
-      return episode_key
-    end
-
-    print "The previous fetch window is unconfirmed (#{pending}). Confirm it? Answering no rolls it back. [y/N]: "
-    answer = $stdin.gets
-    abort "\nno answer on stdin (non-interactive run); pass --ci to confirm the pending fetch window" if answer.nil?
-
-    if answer.strip.match?(/\Ay\z/i)
-      episode_key = confirm!(work_dir: work_dir)
-      warn "confirmed pending fetch window: #{pending}"
-      episode_key
-    else
-      rollback!(work_dir: work_dir)
-      warn "rolled back pending fetch window (kept confirmed_at)"
-      nil
-    end
-  end
+  # 未知の episode_key（LEGACY_EPISODE を含む）は最古扱い。
+  def sort_key(episode_key) = Slot.sort_key_from_filename(episode_key) || ["", -1]
+  private_class_method :sort_key
 
   def write(work_dir, data)
     file_path = path(work_dir)
+    FileUtils.mkdir_p(File.dirname(file_path))
     tmp = "#{file_path}.tmp"
     File.write(tmp, JSON.generate(data))
     File.rename(tmp, file_path)
   end
   private_class_method :write
 
-  def parse_time(raw)
-    raw && Time.iso8601(raw)
-  rescue ArgumentError
-    nil
-  end
-  private_class_method :parse_time
-
-  # last_fetch.json（存在する前提で呼ぶ）を読み、last_op 導入前に書かれたファイルに
-  # 欠けているキーを default で補って返す。パース不能な壊れたファイルは空扱いで返す。
-  def read_data(work_dir)
+  # パース不能な壊れたファイルは空扱いで返す。valid JSON だが Hash でなければ abort する。
+  def read_raw(work_dir)
     file_path = path(work_dir)
+    return unless File.exist?(file_path)
+
     data = JSON.parse(File.read(file_path))
     unless data.is_a?(Hash)
       abort("#{file_path} is valid JSON but not an object; refusing to overwrite it with " \
             "defaults. Inspect/repair it manually (or with AI assistance) and re-run.")
     end
 
-    default_data.merge(data)
+    data
   rescue JSON::ParserError
-    default_data
+    nil
   end
-  private_class_method :read_data
-
-  def default_data = { "confirmed_at" => nil, "pending_at" => nil, "pending_episode" => nil, "rollback_at" => nil, "last_op" => nil }
-  private_class_method :default_data
+  private_class_method :read_raw
 end

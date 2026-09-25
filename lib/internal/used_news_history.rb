@@ -2,13 +2,14 @@
 
 require "fileutils"
 require_relative "../slot"
+require_relative "state_dir"
 
-# 直近に紹介したニュースの履歴を回ごとのファイルとして work/used_news_history/ に貯める。
+# 直近に紹介したニュースの履歴を回ごとのファイルとして work/state/used_news_history/ に貯める。
 module UsedNewsHistory
   module_function
 
   # 履歴ファイルを置くディレクトリ（回ごとに <episode_key>.txt を1ファイル）。
-  def dir(work_dir) = File.join(work_dir, "used_news_history")
+  def dir(work_dir) = File.join(StateDir.path(work_dir), "used_news_history")
 
   # 1 回分の used_news を履歴に取り込む。used_news_path が無ければ何もしない
   # （台本を作らずに confirm された回など）。link 行を落として <episode_key>.txt に
@@ -23,12 +24,17 @@ module UsedNewsHistory
   end
 
   # 直近 keep_episodes 回分の履歴を新しい順に連結して返す（selector プロンプト用）。
-  # 履歴が無ければ空文字列（呼び出し側がセクションごと省略できる）。
-  def render_for_prompt(work_dir, keep_episodes)
-    recent_files(dir(work_dir), keep_episodes)
+  # exclude の回（作り直している回自身）は含めない。履歴が無ければ空文字列
+  # （呼び出し側がセクションごと省略できる）。
+  def render_for_prompt(work_dir, keep_episodes, exclude: nil)
+    recent_files(dir(work_dir), keep_episodes, exclude:)
       .map { |path| File.read(path).strip }
       .reject(&:empty?)
       .join("\n\n")
+  end
+
+  def remove!(work_dir:, episode_key:)
+    FileUtils.rm_f(File.join(dir(work_dir), "#{episode_key}.txt"))
   end
 
   # link を落とす。`### [タイトル](URL)` → `### タイトル` に畳み、独立した URL 行は
@@ -42,13 +48,14 @@ module UsedNewsHistory
   private_class_method :strip_links
 
   # 履歴ディレクトリ内の <episode_key>.txt を、エピソードの時系列で新しい順に並べて
-  # 上位 keep_episodes 件のパスを返す。
-  def recent_files(history_dir, keep_episodes)
+  # （exclude の回を除いた）上位 keep_episodes 件のパスを返す。
+  def recent_files(history_dir, keep_episodes, exclude: nil)
     return [] unless Dir.exist?(history_dir)
 
     Dir.glob(File.join(history_dir, "*.txt"))
       .sort_by { |path| episode_sort_key(File.basename(path, ".txt")) }
       .reverse
+      .reject { |path| File.basename(path, ".txt") == exclude }
       .first(keep_episodes)
   end
   private_class_method :recent_files
