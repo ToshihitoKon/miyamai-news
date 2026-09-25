@@ -35,29 +35,6 @@ RSpec.describe FeedCache do
     path && JSON.parse(File.read(path))
   end
 
-  describe "#cached_window" do
-    it "returns cached entries first seen in (since, until_at], including ones no longer in the feed, without fetching" do
-      t1 = Time.utc(2026, 7, 14, 0, 0, 0)
-      t2 = Time.utc(2026, 7, 14, 6, 0, 0)
-      t3 = Time.utc(2026, 7, 14, 12, 0, 0)
-      allow(fetcher).to receive(:get).and_return(
-        rss_for([["https://example.com/old", "Old"]]),
-        rss_for([["https://example.com/old", "Old"], ["https://example.com/mine", "Mine"]]),
-        rss_for([["https://example.com/later", "Later"]])
-      )
-      cache = build_cache
-      cache.fetch(url, now: t1, since: t1 - 3600)
-      cache.fetch(url, now: t2, since: t1)
-      cache.fetch(url, now: t3, since: t2) # "mine" はこの時点でフィードから落ちている
-
-      result = cache.cached_window(url, since: t1, until_at: t2)
-
-      expect(result.map { |e| e[:link] }).to eq(["https://example.com/mine"])
-      expect(result.first).to include(title: "Mine", seen_at: t2.iso8601)
-      expect(fetcher).to have_received(:get).exactly(3).times
-    end
-  end
-
   describe "#select_since_for" do
     let(:cache) { build_cache }
 

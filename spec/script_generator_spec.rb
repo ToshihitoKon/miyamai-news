@@ -164,17 +164,6 @@ RSpec.describe ScriptGenerator do
 
       expect(result.map { |i| i[:link] }).to contain_exactly(old_arxiv_link, fresh_arxiv_link)
     end
-
-    it "judges max_age_days against the regenerated episode's collection time when selecting from the cache" do
-      allow(fake_feed_cache).to receive(:cached_window).and_return(arxiv_items)
-      generator = described_class.new(work_dir: work_dir, episode: episode)
-      long_after = now + (400 * 86_400)
-
-      result = generator.send(:collect_source, src(max_age_days: 30), now - 3600, long_after)
-
-      expect(fake_feed_cache).to have_received(:cached_window).with(anything, since: now - 3600, until_at: long_after)
-      expect(result).to be_empty
-    end
   end
 
   describe "#digest" do
@@ -490,33 +479,26 @@ RSpec.describe ScriptGenerator do
         .with(anything, hash_including(since: now - (generator.send(:lookback_hours) * 3600))).at_least(:once)
     end
 
-    it "regenerating the latest committed episode selects its window from the cache without fetching" do
+    it "regenerating the latest committed episode fetches since the episode before it and records the new collection time" do
       morning_at = Time.utc(2026, 7, 13, 21, 0, 0)
-      afternoon_at = Time.utc(2026, 7, 14, 3, 0, 0)
       commit("20260714_morning", morning_at)
-      commit("20260714_afternoon", afternoon_at)
-      allow(fake_feed_cache).to receive(:cached_window).and_return(news_items)
-      generator = described_class.new(work_dir: work_dir, episode: episode)
-
-      news = collect(generator)
-
-      expect(fake_feed_cache).not_to have_received(:fetch)
-      expect(fake_feed_cache).to have_received(:cached_window)
-        .with(anything, since: morning_at, until_at: afternoon_at).exactly(generator.send(:sources).size).times
-      expect(news).to include("Title A")
-      expect(generator.collected_at).to eq(afternoon_at)
-    end
-
-    it "regenerating the only committed episode selects from lookback_hours before its collection time" do
-      afternoon_at = Time.utc(2026, 7, 14, 3, 0, 0)
-      commit("20260714_afternoon", afternoon_at)
-      allow(fake_feed_cache).to receive(:cached_window).and_return(news_items)
+      commit("20260714_afternoon", Time.utc(2026, 7, 14, 3, 0, 0))
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       collect(generator)
 
-      expect(fake_feed_cache).to have_received(:cached_window)
-        .with(anything, since: afternoon_at - (generator.send(:lookback_hours) * 3600), until_at: afternoon_at).at_least(:once)
+      expect(fake_feed_cache).to have_received(:fetch).with(anything, hash_including(since: morning_at)).at_least(:once)
+      expect(generator.collected_at).to eq(now)
+    end
+
+    it "regenerating the only committed episode fetches from lookback_hours before now" do
+      commit("20260714_afternoon", Time.utc(2026, 7, 14, 3, 0, 0))
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      collect(generator)
+
+      expect(fake_feed_cache).to have_received(:fetch)
+        .with(anything, hash_including(since: now - (generator.send(:lookback_hours) * 3600))).at_least(:once)
     end
 
     it "aborts for an episode older than the latest committed one" do

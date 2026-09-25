@@ -40,19 +40,6 @@ class FeedCache
     select_since_for(cache["entries"], entries, since)
   end
 
-  # fetch せず、キャッシュにある entry のうち since < seen_at <= until_at のものを返す
-  # （今のフィードに載っているかは問わない）。返す entry の形は fetch と同じ。
-  def cached_window(url, since:, until_at:)
-    load_cache(url)["entries"].filter_map do |link, meta|
-      seen_at = Time.iso8601(meta["seen_at"])
-      next unless seen_at > since && seen_at <= until_at
-
-      { link: link, title: meta["title"], date: meta["date"], seen_at: meta["seen_at"], extra: meta_extra(meta) }
-    rescue ArgumentError
-      nil
-    end
-  end
-
   private
 
   # 最終 fetch から skip_window_sec 以内なら true。

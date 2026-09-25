@@ -544,20 +544,19 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   `at` になる。履歴からはその回を除いて selector に渡し、確定は二重に積まず置き換える
   （`commit!`）。最新の確定より古い回（最新の確定の回そのものは除く）は、後の回と収集
   範囲が重なるので作れない（`OlderEpisodeError`）。
-- 最新の確定の回を作り直すときは fetch せず、feed_cache から `seen_at` が
-  `(前の確定の at, その回の at]` に入る entry を選ぶ（`FeedCache#cached_window`）。通常の
-  収集（`FeedCache#fetch`）は今回の fetch に載っていた entry からしか選ばないので、fetch し
-  直すと初回の後にフィードから落ちた記事が戻らない。キャッシュには entry が
-  `collect.retention_days` まで残り、R2 の feed_cache は確定のときにしか書き戻されないので、
-  この範囲に入るのはちょうどその回の収集で初めて見た記事になる。候補一覧そのものを別に
-  保存しないのはこのため。ただしキャッシュの entry は `last_fetched_at` が
-  `retention_days` より古くなると次の fetch で消える（`FeedCache#purge_expired`）ので、
-  確定から `retention_days` 以上たってから作り直すと、その間に消えた記事は戻らない。
+- 最新の確定の回を作り直すときも、通常の収集と同じく前の確定の `at` 以降を fetch する
+  （収集範囲に上限は付けない）。作り直す回は最新なので、その後の回と範囲が重なることは
+  なく、初回の後に出た記事が候補に入っても構わない。直前に fetch していれば
+  `collect.fetch_skip_minutes` のスキップ（前回 fetch の結果を返す）がそのまま効く。
+  スキップの時間を過ぎてから作り直した場合、初回の後にフィードから落ちた記事は候補に
+  戻らない（`FeedCache#fetch` は今回の fetch に載っていた entry からしか選ばない）。候補一覧を
+  別に保存しないのは、この差を許容しているため。作り直した回の確定は、作り直した収集の
+  時刻で置き換える。
 - 確定する収集時刻（`at`）は、収集時に `work/news_collected_at_<episode_key>.txt` へ書き、
   `Pipeline#commit_episode!` がそれを読む（`ScriptGenerator#collected_at`）。収集したプロセスが
   途中で落ちて別プロセスが中間ファイルを再利用する場合でも、収集した時点の時刻で確定
-  できるようにするため（プロセスローカルなフラグに頼らない）。作り直しでは、その回の確定の
-  `at` をそのまま書く。回ごとの中間ファイルなので R2 には同期せず、`--clean` で消える。
+  できるようにするため（プロセスローカルなフラグに頼らない）。回ごとの中間ファイルなので
+  R2 には同期せず、`--clean` で消える。
 - `--restore-fetch`（`revert_latest!`）は最新の確定を 1 件取り消し（起点は自動的に 1 つ
   前の確定の `at` に戻る）、その回の紹介済み履歴を消す。繰り返せば
   確定履歴の件数まで遡れ、実行のたびに残っている確定を表示する。取り消した回の未公開の
@@ -604,8 +603,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   残す（config での記載順によらず、一次情報源の priority ラベル・URL が選定 AI
   に渡るようにするため）。priority が同順位の entry 同士では、config の
   `rss_feed_sources` 記載順（`items_per_source.flatten` 順）で先勝ち。
-- `load_or_collect_news` は `news_<key>.txt` があれば再利用し、無ければ収集する（最新の
-  確定の回なら fetch せずキャッシュから選ぶ）。`news_<key>.txt` があって収集時刻の
+- `load_or_collect_news` は `news_<key>.txt` があれば再利用し、無ければ収集する。`news_<key>.txt` があって収集時刻の
   `news_collected_at_<key>.txt` が無い場合（この仕組み導入前の中間ファイル）は、確定する
   時刻が分からないので中断する（`--clean` で捨てる）。
 - writer ステップ（台本執筆）は、既に抽出済みの facts シートに基づいて執筆させる

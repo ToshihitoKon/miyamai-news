@@ -221,9 +221,8 @@ class ScriptGenerator
       return File.read(news_collected_path)
     end
 
-    since, until_at = collection_window
-    news_body = collect_news(since, until_at:)
-    File.write(news_collected_at_path, (until_at || @episode.now).iso8601)
+    news_body = collect_news(collect_since)
+    File.write(news_collected_at_path, @episode.now.iso8601)
     File.write(news_collected_path, news_body)
     warn "news: #{relative(news_collected_path)}"
     report_collect_stats
@@ -237,23 +236,18 @@ class ScriptGenerator
     warn "new articles total: #{@collect_stats.total_after_dedup} (#{@collect_stats.total_before_dedup} before dedup)"
   end
 
-  # 戻り値は [since, until_at]。since はこの回より前の確定の収集時刻（確定が無ければ
-  # lookback_hours 前）。最新の確定がこの回（作り直し）なら until_at はその回の収集時刻で、
-  # fetch せずキャッシュからその範囲を選ぶ。それ以外は nil（fetch して since 以降を集める）。
-  def collection_window
-    previous_at = LastFetchStore.since_for(@work_dir, episode_key)
-    latest = LastFetchStore.latest_commit(@work_dir)
-    until_at = latest && latest["episode"] == episode_key ? Time.iso8601(latest["at"]) : nil
-    [previous_at || ((until_at || @episode.now) - (lookback_hours * 3600)), until_at]
+  # この回より前の確定の収集時刻（最新の確定がこの回なら、その 1 つ前）。確定が無い初回は
+  # lookback_hours 前。
+  def collect_since
+    LastFetchStore.since_for(@work_dir, episode_key) || (@episode.now - (lookback_hours * 3600))
   rescue LastFetchStore::OlderEpisodeError => e
     abort e.message
   end
 
-  # FeedCache から since 以降（until_at があればそれ以前まで）に初登場した記事を集め、
-  # フラットなテキストにする。
-  def collect_news(since, until_at: nil)
+  # FeedCache から since 以降に初登場した記事を集め、フラットなテキストにする。
+  def collect_news(since)
     target_sources = sources
-    items_per_source = fetch_sources_in_parallel(target_sources, since, until_at)
+    items_per_source = fetch_sources_in_parallel(target_sources, since)
     items = dedup_by_title(items_per_source.flatten)
 
     @collect_stats = CollectStats.new(
@@ -279,7 +273,7 @@ class ScriptGenerator
   end
 
   # 全ソースを fetch_threads 並列で収集する。戻り値は sources と同じ順の items 配列。
-  def fetch_sources_in_parallel(sources, since, until_at)
+  def fetch_sources_in_parallel(sources, since)
     queue = Queue.new
     sources.each_with_index { |src, i| queue << [src, i] }
     queue.close
@@ -290,7 +284,7 @@ class ScriptGenerator
         Thread.current.report_on_exception = false
         while (job = queue.pop)
           src, i = job
-          items_per_source[i] = collect_source(src, since, until_at)
+          items_per_source[i] = collect_source(src, since)
         end
       end
     end
@@ -306,14 +300,9 @@ class ScriptGenerator
   end
 
   # 1ソース分の新着記事を FeedCache から全件取得し、メタ情報を付けて返す。
-  def collect_source(src, since, until_at = nil)
-    items = if until_at
-              @feed_cache.cached_window(src.url, since:, until_at:)
-            else
-              @feed_cache.fetch(src.url, now: @episode.now, since:, extra_extractor: Internal::HatenaBookmarks)
-            end
-    reference_time = until_at || @episode.now
-    items = items.reject { |item| Internal::Arxiv.old?(item[:link], max_age_days: src.max_age_days, now: reference_time) } if src.max_age_days
+  def collect_source(src, since)
+    items = @feed_cache.fetch(src.url, now: @episode.now, since:, extra_extractor: Internal::HatenaBookmarks)
+    items = items.reject { |item| Internal::Arxiv.old?(item[:link], max_age_days: src.max_age_days, now: @episode.now) } if src.max_age_days
 
     items.map do |item|
       picked = { title: item[:title], link: item[:link], date: item[:date],
