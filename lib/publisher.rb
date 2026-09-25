@@ -88,6 +88,11 @@ class Publisher
     end
   end
 
+  # 公開台帳（archives.csv）にこの mp3 ファイル名の回があるか。
+  def published?(mp3_filename)
+    fetch_existing_archives.any? { |r| r[1] == mp3_filename }
+  end
+
   def clean_archive
     count = @site.purge_retired
 

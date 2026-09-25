@@ -43,7 +43,19 @@ RSpec.describe Config do
       end
 
       it "raises MissingKeyError for publish, listing the missing sections" do
-        expect { Config.validate_for!("publish") }.to raise_error(Config::MissingKeyError, /cloudflare/)
+        expect { Config.validate_for!("publish") }.to raise_error(Config::MissingKeyError, /assets/)
+      end
+    end
+
+    it "raises MissingKeyError for digest when cloudflare is absent" do
+      data = YAML.safe_load_file(File.expand_path("../fixtures/config_digest.yaml", __dir__))
+      data.delete("cloudflare")
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "config.yaml")
+        File.write(path, YAML.dump(data))
+        Config.path = path
+
+        expect { Config.validate_for!("digest") }.to raise_error(Config::MissingKeyError, /cloudflare/)
       end
     end
 
@@ -110,10 +122,16 @@ RSpec.describe Config do
     end
 
     it "raises MissingKeyError when cloudflare is absent" do
-      Config.path = File.expand_path("../fixtures/config_digest.yaml", __dir__)
+      data = YAML.safe_load_file(default_path)
+      data.delete("cloudflare")
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "config.yaml")
+        File.write(path, YAML.dump(data))
+        Config.path = path
 
-      expect { Config.validate_publish_target! }
-        .to raise_error(Config::MissingKeyError, /cloudflare/)
+        expect { Config.validate_publish_target! }
+          .to raise_error(Config::MissingKeyError, /cloudflare/)
+      end
     end
   end
 
@@ -128,7 +146,7 @@ RSpec.describe Config do
     it "returns nil for a section absent from the loaded config" do
       Config.path = File.expand_path("../fixtures/config_digest.yaml", __dir__)
 
-      expect(Config.cloudflare).to be_nil
+      expect(Config.voicepeak).to be_nil
     end
 
     it "returns nil for web_push when it is not configured (feature stays disabled)" do

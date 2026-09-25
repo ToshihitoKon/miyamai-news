@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "aws-sdk-s3"
+require_relative "config"
 require_relative "object_storage"
 
 module Internal
@@ -14,6 +15,11 @@ module Internal
 
     # 画像などの恒久素材。エピソードと違い retention の退避対象にしない。
     ASSET_PREFIX = "assets"
+
+    def self.from_config
+      cf = ::Config.cloudflare
+      new(bucket: cf.bucket, account_id: cf.account_id, episode_prefix: cf.episode_prefix)
+    end
 
     def initialize(bucket:, account_id: nil, client: nil, episode_prefix: "episodes")
       @bucket = bucket
@@ -58,6 +64,10 @@ module Internal
       true
     rescue Aws::S3::Errors::NotFound, Aws::S3::Errors::NoSuchKey
       false
+    end
+
+    def delete(key)
+      client.delete_object(bucket: @bucket, key: key)
     end
 
     def move(from_key, to_key)

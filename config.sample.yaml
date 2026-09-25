@@ -5,6 +5,7 @@ pipeline:
   # mode: publish    # synthesize + Cloudflare への publish
 
 # Cloudflare への公開まわり（Workers static assets + R2）。
+# 回をまたぐ状態（state/）と台本の受け渡し（handoff/）にも R2 を使うため、digest から必須。
 # R2 の S3 互換 API 認証情報は config には書かず、環境変数で渡す。
 #   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
 # wrangler の認証も環境変数（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）。

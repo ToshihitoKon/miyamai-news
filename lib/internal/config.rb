@@ -18,16 +18,16 @@ module Config
   class InvalidConfigError < StandardError; end
 
   # pipeline.mode の3段階と、その到達順序。値が大きいほど後段まで進む。
-  #   digest:     RSS収集 → AI選別 → facts抽出まで。外部ツール・公開先に依存しない。
+  #   digest:     RSS収集 → AI選別 → facts抽出まで。回をまたぐ状態を R2 から読む。
   #   synthesize: digest の続きから音声合成・BGM合成まで。
   #   publish:    synthesize の続きから公開まで（フルパイプライン）。
   MODE_ORDER = { "digest" => 0, "synthesize" => 1, "publish" => 2 }.freeze
 
   # 各 mode で新たに必須になる config のトップレベルセクション名の差分。
   REQUIRED_SECTIONS_DELTA = {
-    "digest" => %w[ai_agent program_details rss_feed_sources collect],
+    "digest" => %w[ai_agent program_details rss_feed_sources collect cloudflare],
     "synthesize" => %w[voicepeak mixer assets],
-    "publish" => %w[cloudflare],
+    "publish" => %w[],
   }.freeze
 
   class << self

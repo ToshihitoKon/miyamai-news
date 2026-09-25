@@ -225,6 +225,14 @@ RSpec.describe LastFetchStore do
       expect(described_class.pending_at(work_dir)).to be_nil
     end
 
+    it "aborts without rolling back when stdin has no answer (non-interactive run without --auto-confirm)" do
+      allow($stdin).to receive(:gets).and_return(nil)
+
+      expect { described_class.resolve_pending!(work_dir: work_dir) }.to raise_error(SystemExit)
+
+      expect(described_class.pending_at(work_dir)).to eq(pending)
+    end
+
     it "does nothing when there is no pending" do
       described_class.confirm!(work_dir: work_dir) # pending を消しておく
       expect($stdin).not_to receive(:gets)

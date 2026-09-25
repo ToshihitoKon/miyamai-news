@@ -22,6 +22,7 @@ def parse_args(argv)
     o.on("--auto-confirm", "auto-confirm the pending fetch window without prompting (for CI)") { opts[:auto_confirm] = true }
     o.on("--digest-only", "generate news selection/summary only, then stop") { opts[:digest_only] = true }
     o.on("--script-only", "generate the script only, then stop") { opts[:script_only] = true }
+    o.on("--handoff-only", "generate the script and upload it to R2 (handoff/), then stop") { opts[:handoff_only] = true }
     o.on("--synthesize-only", "voice/BGM synthesis only (write to dist/ and exit)") { opts[:synthesize_only] = true }
     o.on("--publish-only", "publish the target episode from dist/ only") { opts[:publish_only] = true }
     o.on("--date DATE", "target date (e.g. 2026-07-10)") { |v| opts[:date] = Time.parse(v) }
@@ -49,9 +50,11 @@ begin
 
   if ARGS[:ui_only]
     Config.validate_sections!("cloudflare", "assets")
-  elsif ARGS[:clean] || ARGS[:clean_archive]
+  elsif ARGS[:clean] || ARGS[:clean_archive] || ARGS[:confirm_fetch] || ARGS[:restore_fetch]
     Config.validate_publish_target!
-  elsif !ARGS[:confirm_fetch] && !ARGS[:restore_fetch]
+  elsif ARGS[:handoff_only]
+    Config.validate_for!("digest")
+  else
     Config.validate_for!(Config.mode)
   end
 

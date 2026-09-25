@@ -178,6 +178,29 @@ RSpec.describe Internal::R2Storage do
     end
   end
 
+  describe "#delete" do
+    it "deletes the single key" do
+      captured = nil
+      client.stub_responses(:delete_object, ->(ctx) {
+        captured = ctx.params
+        {}
+      })
+
+      storage.delete("state/last_fetch.json")
+
+      expect(captured).to include(bucket: "test-bucket", key: "state/last_fetch.json")
+    end
+  end
+
+  describe ".from_config" do
+    it "builds from the cloudflare section" do
+      built = described_class.from_config
+
+      expect(built.bucket).to eq("test-bucket")
+      expect(built.episode_prefix).to eq("episodes")
+    end
+  end
+
   describe "#delete_prefix" do
     it "deletes every listed key and reports the count" do
       client.stub_responses(:list_objects_v2, {

@@ -135,8 +135,8 @@ RSpec.describe Internal::Config do
       data = YAML.safe_load_file(File.expand_path("../../fixtures/config_digest.yaml", __dir__))
 
       cfg = described_class.new(data)
-      expect(cfg.cloudflare).to be_nil
       expect(cfg.voicepeak).to be_nil
+      expect(cfg.mixer).to be_nil
     end
 
     it "defaults pipeline.mode to digest when the pipeline section is absent" do

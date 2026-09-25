@@ -535,16 +535,20 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   失うため。
 - `mark_pending!` は Undo バッファ（rollback_at/last_op）をクリアする。新規収集の発生は
   人間の操作ではない（Undo 対象にしない）ため。
-- `--publish-only` は新規 fetch をせず既存成果物を公開するだけなので、収集 window を
-  新しい時刻に進めてはいけない（fetch していない時刻で確定すると取りこぼす）。pending が
-  残っていれば公開＝確定として昇格させ、無ければ何もしない。
+- `--publish-only` は新規 fetch をせず既存成果物を公開するだけなので、収集 window に
+  一切触らない（確定は R2 に台本一式を置いた時点で済んでいる。後掲「RemoteState /
+  Handoff」節参照）。
 - 前回 pending の確定/ロールバックは、収集の起点(since)を確定する直前＝新規 fetch が
   実際に走る直前に ScriptGenerator が自分で尋ねる。既存 news スナップショットを再利用する
   実行（例: `--script-only` の後にフラグなしで synthesize へ進む）は fetch しないので、
   確認は出ない。`auto_confirm` は CI 等の非対話実行で確認を飛ばして自動確定するかどうか。
-- 収集 window（confirmed_at）は実行が完了しただけでは進まない。人間が成果物
-  （facts/台本/mp3）を確認し「進めてよい」と判断した時点で初めて確定する。
-  publish だけは公開自体が確定行為なので例外（`confirm_immediately!` で即時確定）。
+- 収集 window（confirmed_at）は、R2 の `handoff/` に台本一式を置いた時点で確定する
+  （`Pipeline#prepare_handoff` が `confirm_immediately!`/`confirm!` を呼ぶ）。音声合成・
+  publish を待たないのは、台本生成（CI 等のリモート）と音声合成（VOICEPEAK のある手元）を
+  別の実行に分けたため。代償として、台本を置いた後でその回を公開せずに捨てても、その回の
+  記事は確定済み・紹介済み履歴に記録済みのまま残る（再度候補に戻すには
+  `--restore-fetch` で巻き戻す）。`--digest-only`/`--script-only` は状態を R2 へ書き戻さない
+  ので、収集 window を進めない。
 - `Pipeline#run_confirm_fetch_command` は `LastFetchStore.confirm!`（状態変更）の
   前に `Config.validate_sections!("collect")` を呼ぶ。`confirm!` の後で読む
   `ScriptGenerator.record_used_news_history!` が `Config.collect` を参照するため、
@@ -553,6 +557,10 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - `confirm!`/`rollback!` は、直前の `confirmed_at`/`pending_at` を捨てる前に
   `rollback_at` へ退避してから `last_op` を記録する。誤って `confirm!`/`rollback!` を
   呼んでしまっても `restore!` で1段だけ巻き戻せるようにするため。
+- `resolve_pending!` は標準入力が EOF（非対話の実行で `--auto-confirm` を付け忘れた
+  場合など）なら、ロールバックせずに中断する。誰も答えていないのに既定のロールバックへ
+  倒すと、CI のログに出るプロンプトを誰も読まないまま収集 window が巻き戻り、それでいて
+  ジョブは成功に見えるため。
 - `resolve_pending!` の確認プロンプトで無回答（Enter/N）の既定はロールバック
   （＝ confirmed_at を進めない）。理由: 記事を取りこぼす（confirmed_at を進めて
   しまうと二度と収集対象に戻らない）よりも、次回また同じ記事が候補に上がる
@@ -581,6 +589,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - `feed_cache/` ディレクトリ（および移行期の旧 `feed_cache.json`）と `last_fetch.json`
   は回をまたいで永続する状態で、`clean` は対象にしない（`work_globs` が列挙する回ごとの
   中間ファイルのみが削除対象。ホワイトリスト方式なので状態ファイルは自動的に残る）。
+  正は R2 の `state/` で、`work/` のこれらは作業コピー（後掲「RemoteState / Handoff」節参照）。
 - 収集 window の起点として記録する時刻は、実行完了時刻ではなく収集開始時刻
   （`@now`）。実行に時間がかかった場合、開始〜完了の間に seen_at が刻まれた記事を
   次回取りこぼさないため。
@@ -969,8 +978,8 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `ai_agent.effort` は現状 `bin == "claude"` のときだけ `Internal::AiCli.run` が
   参照する。実装上対応しているのは claude のみだが、将来 effort に対応する別の
   AI CLI が増えたときに使い回す想定でこのフィールドを用意している。
-- `Config.validate_publish_target!` は、mode 判定を通らずに公開先を触る CLI 操作
-  （`--clean` / `--clean-archive`）のために独立して存在する。これを通さないと、
+- `Config.validate_publish_target!` は、mode 判定を通らずに公開先（R2）を触る CLI 操作
+  （`--clean` / `--clean-archive` / `--confirm-fetch` / `--restore-fetch`）のために独立して存在する。これを通さないと、
   生成物を作りきってからデプロイ段階で落ちる。`--ui-only` は `assets` も参照する
   ため `validate_publish_target!` ではなく `Config.validate_sections!` に
   `"cloudflare", "assets"` を直接渡す（後述「miyamai_news.rb」節参照）。
@@ -978,9 +987,9 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   共通で使う検証本体（欠けているセクション名を集めて `MissingKeyError` にする）を
   公開したもの。mode の加算的な到達順序（`REQUIRED_SECTIONS_DELTA`）とは無関係に、
   個別の CLI 操作が実際に参照するセクションだけをその場で指定できる。
-- `cloudflare` セクションは `pipeline.mode: publish` の必須セクション
-  （`REQUIRED_SECTIONS_DELTA`）にも含める。publish は配信まで到達するため、
-  配信先が未設定という状態で起動させない。
+- `cloudflare` セクション（R2 のバケット名・アカウント ID）は `pipeline.mode: digest` から
+  必須（`REQUIRED_SECTIONS_DELTA`）。回をまたぐ状態を R2 の `state/` から取り出すため、
+  digest だけの実行でも R2 に触る。
 - R2 の S3 互換 API 認証情報（`R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`）と
   wrangler の認証（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）は
   config.yaml に置かず環境変数で渡す。config.yaml は「機密を持たないから git で
@@ -1012,8 +1021,8 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   "assets")`、`--clean`/`--clean-archive` は `deploy_site` を呼ばないため
   `cloudflare` のみで足りる `Config.validate_publish_target!`。詳細は前掲
   「Publisher / Internal::Site」節参照）。`--confirm-fetch`/`--restore-fetch` は
-  `work/last_fetch.json` のみを触り公開先も pipeline.mode も伴わないので検証を
-  全てスキップする。それ以外は各コンポーネントが実行中に MissingKeyError で
+  pipeline.mode を伴わないが R2 の `state/` を読み書きするので、同じく
+  `Config.validate_publish_target!` で `cloudflare` だけを検証する。それ以外は各コンポーネントが実行中に MissingKeyError で
   落ちて中途半端に失敗するのを避けるため、起動直後に必要な config が揃っているか
   一括で検証する（`Config.validate_for!`）。
 - `--config` のパス解決は cwd 基準（一般的な CLI の期待動作。`__dir__` 基準だと
@@ -1045,10 +1054,17 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `#run_clean_command` が呼ぶ `#clean_work_dir` は work/ の回ごとの中間ファイルを
   削除するが、回をまたいで保持する状態（`last_fetch.json` / `feed_cache/`
   ディレクトリ）はホワイトリスト方式の `work_globs` に含まれないので残る。消すと
-  過去に見た記事を新着として拾い直し、重複紹介が起きるため。
+  過去に見た記事を新着として拾い直し、重複紹介が起きるため。一方、作業コピーの取得元
+  revision（`.state_base_revision`）は消す。これが無ければ次の実行は R2 から取り直すので、
+  未完了の実行の作業コピーを破棄する手段になる。
 - `#run_synthesize` が BGM パス（`assets.bgm_path`）を差し替え可能にしていないのは、
   `templates/index.html.erb` にクレジット表記（BGM 作者名）を固定で埋め込んでいるため。
   BGM を差し替えるとクレジット表記との整合が崩れる。
+- `--handoff-only` は `pipeline.mode` を見ない（digest でも R2 に台本を置くところまで進む）。
+  VOICEPEAK の無いリモートでは voicepeak/mixer/assets を持たない digest 相当の config で
+  動かすため。台本の生成（TTS 整形まで）に必要なのは digest の必須セクションだけなので、
+  `miyamai_news.rb` の起動時検証も `pipeline.mode` ではなく `Config.validate_for!("digest")`
+  で行う。
 - `#ensure_mode_allows!` は、`--digest-only` は digest 相当、`--script-only`/
   `--synthesize-only` は synthesize 相当、`--publish-only` は publish 相当以上の
   config が検証されていないと実行できないようにする。満たさなければ、必要な config が
@@ -1105,6 +1121,89 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   `Episode#date`/`date_tag`/`slot` の独立性を参照）。
 - 収集 window の pending 化（`LastFetchStore.mark_pending!`）は `Pipeline` 自身は
   呼ばない（前掲「LastFetchStore / 収集 window」参照）。
+
+### RemoteState / Handoff（R2 を経由した台本の受け渡し）
+
+台本生成（収集〜TTS 整形。CI 等のリモートでも動く）と音声合成（VOICEPEAK のある手元）を
+別の実行に分けられるよう、両者の受け渡しは同じ端末で続けて実行する場合も含めて必ず R2 を
+経由する。`state/`・`handoff/`・`handoff_done/`・`state_revision` はいずれも Worker が
+配信しないプレフィックス（`src/index.js` の `SERVABLE_PREFIXES` は `episodes/`・`assets/`
+のみ）なので、公開サイトからは読めない。
+
+- 「現在の回」（`--date`/`--slot` を省略したときの date/slot）は実行時刻の JST で決める
+  前提で、`Pipeline#setup_episode!` はローカルのタイムゾーンが +09:00 でなければ中断する。
+  UTC で動く CI ランナーと JST の手元では同じ時刻でも slot・日付がずれ、リモートが置いた
+  handoff を手元が「現在の回」として見つけられなくなるため（CI では `TZ=Asia/Tokyo` を
+  指定する）。`--date` と `--slot` を両方指定した実行はこの判定をしない。
+- フラグなし実行（`Pipeline#run_full`）は、まず R2 に現在の回の `handoff/<episode_key>/`
+  があるかを見る。あれば生成も状態の取り出しもせずに音声合成へ進む。これで、リモートが
+  先に台本を置いていれば手元の実行は生成を飛ばす。
+- handoff が無い場合、公開済みかどうかは `handoff_done/` ではなく公開台帳
+  （`archives.csv`、`Publisher#published?`）で判定する。`handoff_done/` に無いが公開済み
+  という回（R2 経由の受け渡し導入前に公開した回や、`mark_done!` の失敗）は普通にあり、
+  台帳が公開状態の唯一の正のため。公開済みなら生成せずに中断する（同じ回を作り直して
+  publish し直すと feed.xml が動きうる）。
+- 生成する実行の R2 への書き込み順は、台本本文（`Handoff#upload_files!`）→ 収集 window
+  の確定・紹介済み履歴への記録 → 状態の書き戻し（`RemoteState#push!`）→ manifest
+  （`Handoff#commit!`）。manifest が「一式が揃った」印（`Handoff#exist?`）なので、
+  どこで落ちても再実行は「handoff 無し」として生成し直し、前掲の中間ファイル再利用で
+  続きから進む。manifest を状態の書き戻しより先に書くと、書き戻し前に落ちた場合に再実行が
+  「handoff あり」の経路へ入り、確定・履歴記録・書き戻しが二度と行われない。
+- アップロードする used_news は `UsedNewsFormatter.ensure_valid!` で検証・修復した内容で、
+  修復結果は `work/` の used_news にも書き戻してから紹介済み履歴に記録する。履歴が
+  修復前の崩れた内容のままだと、公開した一覧と次回以降の重複回避の元データがずれるため。
+- 音声合成側は handoff を `work/handoff_<name>_<episode_key>.txt` に取得し、used_news・
+  台本を dist/ へコピーするのは音声合成・BGM 合成が成功した後。合成に失敗したとき
+  dist/ に mp3 の無い used/transcript だけが残らないようにするため。
+- `Handoff#mark_done!` は manifest から先に `handoff_done/` へ移す。途中で落ちても
+  `handoff/` 側は「揃っていない」扱いになり、再実行で同じ台本を合成し直さない。
+  `mark_done!` は R2 に残っているものだけを移すので、同じ回の `--publish-only` を
+  再実行すれば残りも移る。再実行しなければ本文だけが `handoff/<episode_key>/` に残り
+  続ける（manifest が無いので誤って使われることはなく、自動では掃除しない）。
+- 回をまたぐ状態は R2 の `state/` が正で、`work/` は作業コピー。`RemoteState#checkout!`
+  は取り出した revision（`state_revision` の値）を `work/.state_base_revision` に記録し、
+  `push!` で書き戻すと消す。つまりこのファイルがあれば「未完了の実行が残した作業コピー」。
+  - 作業コピーがあり、R2 の revision が取得時と同じなら、R2 から取り直さず作業コピーを
+    引き継ぐ（`:resumed`）。AI のタイムアウト等で落ちた実行を再実行したとき、R2 から
+    取り直すと、落ちた実行の `mark_pending!`・フィードキャッシュの `seen_at` 更新が消え、
+    news スナップショットの再利用で fetch しない再実行は収集 window を確定できず、履歴にも
+    残らない（回をまたいだ二重紹介）。
+  - 目印ファイルには、作業コピーを取り出した実行の owner（その回の episode_key。
+    `--confirm-fetch`/`--restore-fetch` は固定の名前）も残す。別の回の実行がそれを
+    引き継ぐときは、落ちた回の確定・履歴記録が次の回の書き戻しに含まれることになるので、
+    その旨を警告する（`--clean` で破棄するかは人が選ぶ）。
+  - `--confirm-fetch`/`--restore-fetch` が何もしなかった場合は、R2 から取り出したばかりの
+    作業コピーを `release!` で手放す。目印を残すと、後でリモートが書き戻したときに
+    次の手元の実行が衝突で止まってしまうため。
+  - R2 の revision が変わっていれば（別の実行が先に書き戻した）衝突として中断する。
+    どちらかを黙って捨てると上と同じ欠落が起きるので、人が `--clean` で手元の作業
+    コピーを破棄してから実行し直す。
+  - 生成後・アップロード前（`Pipeline#ensure_no_concurrent_run!`）と `push!` の直前に
+    revision を再確認し、生成中に別の実行が同じ回の handoff を置いていた場合も中断する。
+    生成には数分〜十数分かかるので、リモートと手元が同じ回をほぼ同時に生成し始めても、
+    先に書き戻した側の revision 更新を後の側が生成後の確認で検出して中断する。
+  - ただし確認と書き込みはアトミックではない（R2 の条件付き書き込みは使っていない）。
+    2 つの実行が `push!` の直前の確認をどちらも通過し、書き戻しそのもの（状態ファイルの
+    アップロードと revision の更新、通常数秒）が重なった場合は、後から書いた側が先の側の
+    `last_fetch.json`・紹介済み履歴を黙って上書きし、先の側の収集 window の確定と履歴
+    記録が失われる（エラーにはならない）。そうなると、その回の記事が次の回で再び候補に
+    上がりうる。両方の実行が生成を終える時刻が書き戻しの所要時間以内に重なる必要がある
+    ので、定期実行のリモート（`--handoff-only`）と手動の手元という想定運用では起きにくいと
+    判断して許容している。
+  - `pull!` は R2 に無いローカルの状態ファイルを消し、`push!` は作業コピーに無い R2 の
+    キーを消す（`used_news_history/` の prune を R2 にも反映するため）。どちらも
+    `TRACKED_GLOBS` の範囲だけで、回ごとの中間ファイルには触らない。
+  - `state/` があるのに `state_revision` が無い場合も `checkout!` は `Missing` で中断し、
+    `ensure_current!` は `state_revision` が消えていれば衝突として扱う。revision が無いまま
+    取り出すと目印に空の revision が記録され、以後の `checkout!` の比較（取得時の値と
+    `state_revision` の値を文字列で比べる）が R2 の更新有無によらず一致してしまうため。
+  - R2 の `state/` が空なら `checkout!` は `Missing` で中断する。空の状態から収集すると
+    フィードに載っている全記事が新着扱いになり、大量の二重紹介になるため。初回は
+    `scripts/seed_remote_state.rb` で手元の状態を置く（R2 に既に状態があれば置かない）。
+- `--confirm-fetch`/`--restore-fetch` も作業コピーを取り出してから操作し、R2 へ書き戻す。
+  `work/` だけを書き換えると、次の `checkout!` で黙って上書きされるため。
+- publish 側の実行は `state/` に触らない（`--publish-only`、handoff ありの経路）。
+  状態を書き換えるのは台本を生成する実行と `--confirm-fetch`/`--restore-fetch` だけ。
 
 ### 再生ページの JS（templates/index.html.erb）
 
