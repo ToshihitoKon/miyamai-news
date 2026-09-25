@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 require "open3"
-require "tty-spinner"
 require_relative "config"
 require_relative "episode_logger"
+require_relative "progress"
 
 # claude/agy 等の AI CLI をサブプロセスとして実行する共通ロジック。ScriptGenerator
 # （selector/extractor/writer/format）と UsedNewsFormatter（used_fix）の双方が使う。
@@ -49,8 +49,7 @@ module Internal
     # cmd（プロンプト本文を含みうる argv）はログに残さない。
     def run_with_spinner(spinner_message, error_message, *cmd, stdin_data: nil, fatal: true, log_meta: {},
                          cleanup_paths_on_timeout: [])
-      spinner = TTY::Spinner.new("[:spinner] #{spinner_message}", format: :dots)
-      spinner.auto_spin
+      spinner = Progress.start(spinner_message)
 
       opts = stdin_data ? { stdin_data: stdin_data } : {}
       start = EpisodeLogger.start_timer

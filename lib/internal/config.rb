@@ -18,14 +18,17 @@ module Config
   class InvalidConfigError < StandardError; end
 
   # pipeline.mode の3段階と、その到達順序。値が大きいほど後段まで進む。
-  #   digest:     RSS収集 → AI選別 → facts抽出まで。回をまたぐ状態を R2 から読む。
-  #   synthesize: digest の続きから音声合成・BGM合成まで。
+  #   digest:     RSS収集 → AI選別 → facts抽出まで。
+  #   synthesize: digest の続きから台本の R2 への受け渡し・音声合成・BGM合成まで。
   #   publish:    synthesize の続きから公開まで（フルパイプライン）。
   MODE_ORDER = { "digest" => 0, "synthesize" => 1, "publish" => 2 }.freeze
 
+  # どの mode でも必須のセクション。
+  REQUIRED_SECTIONS_BASE = %w[cloudflare].freeze
+
   # 各 mode で新たに必須になる config のトップレベルセクション名の差分。
   REQUIRED_SECTIONS_DELTA = {
-    "digest" => %w[ai_agent program_details rss_feed_sources collect cloudflare],
+    "digest" => %w[ai_agent program_details rss_feed_sources collect],
     "synthesize" => %w[voicepeak mixer assets],
     "publish" => %w[],
   }.freeze
@@ -79,10 +82,10 @@ module Config
 
     private
 
-    # target_mode 自身とそれより手前の全 mode の必須セクションを合算する（加算方式）。
+    # 共通の必須セクションに、target_mode 自身とそれより手前の全 mode の差分を合算する（加算方式）。
     def required_sections_for(target_mode)
       modes = MODE_ORDER.keys.first(MODE_ORDER[target_mode] + 1)
-      modes.flat_map { |mode| REQUIRED_SECTIONS_DELTA.fetch(mode) }
+      REQUIRED_SECTIONS_BASE + modes.flat_map { |mode| REQUIRED_SECTIONS_DELTA.fetch(mode) }
     end
 
     def app_config

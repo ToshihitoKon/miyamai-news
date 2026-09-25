@@ -2,7 +2,6 @@
 
 require "spec_helper"
 require "tmpdir"
-require "json"
 require "internal/handoff"
 require_relative "../support/in_memory_storage"
 
@@ -13,28 +12,26 @@ RSpec.describe Internal::Handoff do
 
   subject(:handoff) { described_class.new(storage: storage) }
 
-  def upload_and_commit
-    handoff.upload_files!(episode_key, contents)
-    handoff.commit!(episode_key)
-  end
-
-  describe "#upload_files! / #commit!" do
-    it "is not visible until commit! writes the manifest" do
-      handoff.upload_files!(episode_key, contents)
+  describe "#upload! / #exist?" do
+    it "writes every file under handoff/<episode_key>/ and then reports the handoff as present" do
+      handoff.upload!(episode_key, contents)
 
       expect(storage.get("handoff/20260714_afternoon/tts_script.txt")).to eq(contents[:tts_script])
-      expect(handoff.exist?(episode_key)).to be false
-
-      handoff.commit!(episode_key)
-
+      expect(storage.list("handoff/20260714_afternoon/").size).to eq(3)
       expect(handoff.exist?(episode_key)).to be true
-      expect(JSON.parse(storage.get("handoff/20260714_afternoon/manifest.json"))["episode_key"]).to eq(episode_key)
+    end
+
+    it "is false while some files are missing (an interrupted upload)" do
+      storage.put("handoff/20260714_afternoon/tts_script.txt", "partial", content_type: "text/plain")
+      storage.put("handoff/20260714_afternoon/script.txt", "partial", content_type: "text/plain")
+
+      expect(handoff.exist?(episode_key)).to be false
     end
   end
 
   describe "#download!" do
     it "writes each file to the given local path" do
-      upload_and_commit
+      handoff.upload!(episode_key, contents)
 
       Dir.mktmpdir do |dir|
         paths = contents.keys.to_h { |name| [name, File.join(dir, "#{name}.txt")] }
@@ -44,35 +41,36 @@ RSpec.describe Internal::Handoff do
       end
     end
 
-    it "raises NotFound when the handoff is not committed" do
-      handoff.upload_files!(episode_key, contents)
+    it "raises NotFound when the handoff is incomplete" do
+      storage.put("handoff/20260714_afternoon/tts_script.txt", "partial", content_type: "text/plain")
 
       expect { handoff.download!(episode_key, {}) }.to raise_error(described_class::NotFound)
     end
   end
 
   describe "#mark_done!" do
-    it "moves the whole handoff to handoff_done/, manifest first" do
-      upload_and_commit
+    it "moves the whole handoff to handoff_done/, tts_script first" do
+      handoff.upload!(episode_key, contents)
       moved = []
       allow(storage).to receive(:move).and_wrap_original do |original, from, to|
         moved << from
         original.call(from, to)
       end
 
-      expect(handoff.mark_done!(episode_key)).to eq(4)
+      expect(handoff.mark_done!(episode_key)).to eq(3)
 
-      expect(moved.first).to eq("handoff/20260714_afternoon/manifest.json")
+      expect(moved.first).to eq("handoff/20260714_afternoon/tts_script.txt")
       expect(storage.list("handoff/")).to be_empty
-      expect(storage.list("handoff_done/20260714_afternoon/").size).to eq(4)
+      expect(storage.list("handoff_done/20260714_afternoon/").size).to eq(3)
       expect(handoff.exist?(episode_key)).to be false
     end
 
     it "moves only what is left after an interrupted mark_done!" do
-      upload_and_commit
-      storage.move("handoff/20260714_afternoon/manifest.json", "handoff_done/20260714_afternoon/manifest.json")
+      handoff.upload!(episode_key, contents)
+      storage.move("handoff/20260714_afternoon/tts_script.txt", "handoff_done/20260714_afternoon/tts_script.txt")
 
-      expect(handoff.mark_done!(episode_key)).to eq(3)
+      expect(handoff.exist?(episode_key)).to be false
+      expect(handoff.mark_done!(episode_key)).to eq(2)
       expect(storage.list("handoff/")).to be_empty
     end
 

@@ -6,6 +6,7 @@ require "optparse"
 
 require_relative "lib/internal/config"
 require_relative "lib/internal/node_deps"
+require_relative "lib/internal/progress"
 require_relative "lib/pipeline"
 require_relative "lib/slot"
 
@@ -19,7 +20,7 @@ def parse_args(argv)
     o.on("--ui-only", "regenerate index.html / manifest.json only") { opts[:ui_only] = true }
     o.on("--confirm-fetch", "confirm the pending fetch window (use after reviewing the artifacts)") { opts[:confirm_fetch] = true }
     o.on("--restore-fetch", "restore the fetch window discarded by the last rollback (undo an accidental rollback)") { opts[:restore_fetch] = true }
-    o.on("--auto-confirm", "auto-confirm the pending fetch window without prompting (for CI)") { opts[:auto_confirm] = true }
+    o.on("--ci", "non-interactive mode: auto-confirm the pending fetch window, never prompt, no spinner animation") { opts[:ci] = true }
     o.on("--digest-only", "generate news selection/summary only, then stop") { opts[:digest_only] = true }
     o.on("--script-only", "generate the script only, then stop") { opts[:script_only] = true }
     o.on("--handoff-only", "generate the script and upload it to R2 (handoff/), then stop") { opts[:handoff_only] = true }
@@ -44,6 +45,7 @@ def parse_args(argv)
 end
 
 ARGS = parse_args(ARGV)
+Internal::Progress.ci = ARGS[:ci] || false
 
 begin
   Config.path = File.expand_path(ARGS[:config]) if ARGS[:config]

@@ -33,8 +33,8 @@ RSpec.describe Pipeline do
     instance_double(Internal::RemoteState,
       checkout!: :pulled, checked_out_by: nil, ensure_current!: nil, push!: 3, release!: nil)
   end
-  let(:fake_handoff) { instance_double(Internal::Handoff, upload_files!: nil, mark_done!: 4) }
-  # fake_handoff の exist? は commit! されたら true になる（R2 上の manifest の有無を模す）。
+  let(:fake_handoff) { instance_double(Internal::Handoff, mark_done!: 3) }
+  # fake_handoff の exist? は upload! されたら true になる（R2 上に台本一式が揃ったかを模す）。
   let(:handoff_state) { { uploaded: false } }
   let(:phase_timer) { Internal::PhaseTimer.new }
 
@@ -53,7 +53,7 @@ RSpec.describe Pipeline do
     allow(Internal::RemoteState).to receive(:new).and_return(fake_remote_state)
     allow(Internal::Handoff).to receive(:new).and_return(fake_handoff)
     allow(fake_handoff).to receive(:exist?) { handoff_state[:uploaded] }
-    allow(fake_handoff).to receive(:commit!) { handoff_state[:uploaded] = true }
+    allow(fake_handoff).to receive(:upload!) { handoff_state[:uploaded] = true }
     allow(fake_handoff).to receive(:download!) do |_key, paths|
       paths.each { |name, path| File.write(path, "downloaded #{name}") }
     end
@@ -256,7 +256,7 @@ RSpec.describe Pipeline do
       expect(ScriptGenerator).to have_received(:new).ordered
       expect(fake_generator).to have_received(:digest)
       expect(fake_remote_state).not_to have_received(:push!)
-      expect(fake_handoff).not_to have_received(:upload_files!)
+      expect(fake_handoff).not_to have_received(:upload!)
     end
 
     it "--script-only は digest してから generate(format: false) を呼び、digest/writerの2フェーズとして計測する" do
@@ -314,7 +314,7 @@ RSpec.describe Pipeline do
       expect(fake_generator).to have_received(:digest)
       expect(fake_generator).not_to have_received(:generate)
       expect(fake_remote_state).not_to have_received(:push!)
-      expect(fake_handoff).not_to have_received(:upload_files!)
+      expect(fake_handoff).not_to have_received(:upload!)
     end
 
     it "R2 の状態が空なら ScriptGenerator を作らずに abort する" do
@@ -331,12 +331,11 @@ RSpec.describe Pipeline do
         events = []
         allow(fake_remote_state).to receive(:checkout!) { events << :checkout }
         allow(fake_remote_state).to receive(:ensure_current!) { events << :ensure_current }
-        allow(fake_handoff).to receive(:upload_files!) { events << :upload_files }
         allow(LastFetchStore).to receive(:confirm!) { events << :confirm }
         allow(fake_remote_state).to receive(:push!) { events << :push }
-        allow(fake_handoff).to receive(:commit!) do
+        allow(fake_handoff).to receive(:upload!) do
           handoff_state[:uploaded] = true
-          events << :commit
+          events << :upload
         end
         allow(fake_handoff).to receive(:download!) do |_key, paths|
           paths.each { |name, path| File.write(path, "downloaded #{name}") }
@@ -345,14 +344,14 @@ RSpec.describe Pipeline do
         allow(fake_publisher).to receive(:run) { events << :publish }
         allow(fake_handoff).to receive(:mark_done!) do
           events << :done
-          4
+          3
         end
 
         build_pipeline(date: now, slot: "afternoon").run
 
-        expect(events).to eq([:checkout, :ensure_current, :upload_files, :confirm, :push, :commit, :download, :publish, :done])
+        expect(events).to eq([:checkout, :ensure_current, :confirm, :push, :upload, :download, :publish, :done])
         expect(fake_generator).to have_received(:generate).with(no_args)
-        expect(fake_handoff).to have_received(:upload_files!).with(
+        expect(fake_handoff).to have_received(:upload!).with(
           "20260714_afternoon", tts_script: "tts", script: "script", used_news: "used"
         )
         expect(fake_handoff).to have_received(:download!).with(
@@ -370,21 +369,21 @@ RSpec.describe Pipeline do
 
         build_pipeline(date: now, slot: "afternoon").run
 
-        expect(fake_handoff).to have_received(:upload_files!).with(anything, hash_including(used_news: "repaired used"))
+        expect(fake_handoff).to have_received(:upload!).with(anything, hash_including(used_news: "repaired used"))
       end
 
-      it "fetched_news? が true なら upload 後に confirm_immediately! して履歴に記録し、それから状態を書き戻す" do
+      it "fetched_news? が true なら confirm_immediately! して履歴に記録し、状態を書き戻してから upload する" do
         allow(fake_generator).to receive(:fetched_news?).and_return(true)
         allow(LastFetchStore).to receive(:confirm_immediately!)
         allow(LastFetchStore).to receive(:confirm!)
 
         build_pipeline(date: now, slot: "afternoon").run
 
-        expect(fake_handoff).to have_received(:upload_files!).ordered
         expect(LastFetchStore).to have_received(:confirm_immediately!).with(work_dir: work_dir, at: now).ordered
         expect(ScriptGenerator).to have_received(:record_used_news_history!)
           .with(work_dir: work_dir, episode_key: "20260714_afternoon").ordered
         expect(fake_remote_state).to have_received(:push!).ordered
+        expect(fake_handoff).to have_received(:upload!).ordered
         expect(LastFetchStore).not_to have_received(:confirm!)
       end
 
@@ -397,13 +396,34 @@ RSpec.describe Pipeline do
           .with(work_dir: work_dir, episode_key: "20260714_morning")
       end
 
+      it "内部状態の書き戻し後・アップロード前に落ちても、再実行で台本一式を置き直せる" do
+        upload_attempts = 0
+        allow(fake_handoff).to receive(:upload!) do
+          upload_attempts += 1
+          raise Aws::S3::Errors::ServiceError.new(nil, "boom") if upload_attempts == 1
+
+          handoff_state[:uploaded] = true
+        end
+        allow(LastFetchStore).to receive(:confirm!).and_return("20260714_afternoon", nil)
+
+        expect { build_pipeline(handoff_only: true, date: now, slot: "afternoon").run }
+          .to raise_error(Aws::S3::Errors::ServiceError)
+        build_pipeline(handoff_only: true, date: now, slot: "afternoon").run
+
+        expect(handoff_state[:uploaded]).to be true
+        expect(fake_remote_state).to have_received(:push!).twice
+        expect(ScriptGenerator).to have_received(:record_used_news_history!)
+          .with(work_dir: work_dir, episode_key: "20260714_afternoon").once
+        expect(ScriptGenerator).to have_received(:record_used_news_history!).with(work_dir: work_dir, episode_key: nil).once
+      end
+
       it "公開台帳に既にこの回があれば、生成も合成もせずに abort する" do
         allow(fake_publisher).to receive(:published?).with("miyamai_news_20260714_afternoon.mp3").and_return(true)
 
         expect { build_pipeline(date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
         expect(ScriptGenerator).not_to have_received(:new)
-        expect(fake_handoff).not_to have_received(:upload_files!)
+        expect(fake_handoff).not_to have_received(:upload!)
         expect(fake_publisher).not_to have_received(:run)
       end
 
@@ -415,7 +435,7 @@ RSpec.describe Pipeline do
 
         expect { build_pipeline(date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
-        expect(fake_handoff).not_to have_received(:upload_files!)
+        expect(fake_handoff).not_to have_received(:upload!)
         expect(fake_remote_state).not_to have_received(:push!)
       end
 
@@ -424,8 +444,8 @@ RSpec.describe Pipeline do
 
         expect { build_pipeline(date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
-        expect(fake_handoff).not_to have_received(:upload_files!)
-        expect(fake_handoff).not_to have_received(:commit!)
+        expect(fake_handoff).not_to have_received(:upload!)
+        expect(fake_remote_state).not_to have_received(:push!)
       end
     end
 
@@ -446,7 +466,7 @@ RSpec.describe Pipeline do
 
       build_pipeline(handoff_only: true, date: now, slot: "afternoon").run
 
-      expect(fake_handoff).to have_received(:commit!)
+      expect(fake_handoff).to have_received(:upload!)
       expect(fake_remote_state).to have_received(:push!)
       expect(fake_handoff).not_to have_received(:download!)
       expect(fake_publisher).not_to have_received(:run)
@@ -468,7 +488,7 @@ RSpec.describe Pipeline do
 
       build_pipeline(handoff_only: true, date: now, slot: "afternoon").run
 
-      expect(fake_handoff).to have_received(:commit!)
+      expect(fake_handoff).to have_received(:upload!)
     end
 
     it "アップロード時に修復した used_news を work/ にも書き戻し、紹介済み履歴はそれを元に記録される" do

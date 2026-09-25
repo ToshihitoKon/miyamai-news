@@ -106,7 +106,7 @@ module LastFetchStore
 
     print "The previous fetch window is unconfirmed (#{pending}). Confirm it? Answering no rolls it back. [y/N]: "
     answer = $stdin.gets
-    abort "\nno answer on stdin (non-interactive run); pass --auto-confirm to confirm the pending fetch window" if answer.nil?
+    abort "\nno answer on stdin (non-interactive run); pass --ci to confirm the pending fetch window" if answer.nil?
 
     if answer.strip.match?(/\Ay\z/i)
       episode_key = confirm!(work_dir: work_dir)

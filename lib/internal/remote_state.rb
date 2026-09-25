@@ -7,7 +7,7 @@ require "time"
 require_relative "object_storage"
 
 module Internal
-  # 回をまたいで永続する状態（収集 window・フィードキャッシュ・紹介済み履歴）を
+  # 実行をまたいで保持するパイプラインの内部状態（収集 window・フィードキャッシュ・紹介済み履歴）を
   # R2 の state/ プレフィックスと work_dir の間で同期する。正は R2 側で、work_dir は
   # checkout! で取り出した作業コピー。書き戻した時点の revision を state_revision に置き、
   # 作業コピーの取得元 revision と取り出した実行（owner）を work_dir/.state_base_revision に記録する。

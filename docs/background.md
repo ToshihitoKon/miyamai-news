@@ -541,7 +541,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - 前回 pending の確定/ロールバックは、収集の起点(since)を確定する直前＝新規 fetch が
   実際に走る直前に ScriptGenerator が自分で尋ねる。既存 news スナップショットを再利用する
   実行（例: `--script-only` の後にフラグなしで synthesize へ進む）は fetch しないので、
-  確認は出ない。`auto_confirm` は CI 等の非対話実行で確認を飛ばして自動確定するかどうか。
+  確認は出ない。`auto_confirm`（CLI の `--ci`）は CI 等の非対話実行で確認を飛ばして自動確定するかどうか。
 - 収集 window（confirmed_at）は、R2 の `handoff/` に台本一式を置いた時点で確定する
   （`Pipeline#prepare_handoff` が `confirm_immediately!`/`confirm!` を呼ぶ）。音声合成・
   publish を待たないのは、台本生成（CI 等のリモート）と音声合成（VOICEPEAK のある手元）を
@@ -557,7 +557,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - `confirm!`/`rollback!` は、直前の `confirmed_at`/`pending_at` を捨てる前に
   `rollback_at` へ退避してから `last_op` を記録する。誤って `confirm!`/`rollback!` を
   呼んでしまっても `restore!` で1段だけ巻き戻せるようにするため。
-- `resolve_pending!` は標準入力が EOF（非対話の実行で `--auto-confirm` を付け忘れた
+- `resolve_pending!` は標準入力が EOF（非対話の実行で `--ci` を付け忘れた
   場合など）なら、ロールバックせずに中断する。誰も答えていないのに既定のロールバックへ
   倒すと、CI のログに出るプロンプトを誰も読まないまま収集 window が巻き戻り、それでいて
   ジョブは成功に見えるため。
@@ -587,7 +587,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - `OPENING_GREETING`（"宮舞モカです。"）は台本の挨拶文であると同時に、
   `strip_preamble` が AI 出力の前置き除去に使う目印（アンカー）でもある。
 - `feed_cache/` ディレクトリ（および移行期の旧 `feed_cache.json`）と `last_fetch.json`
-  は回をまたいで永続する状態で、`clean` は対象にしない（`work_globs` が列挙する回ごとの
+  は実行をまたいで保持するパイプラインの内部状態で、`clean` は対象にしない（`work_globs` が列挙する回ごとの
   中間ファイルのみが削除対象。ホワイトリスト方式なので状態ファイルは自動的に残る）。
   正は R2 の `state/` で、`work/` のこれらは作業コピー（後掲「RemoteState / Handoff」節参照）。
 - 収集 window の起点として記録する時刻は、実行完了時刻ではなく収集開始時刻
@@ -955,7 +955,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   内包されるので、`### [タイトル](URL)` → `### タイトル` に畳んで URL だけ落とす（移行期に
   混じりうる旧・独立 URL 行の除去も残す）。公開用 `dist/*.used.txt` には link を残す。
 - 保存場所と clean 非対象: `work/used_news_history/` は feed_cache/・last_fetch.json と同じ
-  回をまたぐ永続状態。`ScriptGenerator.work_globs` のホワイトリスト（`news_*.txt` 等）に
+  パイプラインの内部状態。`ScriptGenerator.work_globs` のホワイトリスト（`news_*.txt` 等）に
   載らないので `clean` で消えない。中間ファイル `news_used_*.txt` は `news_*.txt` グロブで
   clean 消去されるため、履歴は必ず別ディレクトリへコピーする。
 - `episode_sort_key` は未知形式の episode_key を末尾（最古扱い）に寄せる。壊れた
@@ -987,9 +987,12 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   共通で使う検証本体（欠けているセクション名を集めて `MissingKeyError` にする）を
   公開したもの。mode の加算的な到達順序（`REQUIRED_SECTIONS_DELTA`）とは無関係に、
   個別の CLI 操作が実際に参照するセクションだけをその場で指定できる。
-- `cloudflare` セクション（R2 のバケット名・アカウント ID）は `pipeline.mode: digest` から
-  必須（`REQUIRED_SECTIONS_DELTA`）。回をまたぐ状態を R2 の `state/` から取り出すため、
-  digest だけの実行でも R2 に触る。
+- `cloudflare` セクション（R2 のバケット名・アカウント ID）は、mode の差分
+  （`REQUIRED_SECTIONS_DELTA`）ではなく全 mode 共通の必須セクション
+  （`REQUIRED_SECTIONS_BASE`）。台本生成と音声合成を別の環境で動かすようになり、digest は
+  内部状態の取り出し、synthesize は台本の取得、publish はデプロイと、どの mode も R2 に
+  触るため。mode の差分を加算していく形自体は残す（手元のフラグなし実行は、R2 に台本が
+  無ければ synthesize/publish でもその場で生成するので、digest の必須セクションも要る）。
 - R2 の S3 互換 API 認証情報（`R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`）と
   wrangler の認証（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）は
   config.yaml に置かず環境変数で渡す。config.yaml は「機密を持たないから git で
@@ -1052,7 +1055,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   進められる（work_dir 内の中間ファイルの有無で再利用を判断する、前掲
   「ScriptGenerator / AI パイプライン」節の再利用機構に乗る）。
 - `#run_clean_command` が呼ぶ `#clean_work_dir` は work/ の回ごとの中間ファイルを
-  削除するが、回をまたいで保持する状態（`last_fetch.json` / `feed_cache/`
+  削除するが、実行をまたいで保持する内部状態（`last_fetch.json` / `feed_cache/`
   ディレクトリ）はホワイトリスト方式の `work_globs` に含まれないので残る。消すと
   過去に見た記事を新着として拾い直し、重複紹介が起きるため。一方、作業コピーの取得元
   revision（`.state_base_revision`）は消す。これが無ければ次の実行は R2 から取り直すので、
@@ -1143,24 +1146,28 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   という回（R2 経由の受け渡し導入前に公開した回や、`mark_done!` の失敗）は普通にあり、
   台帳が公開状態の唯一の正のため。公開済みなら生成せずに中断する（同じ回を作り直して
   publish し直すと feed.xml が動きうる）。
-- 生成する実行の R2 への書き込み順は、台本本文（`Handoff#upload_files!`）→ 収集 window
-  の確定・紹介済み履歴への記録 → 状態の書き戻し（`RemoteState#push!`）→ manifest
-  （`Handoff#commit!`）。manifest が「一式が揃った」印（`Handoff#exist?`）なので、
-  どこで落ちても再実行は「handoff 無し」として生成し直し、前掲の中間ファイル再利用で
-  続きから進む。manifest を状態の書き戻しより先に書くと、書き戻し前に落ちた場合に再実行が
-  「handoff あり」の経路へ入り、確定・履歴記録・書き戻しが二度と行われない。
+- handoff が揃っているかは、別の目印ファイルを置かず、台本一式（`Handoff::FILES` の
+  3 ファイル）が R2 に全部あるかで判定する（`Handoff#exist?`）。
+- 生成する実行の書き込み順は、収集 window の確定・紹介済み履歴への記録 → 内部状態の
+  書き戻し（`RemoteState#push!`）→ 台本一式のアップロード（`Handoff#upload!`）。
+  アップロードより前に落ちれば再実行は「handoff 無し」として生成し直し、前掲の中間
+  ファイル再利用で続きから進む。台本を内部状態の書き戻しより先に置くと、書き戻し前に
+  落ちた場合に再実行が「handoff あり」の経路へ入り、確定・履歴記録・書き戻しが二度と
+  行われない。書き戻し後・アップロード前に落ちた場合は、確定済みの内部状態から生成し
+  直すことになる（同じ端末なら中間ファイルを再利用するので同じ台本になるが、中間ファイルを
+  持たない CI では、確定済みの記事が候補から外れた台本になる）。
 - アップロードする used_news は `UsedNewsFormatter.ensure_valid!` で検証・修復した内容で、
   修復結果は `work/` の used_news にも書き戻してから紹介済み履歴に記録する。履歴が
   修復前の崩れた内容のままだと、公開した一覧と次回以降の重複回避の元データがずれるため。
 - 音声合成側は handoff を `work/handoff_<name>_<episode_key>.txt` に取得し、used_news・
   台本を dist/ へコピーするのは音声合成・BGM 合成が成功した後。合成に失敗したとき
   dist/ に mp3 の無い used/transcript だけが残らないようにするため。
-- `Handoff#mark_done!` は manifest から先に `handoff_done/` へ移す。途中で落ちても
+- `Handoff#mark_done!` は `tts_script.txt` から先に `handoff_done/` へ移す。途中で落ちても
   `handoff/` 側は「揃っていない」扱いになり、再実行で同じ台本を合成し直さない。
   `mark_done!` は R2 に残っているものだけを移すので、同じ回の `--publish-only` を
-  再実行すれば残りも移る。再実行しなければ本文だけが `handoff/<episode_key>/` に残り
-  続ける（manifest が無いので誤って使われることはなく、自動では掃除しない）。
-- 回をまたぐ状態は R2 の `state/` が正で、`work/` は作業コピー。`RemoteState#checkout!`
+  再実行すれば残りも移る。再実行しなければ残りのファイルが `handoff/<episode_key>/` に
+  残り続ける（揃っていないので誤って使われることはなく、自動では掃除しない）。
+- パイプラインの内部状態は R2 の `state/` が正で、`work/` は作業コピー。`RemoteState#checkout!`
   は取り出した revision（`state_revision` の値）を `work/.state_base_revision` に記録し、
   `push!` で書き戻すと消す。つまりこのファイルがあれば「未完了の実行が残した作業コピー」。
   - 作業コピーがあり、R2 の revision が取得時と同じなら、R2 から取り直さず作業コピーを

@@ -160,10 +160,10 @@ class Pipeline
     Internal::EpisodeLogger.configure(File.join(@work_dir, "#{@episode.date_tag}_#{@episode.slot}.log"))
   end
 
-  # 回をまたぐ状態の作業コピーを用意してから ScriptGenerator を作る。
+  # 内部状態の作業コピーを用意してから ScriptGenerator を作る。
   def setup_generator!
     checkout_state!
-    @generator = ScriptGenerator.new(work_dir: @work_dir, episode: @episode, auto_confirm: @args[:auto_confirm] || false)
+    @generator = ScriptGenerator.new(work_dir: @work_dir, episode: @episode, auto_confirm: @args[:ci] || false)
   end
 
   # 戻り値は :pulled（R2 から取得）か :resumed（未完了の実行の作業コピーを引き継ぎ）。
@@ -248,11 +248,10 @@ class Pipeline
     File.write(@generator.used_news_file, used_news)
 
     ensure_no_concurrent_run!
-    handoff.upload_files!(episode_key,
-      tts_script: File.read(tts_script_path), script: File.read(@generator.script_file), used_news: used_news)
     confirm_fetch_and_record_history_for_generated!
     push_state!
-    handoff.commit!(episode_key)
+    handoff.upload!(episode_key,
+      tts_script: File.read(tts_script_path), script: File.read(@generator.script_file), used_news: used_news)
     warn "handoff: #{episode_key}"
   end
 

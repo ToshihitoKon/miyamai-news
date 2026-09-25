@@ -143,7 +143,7 @@ bundle exec ruby miyamai_news.rb --clean-archive # archived/ 配下の退避済�
 # last_fetched_at (RSS Feed 最終 fetch 時刻）の管理（R2 の state/ を書き換える）
 bundle exec ruby miyamai_news.rb --confirm-fetch # pending の収集windowを確定する
 bundle exec ruby miyamai_news.rb --restore-fetch # 直前の確定/ロールバックを1段だけ巻き戻す
-bundle exec ruby miyamai_news.rb --auto-confirm  # 前回分を確認せず自動確定してから実行（CI向け）
+bundle exec ruby miyamai_news.rb --ci            # 非対話モード: 前回分を確認せず自動確定し、プロンプト・スピナーを出さない（CI向け）
 
 # オプション一覧を表示
 bundle exec ruby miyamai_news.rb --help
@@ -158,19 +158,19 @@ R2 の `handoff/<date_tag>_<slot>/` を経由する。フラグなしで実行�
 
 1. R2 に現在の回（`--date`/`--slot` で指定も可）の台本一式があれば、それを使って 4 へ進む
 2. 無ければ、公開台帳（`archives.csv`）に既にこの回があれば中断する
-3. 台本を生成して R2 に置き、収集windowを確定して回をまたぐ状態を R2 へ書き戻す
+3. 台本を生成し、収集windowを確定して内部状態を R2 へ書き戻してから、台本一式を R2 に置く
    （`--handoff-only` はここで停止する）
 4. R2 から台本一式を取得して音声合成・BGM 合成（`synthesize` まではここで停止する）
 5. publish し、台本一式を `handoff_done/` へ移す
 
-リモート（CI 等）で `TZ=Asia/Tokyo` を付けて `--handoff-only --auto-confirm` を回して
+リモート（CI 等）で `TZ=Asia/Tokyo` を付けて `--handoff-only --ci` を回して
 おけば、手元の実行は 1 で R2 の台本を見つけ、生成を飛ばして音声合成から始まる。
 「現在の回」は JST で決めるので、`--date`/`--slot` を省略した実行はタイムゾーンが
 JST でなければ中断する。
 
-### 回をまたぐ状態（R2 の state/）
+### パイプラインの内部状態（R2 の state/）
 
-`last_fetch.json`・`feed_cache/`・`used_news_history/` など回をまたぐ状態は R2 の
+`last_fetch.json`・`feed_cache/`・`used_news_history/` など、実行をまたいで保持するパイプラインの内部状態は R2 の
 `state/` が正で、台本を生成する実行は開始時に `work/` へ取り出し、R2 に台本を置いた後で
 書き戻す。途中で失敗した実行の作業コピーは `work/` に残り、R2 がその後更新されていなければ
 次の実行がそのまま引き継ぐ。別の実行が先に R2 を更新していた場合は衝突として中断するので、
@@ -191,7 +191,8 @@ R2 に台本一式を置いた時点で確定する（音声合成・publish を
 既存の `news_<date>_<slot>.txt` を再利用しただけの実行では pending 化も起きない。
 
 収集の開始時に前回の `pending_at` が残っていれば、ダイアログで confirm か rollback かを選択する。
-CI等の非対話実行では `--auto-confirm` を付けて実行すると、確認なしで前回分を自動確定してから続行する。
+CI等の非対話実行では `--ci` を付けて実行すると、確認なしで前回分を自動確定してから続行する（プロンプトは出さない）。
+`--ci` を付けずに標準入力が閉じた環境で実行した場合は、ロールバックせずに中断する。
 
 ### フィードキャッシュ
 

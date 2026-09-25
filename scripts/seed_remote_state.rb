@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# 手元の work/ にある回をまたぐ状態（last_fetch.json・フィードキャッシュ・紹介済み履歴）を
+# 手元の work/ にあるパイプラインの内部状態（last_fetch.json・フィードキャッシュ・紹介済み履歴）を
 # R2 の state/ へ初回だけ置く。R2 側に状態が既にあれば何もせず終了する。
 #
 #   bundle exec ruby scripts/seed_remote_state.rb                              # 計画のみ
