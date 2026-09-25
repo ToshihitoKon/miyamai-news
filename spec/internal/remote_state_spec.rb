@@ -90,7 +90,7 @@ RSpec.describe Internal::RemoteState do
 
   describe "#release!" do
     it "drops the working copy marker so the next checkout! pulls from R2 again" do
-      state.checkout!(owner: "fetch-window-command")
+      state.checkout!(owner: "20260714_morning")
       write_local("last_fetch.json", "local only")
 
       state.release!

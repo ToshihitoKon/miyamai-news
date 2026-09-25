@@ -31,7 +31,6 @@ class Pipeline
 
   def self.target_mode_for(args)
     return nil if args[:clean] || args[:clean_archive] || args[:ui_only]
-    return nil if args[:restore_fetch]
     return "digest" if args[:digest_only]
     return "synthesize" if args[:script_only] || args[:synthesize_only] || args[:handoff_only]
 
@@ -48,7 +47,6 @@ class Pipeline
     return run_clean_command if @args[:clean]
     return run_clean_archive_command if @args[:clean_archive]
     return run_republish_ui_command if @args[:ui_only]
-    return run_restore_fetch_command if @args[:restore_fetch]
 
     setup_episode!
 
@@ -70,27 +68,6 @@ class Pipeline
   def relative(path) = Internal::RelativePath.from_root(path)
 
   # --- Episode非依存の独立コマンド --------------------------------------
-
-  # 最新の確定を取り消し、その回の履歴・収集結果も消す。
-  def run_restore_fetch_command
-    checkout = checkout_state!
-    reverted = LastFetchStore.revert_latest!(work_dir: @work_dir)
-    unless reverted
-      remote_state.release! if checkout == :pulled
-      warn "no committed fetch window to revert"
-      return
-    end
-
-    reverted_key = reverted["episode"]
-    UsedNewsHistory.remove!(work_dir: @work_dir, episode_key: reverted_key)
-    published = Publisher.new.published?("miyamai_news_#{reverted_key}.mp3")
-    warn "moved the unpublished handoff #{reverted_key} to #{Internal::Handoff::REVERTED_PREFIX}/" if handoff.discard!(reverted_key).positive?
-    push_state!
-    warn "reverted the fetch window of #{reverted_key} (collected at #{reverted['at']})"
-    warn "#{reverted_key} is already published; its articles may be introduced again in the next episode" if published
-    remaining = LastFetchStore.commits(@work_dir).map { |c| "#{c['episode']} (#{c['at']})" }
-    warn "remaining committed fetch windows: #{remaining.empty? ? '(none)' : remaining.join(', ')}"
-  end
 
   def run_republish_ui_command
     Publisher.new.republish_ui
@@ -157,12 +134,12 @@ class Pipeline
   end
 
   # 戻り値は :pulled（R2 から取得）か :resumed（未完了の実行の作業コピーを引き継ぎ）。
-  def checkout_state!(owner: @episode ? episode_key : "restore-fetch")
+  def checkout_state!
     previous_owner = remote_state.checked_out_by
-    result = remote_state.checkout!(owner: owner)
+    result = remote_state.checkout!(owner: episode_key)
     if result == :pulled
       warn "pulled pipeline state from R2"
-    elsif previous_owner == owner
+    elsif previous_owner == episode_key
       warn "resumed unfinished local pipeline state"
     else
       warn "resumed unfinished local pipeline state left by #{previous_owner} (run --clean to discard it instead)"

@@ -41,15 +41,6 @@ module LastFetchStore
     write(work_dir, "commits" => [{ "episode" => episode_key, "at" => at.iso8601 }, *others].first(KEEP_COMMITS))
   end
 
-  # 最新の確定を取り消して返す（無ければ nil）。起点は自動的に 1 つ前の確定の at に戻る。
-  def revert_latest!(work_dir:)
-    reverted, *rest = commits(work_dir)
-    return unless reverted
-
-    write(work_dir, "commits" => rest)
-    reverted
-  end
-
   def ensure_not_older!(work_dir, episode_key)
     latest = latest_commit(work_dir)
     return if latest.nil? || latest["episode"] == episode_key

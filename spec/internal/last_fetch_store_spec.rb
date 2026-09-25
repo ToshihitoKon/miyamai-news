@@ -87,22 +87,6 @@ RSpec.describe LastFetchStore do
     end
   end
 
-  describe ".revert_latest!" do
-    it "drops the latest commit so the next collection starts from the one before it" do
-      commit("20260714_morning", t1)
-      commit("20260714_afternoon", t2)
-
-      reverted = described_class.revert_latest!(work_dir: work_dir)
-
-      expect(reverted["episode"]).to eq("20260714_afternoon")
-      expect(described_class.since_for(work_dir, "20260714_afternoon")).to eq(t1)
-    end
-
-    it "returns nil when there is no commit" do
-      expect(described_class.revert_latest!(work_dir: work_dir)).to be_nil
-    end
-  end
-
   describe "legacy last_fetch.json (confirmed_at only)" do
     before do
       FileUtils.mkdir_p(File.dirname(described_class.path(work_dir)))

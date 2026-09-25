@@ -6,7 +6,6 @@ module Internal
   class Handoff
     PREFIX = "handoff"
     DONE_PREFIX = "handoff_done"
-    REVERTED_PREFIX = "handoff_reverted"
 
     # 名前 => R2 上のオブジェクト名。mark_done! はこの順に移す。
     FILES = { tts_script: "tts_script.txt", script: "script.txt", used_news: "used_news.txt" }.freeze
@@ -36,22 +35,17 @@ module Internal
     end
 
     # handoff/ に残っているものだけを handoff_done/ へ移し、移した数を返す。
-    def mark_done!(episode_key) = move_all(episode_key, DONE_PREFIX)
-
-    # 確定を取り消した回の handoff を使われないよう handoff_reverted/ へ退避し、移した数を返す。
-    def discard!(episode_key) = move_all(episode_key, REVERTED_PREFIX)
-
-    private
-
-    def move_all(episode_key, to_prefix)
+    def mark_done!(episode_key)
       FILES.values.count do |object|
         from = key(PREFIX, episode_key, object)
         next false unless @storage.exist?(from)
 
-        @storage.move(from, key(to_prefix, episode_key, object))
+        @storage.move(from, key(DONE_PREFIX, episode_key, object))
         true
       end
     end
+
+    private
 
     def key(prefix, episode_key, object) = "#{prefix}/#{episode_key}/#{object}"
   end

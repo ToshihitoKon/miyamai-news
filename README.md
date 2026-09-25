@@ -42,7 +42,7 @@ cp config.sample.yaml config.yaml
 ```
 
 R2 の状態・台本置き場（後述）を使うため、`pipeline.mode` によらず `--help` 以外のほぼすべての
-実行（`--restore-fetch`/`--clean` 系を含む）に以下の環境変数が必要。
+実行（`--clean` 系を含む）に以下の環境変数が必要。
 config.yaml には書かない（config.yaml は機密を持たない前提で運用しているため）。
 
 | 環境変数 | 用途 |
@@ -140,10 +140,8 @@ bundle exec ruby miyamai_news.rb --ui-only         # 新しい回を公開せず
 bundle exec ruby miyamai_news.rb --clean         # work/ を掃除し（未完了の実行の作業コピーも破棄）、公開済みまたは保持期間を過ぎた dist/ 成果物を削除
 bundle exec ruby miyamai_news.rb --clean-archive # archived/ 配下の退避済み成果物を完全削除
 
-# 収集window（RSS 収集の起点）の管理（R2 の state/ を書き換える）
-bundle exec ruby miyamai_news.rb --restore-fetch # 最新の確定を1件取り消す（直近3件まで遡れる）
-
-bundle exec ruby miyamai_news.rb --ci            # 非対話モード: スピナーを出さず進捗を1行ずつ出す（CI向け）
+# 非対話実行（CI 向け）
+bundle exec ruby miyamai_news.rb --ci            # スピナーを出さず進捗を1行ずつ出す
 
 # オプション一覧を表示
 bundle exec ruby miyamai_news.rb --help
@@ -192,9 +190,6 @@ R2 へ書き戻さないので、収集windowは進まない。
 
 確定済みの回を作り直す場合（台本の受け渡しが揃わなかった等）は、1つ前の確定の収集時刻から
 収集し直し、紹介済み履歴からその回自身を除いて選定する。作り直せるのは最新の確定の回だけ。
-
-確定を取り消したい場合は `--restore-fetch` を使う。最新の確定を1件取り消し、その回の記事を
-次の回の候補に戻す（繰り返すと直近3件まで遡れる）。
 
 ### フィードキャッシュ
 

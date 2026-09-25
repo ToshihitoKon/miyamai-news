@@ -78,15 +78,4 @@ RSpec.describe Internal::Handoff do
       expect(handoff.mark_done!(episode_key)).to eq(0)
     end
   end
-
-  describe "#discard!" do
-    it "moves the handoff to handoff_reverted/ so it is no longer used" do
-      handoff.upload!(episode_key, contents)
-
-      expect(handoff.discard!(episode_key)).to eq(3)
-
-      expect(handoff.exist?(episode_key)).to be false
-      expect(storage.list("handoff_reverted/20260714_afternoon/").size).to eq(3)
-    end
-  end
 end

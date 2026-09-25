@@ -32,7 +32,7 @@ RSpec.describe Pipeline do
     instance_double(Internal::RemoteState,
       checkout!: :pulled, checked_out_by: nil, ensure_current!: nil, push!: 3, release!: nil)
   end
-  let(:fake_handoff) { instance_double(Internal::Handoff, mark_done!: 3, discard!: 0) }
+  let(:fake_handoff) { instance_double(Internal::Handoff, mark_done!: 3) }
   # fake_handoff の exist? は upload! されたら true になる（R2 上に台本一式が揃ったかを模す）。
   let(:handoff_state) { { uploaded: false } }
   let(:phase_timer) { Internal::PhaseTimer.new }
@@ -146,83 +146,6 @@ RSpec.describe Pipeline do
       build_pipeline(clean_archive: true).run
 
       expect(publisher).to have_received(:clean_archive)
-    end
-
-    it "--restore-fetch は最新の確定を取り消し、その回の履歴を消して R2 へ書き戻す" do
-      allow(LastFetchStore).to receive(:revert_latest!).with(work_dir: work_dir)
-        .and_return({ "episode" => "20260714_morning", "at" => "2026-07-14T06:00:00+09:00" })
-      allow(LastFetchStore).to receive(:commits).and_return([{ "episode" => "20260713_evening" }])
-      allow(UsedNewsHistory).to receive(:remove!)
-
-      build_pipeline(restore_fetch: true).run
-
-      expect(fake_remote_state).to have_received(:checkout!)
-      expect(UsedNewsHistory).to have_received(:remove!).with(work_dir: work_dir, episode_key: "20260714_morning")
-      expect(fake_remote_state).to have_received(:push!)
-    end
-
-    it "--restore-fetch は取り消した回の未公開の handoff を退避し、そのまま合成・publish に使われないようにする" do
-      allow(LastFetchStore).to receive(:revert_latest!).and_return({ "episode" => "20260714_afternoon", "at" => now.iso8601 })
-      allow(UsedNewsHistory).to receive(:remove!)
-      allow(fake_handoff).to receive(:discard!).with("20260714_afternoon").and_return(3)
-      pipeline = build_pipeline(restore_fetch: true)
-      messages = collect_warnings(pipeline)
-
-      pipeline.run
-
-      expect(fake_handoff).to have_received(:discard!).with("20260714_afternoon")
-      expect(messages).to include(a_string_including("moved the unpublished handoff 20260714_afternoon"))
-    end
-
-    it "--restore-fetch は内部状態を書き戻す前に handoff を退避する（書き戻し後に落ちても handoff が残らない）" do
-      allow(LastFetchStore).to receive(:revert_latest!).and_return({ "episode" => "20260714_afternoon", "at" => now.iso8601 })
-      allow(UsedNewsHistory).to receive(:remove!)
-      events = []
-      allow(fake_publisher).to receive(:published?) do
-        events << :published_check
-        false
-      end
-      allow(fake_handoff).to receive(:discard!) do
-        events << :discard
-        3
-      end
-      allow(fake_remote_state).to receive(:push!) { events << :push }
-
-      build_pipeline(restore_fetch: true).run
-
-      expect(events).to eq([:published_check, :discard, :push])
-    end
-
-    it "--restore-fetch は取り消した回が公開済みなら警告し、残っている確定を表示する" do
-      allow(LastFetchStore).to receive(:revert_latest!).and_return({ "episode" => "20260714_afternoon", "at" => now.iso8601 })
-      allow(LastFetchStore).to receive(:commits).and_return([{ "episode" => "20260714_morning", "at" => "2026-07-14T06:00:00+09:00" }])
-      allow(UsedNewsHistory).to receive(:remove!)
-      allow(fake_publisher).to receive(:published?).with("miyamai_news_20260714_afternoon.mp3").and_return(true)
-      pipeline = build_pipeline(restore_fetch: true)
-      messages = collect_warnings(pipeline)
-
-      pipeline.run
-
-      expect(messages).to include(a_string_including("20260714_afternoon is already published"))
-      expect(messages).to include("remaining committed fetch windows: 20260714_morning (2026-07-14T06:00:00+09:00)")
-    end
-
-    it "--restore-fetch は確定が無ければ何もせず、R2 から取り出した作業コピーを手放す" do
-      allow(LastFetchStore).to receive(:revert_latest!).and_return(nil)
-
-      build_pipeline(restore_fetch: true).run
-
-      expect(fake_remote_state).not_to have_received(:push!)
-      expect(fake_remote_state).to have_received(:release!)
-    end
-
-    it "--restore-fetch は未完了の実行の作業コピーを引き継いだときは、何もしなくても手放さない" do
-      allow(fake_remote_state).to receive(:checkout!).and_return(:resumed)
-      allow(LastFetchStore).to receive(:revert_latest!).and_return(nil)
-
-      build_pipeline(restore_fetch: true).run
-
-      expect(fake_remote_state).not_to have_received(:release!)
     end
 
     it "--clean は未完了の作業コピーの取得元 revision も消す（次回は R2 から取り直す）" do
@@ -560,7 +483,7 @@ RSpec.describe Pipeline do
     after { Config.path = File.expand_path("fixtures/config.yaml", __dir__) }
 
     it "returns nil for the independent commands" do
-      [:clean, :clean_archive, :ui_only, :restore_fetch].each do |flag|
+      [:clean, :clean_archive, :ui_only].each do |flag|
         expect(Pipeline.target_mode_for(flag => true)).to be_nil
       end
     end

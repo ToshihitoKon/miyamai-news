@@ -128,15 +128,4 @@ RSpec.describe UsedNewsHistory do
       expect(rendered).to include("昼ニュース", "朝ニュース")
     end
   end
-
-  describe ".remove!" do
-    it "deletes the history of the episode only" do
-      record("20260720_morning", used_news_text(title: "朝", link: "https://a"))
-      record("20260720_evening", used_news_text(title: "夜", link: "https://b"))
-
-      described_class.remove!(work_dir: work_dir, episode_key: "20260720_evening")
-
-      expect(history_files).to eq(["20260720_morning"])
-    end
-  end
 end

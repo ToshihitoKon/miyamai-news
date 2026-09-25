@@ -33,10 +33,6 @@ module UsedNewsHistory
       .join("\n\n")
   end
 
-  def remove!(work_dir:, episode_key:)
-    FileUtils.rm_f(File.join(dir(work_dir), "#{episode_key}.txt"))
-  end
-
   # link を落とす。`### [タイトル](URL)` → `### タイトル` に畳み、独立した URL 行は
   # 削除する。3 行以上の空行は 1 行に畳む。
   def strip_links(text)

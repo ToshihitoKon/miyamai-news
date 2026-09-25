@@ -493,7 +493,7 @@ R2 のキー構成:
   インストール版）と食い違う。
 - 上記の validation は `--ui-only` または `Pipeline.reaches?("publish", ARGS)`
   が真の場合だけ呼ぶ。`Pipeline.target_mode_for(args)`（`--clean` 系・
-  `--ui-only`・`--restore-fetch` は pipeline.mode と無関係な
+  `--ui-only` は pipeline.mode と無関係な
   独立コマンドなので nil を返す）と、それを `Config::MODE_ORDER` で比較する
   `Pipeline.reaches?(mode, args)` を `Pipeline` に持たせている。`Config` では
   なく `Pipeline` に置くのは、CLI フラグ（`args`）と mode の対応づけが
@@ -536,7 +536,8 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - 確定は台本を R2 に置く直前（`Pipeline#commit_episode!`）に行い、音声合成・publish を
   待たない。台本生成（CI 等のリモート）と音声合成（VOICEPEAK のある手元）を別の実行に
   分けたため。代償として、台本を置いた後でその回を公開せずに捨てても、その回の記事は
-  確定済み・紹介済み履歴に記録済みのまま残る（候補に戻すには `--restore-fetch`）。
+  確定済み・紹介済み履歴に記録済みのまま残る。確定を取り消す操作は持たない。確定は
+  episode_key 単位なので、同じ回を作り直せば常に 1 つ前の確定からの差分で集め直せる。
 - 確定にラベル（episode_key）を付けるのは、確定済みの回を作り直すため。確定後に台本の
   受け渡しが揃わず作り直す場合、その回自身の `at` から収集するとその回の記事が
   `seen_at ≤ since` で落ち、紹介済み履歴にもその回自身が入っているので選定でも避けられる。
@@ -557,20 +558,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   途中で落ちて別プロセスが中間ファイルを再利用する場合でも、収集した時点の時刻で確定
   できるようにするため（プロセスローカルなフラグに頼らない）。回ごとの中間ファイルなので
   R2 には同期せず、`--clean` で消える。
-- `--restore-fetch`（`revert_latest!`）は最新の確定を 1 件取り消し（起点は自動的に 1 つ
-  前の確定の `at` に戻る）、その回の紹介済み履歴を消す。繰り返せば
-  確定履歴の件数まで遡れ、実行のたびに残っている確定を表示する。取り消した回の未公開の
-  handoff は `handoff_reverted/` へ退避する（`Handoff#discard!`）。残しておくと、次の実行が
-  「handoff あり」の経路でそのまま合成・publish し、確定も紹介済み履歴への記録もされない
-  まま公開されてしまうため。退避は内部状態の書き戻しより先に行う。逆順だと、書き戻した後に
-  落ちたとき同じ状態（確定は無いのに handoff がある）が残る。先に退避して書き戻し前に
-  落ちた場合は、確定だけが残って handoff が無い状態になり、次の実行が最新の確定の回として
-  作り直す通常の経路に乗る。公開済みかの確認（読み取りのみ）は、どちらの書き込みよりも前に
-  行う。公開済みの回を取り消した場合は、その記事が次の回で再び候補に
-  上がりうるので警告する。
-- 最新の確定より古い回は作り直せない（後の回と収集範囲が重なるため）。どうしても作り
-  直すなら、`--restore-fetch` でその回まで確定を遡る必要がある（遡った回の handoff は
-  退避され、公開済みの回は警告が出る）。
+- 最新の確定より古い回は作り直せない（後の回と収集範囲が重なるため）。
 - 確定履歴導入前の `last_fetch.json`（`confirmed_at` だけを持つ形式）は、`confirmed_at` を
   最古扱いの確定（episode `legacy`）として読み替える。次の回の起点としてそのまま効き、
   次に書き込むときに新しい形式になる。旧形式にあった `pending_at`（人が成果物を確認して
@@ -671,8 +659,8 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
   episode を知らない `HttpFetcher` など、経路の異なる全呼び出し元に個別に
   `log_path` を注入するとシグネチャ変更が広範囲に波及するため、Config と同じ
   「一度設定してどこからでも参照する」パターンを踏襲した。
-- `configure` されるまで（`--clean`/`--clean-archive`/`--ui-only`/
-  `--restore-fetch` など episode 生成前に早期 return する経路）
+- `configure` されるまで（`--clean`/`--clean-archive`/`--ui-only`
+  など episode 生成前に早期 return する経路）
   は `record` が no-op になる。これらの経路は AI CLI や VOICEPEAK を呼ばないため
   実害はない。
 - **常に追記（truncate しない）**。`--digest-only`→`--script-only`→
@@ -966,7 +954,6 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   追記する。selector は「前回まで」の履歴を読むので、自回の追記は selector より必ず後で
   なければ自回を過去回として弾いてしまう。確定済みの回を作り直すときは、selector に渡す
   履歴からその回を除く（`render_for_prompt(exclude:)`。除いたうえで直近 N 件を渡す）。
-  `--restore-fetch` で確定を取り消した回の履歴は消す（`remove!`）。
 
 ### Config
 
@@ -974,7 +961,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   参照する。実装上対応しているのは claude のみだが、将来 effort に対応する別の
   AI CLI が増えたときに使い回す想定でこのフィールドを用意している。
 - `Config.validate_publish_target!` は、mode 判定を通らずに公開先（R2）を触る CLI 操作
-  （`--clean` / `--clean-archive` / `--restore-fetch`）のために独立して存在する。これを通さないと、
+  （`--clean` / `--clean-archive`）のために独立して存在する。これを通さないと、
   生成物を作りきってからデプロイ段階で落ちる。`--ui-only` は `assets` も参照する
   ため `validate_publish_target!` ではなく `Config.validate_sections!` に
   `"cloudflare", "assets"` を直接渡す（後述「miyamai_news.rb」節参照）。
@@ -1018,9 +1005,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   （`--ui-only` は `assets` も参照するため `Config.validate_sections!("cloudflare",
   "assets")`、`--clean`/`--clean-archive` は `deploy_site` を呼ばないため
   `cloudflare` のみで足りる `Config.validate_publish_target!`。詳細は前掲
-  「Publisher / Internal::Site」節参照）。`--restore-fetch` は
-  pipeline.mode を伴わないが R2 の `state/` を読み書きするので、同じく
-  `Config.validate_publish_target!` で `cloudflare` だけを検証する。それ以外は各コンポーネントが実行中に MissingKeyError で
+  「Publisher / Internal::Site」節参照）。それ以外は各コンポーネントが実行中に MissingKeyError で
   落ちて中途半端に失敗するのを避けるため、起動直後に必要な config が揃っているか
   一括で検証する（`Config.validate_for!`）。
 - `--config` のパス解決は cwd 基準（一般的な CLI の期待動作。`__dir__` 基準だと
@@ -1037,7 +1022,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   （work/dist の mkdir・`Internal::EpisodeLogger` の configure）を一元管理する。
   新しいドメインロジックは持たず、既存の `ScriptGenerator`/`Publisher`/
   `LastFetchStore`/`Internal::EpisodeLogger` の呼び出し順序を集約するだけに徹する。
-- `--clean`/`--clean-archive`/`--ui-only`/`--restore-fetch` は
+- `--clean`/`--clean-archive`/`--ui-only` は
   Episode を作らない（`EpisodeLogger.configure` されないまま no-op で動く）という
   既存の不変条件があるため、`#run` はこれらを Episode 構築（`#setup_episode!`）より
   前で早期 return して処理する。
@@ -1190,13 +1175,9 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
     取り直すと、落ちた実行のフィードキャッシュの `seen_at` 更新が消え、中間ファイルの
     `news_<key>.txt` を再利用して確定すると、その回の記事が R2 の feed_cache 上は未知の
     まま次の回で再び新着になる。
-  - 目印ファイルには、作業コピーを取り出した実行の owner（その回の episode_key。
-    `--restore-fetch` は固定の名前）も残す。別の回の実行がそれを
+  - 目印ファイルには、作業コピーを取り出した実行の owner（その回の episode_key）も残す。別の回の実行がそれを
     引き継ぐときは、落ちた回の確定・履歴記録が次の回の書き戻しに含まれることになるので、
     その旨を警告する（`--clean` で破棄するかは人が選ぶ）。
-  - `--restore-fetch` が何もしなかった場合は、R2 から取り出したばかりの
-    作業コピーを `release!` で手放す。目印を残すと、後でリモートが書き戻したときに
-    次の手元の実行が衝突で止まってしまうため。
   - R2 の revision が変わっていれば（別の実行が先に書き戻した）衝突として中断する。
     どちらかを黙って捨てると上と同じ欠落が起きるので、人が `--clean` で手元の作業
     コピーを破棄してから実行し直す。
@@ -1219,10 +1200,8 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   - R2 の `state/` が空なら `checkout!` は `Missing` で中断する。空の状態から収集すると
     フィードに載っている全記事が新着扱いになり、大量の二重紹介になるため。初回は
     `scripts/seed_remote_state.rb` で手元の状態を置く（R2 に既に状態があれば置かない）。
-- `--restore-fetch` も作業コピーを取り出してから操作し、R2 へ書き戻す。`work/` だけを
-  書き換えると、次の `checkout!` で黙って上書きされるため。
 - publish 側の実行は `state/` に触らない（`--publish-only`、handoff ありの経路）。
-  状態を書き換えるのは台本を生成する実行と `--restore-fetch` だけ。
+  状態を書き換えるのは台本を生成する実行だけ。
 
 ### 再生ページの JS（templates/index.html.erb）
 
