@@ -8,7 +8,6 @@ require_relative "internal/hatena_bookmarks"
 require_relative "internal/arxiv"
 require_relative "feed_cache"
 require_relative "internal/last_fetch_store"
-require_relative "internal/news_snapshot"
 require_relative "internal/used_news_history"
 require_relative "internal/ai_cli"
 require_relative "internal/preamble_stripper"
@@ -84,6 +83,11 @@ class ScriptGenerator
   def used_news_file = used_news_path
   def episode_key = "#{@episode.date_tag}_#{@episode.slot}"
 
+  # この回の候補ニュースを収集した時刻（収集 window の確定に使う）。未収集なら nil。
+  def collected_at
+    File.exist?(news_collected_at_path) ? Time.iso8601(File.read(news_collected_at_path).strip) : nil
+  end
+
   private
 
   def relative(path) = Internal::RelativePath.from_root(path)
@@ -107,7 +111,8 @@ class ScriptGenerator
   def used_news_history_episodes = Config.collect.used_news_history_episodes
 
   def news_collected_path = File.join(@work_dir, "news_#{@episode.date_tag}_#{@episode.slot}.txt")
-  def news_selected_path  = File.join(@work_dir, "news_selected_#{@episode.date_tag}_#{@episode.slot}.txt")
+  def news_collected_at_path = File.join(@work_dir, "news_collected_at_#{episode_key}.txt")
+  def news_selected_path = File.join(@work_dir, "news_selected_#{@episode.date_tag}_#{@episode.slot}.txt")
   def news_facts_path  = File.join(@work_dir, "news_facts_#{@episode.date_tag}_#{@episode.slot}.txt")
   def script_path      = File.join(@work_dir, "script_#{@episode.date_tag}_#{@episode.slot}.txt")
   def tts_script_path  = File.join(@work_dir, "tts_script_#{@episode.date_tag}_#{@episode.slot}.txt")
@@ -207,25 +212,18 @@ class ScriptGenerator
 
   # --- ニュース収集 ---
 
-  # 全候補のニュース一覧（選定ステップへの入力）を返す。収集結果は収集範囲とともに
-  # NewsSnapshot に残し、news_*.txt が無くてもスナップショットがあれば収集し直さない。
+  # 全候補のニュース一覧（選定ステップへの入力）を返す。news_*.txt に中間ファイルとして
+  # 残し、あれば再利用する。収集時刻は news_collected_at_*.txt に残す。
   def load_or_collect_news
-    snapshot = NewsSnapshot.load(@work_dir, episode_key)
-
     if File.exist?(news_collected_path)
-      abort "#{relative(news_collected_path)} has no news snapshot; discard it with --clean and run again" unless snapshot
+      abort "#{relative(news_collected_path)} has no collection time; discard it with --clean and run again" unless collected_at
       warn "reuse: #{relative(news_collected_path)}"
       return File.read(news_collected_path)
     end
 
-    if snapshot
-      File.write(news_collected_path, snapshot.news)
-      warn "reuse news snapshot: #{relative(NewsSnapshot.path(@work_dir, episode_key))}"
-      return snapshot.news
-    end
-
-    news_body = collect_news(collect_since)
-    NewsSnapshot.save!(work_dir: @work_dir, episode_key:, news: news_body, at: @episode.now)
+    since, until_at = collection_window
+    news_body = collect_news(since, until_at:)
+    File.write(news_collected_at_path, (until_at || @episode.now).iso8601)
     File.write(news_collected_path, news_body)
     warn "news: #{relative(news_collected_path)}"
     report_collect_stats
@@ -239,17 +237,23 @@ class ScriptGenerator
     warn "new articles total: #{@collect_stats.total_after_dedup} (#{@collect_stats.total_before_dedup} before dedup)"
   end
 
-  # この回より前の確定の収集時刻。確定が無い初回は lookback_hours 前。
-  def collect_since
-    LastFetchStore.since_for(@work_dir, episode_key) || (@episode.now - (lookback_hours * 3600))
+  # 戻り値は [since, until_at]。since はこの回より前の確定の収集時刻（確定が無ければ
+  # lookback_hours 前）。最新の確定がこの回（作り直し）なら until_at はその回の収集時刻で、
+  # fetch せずキャッシュからその範囲を選ぶ。それ以外は nil（fetch して since 以降を集める）。
+  def collection_window
+    previous_at = LastFetchStore.since_for(@work_dir, episode_key)
+    latest = LastFetchStore.latest_commit(@work_dir)
+    until_at = latest && latest["episode"] == episode_key ? Time.iso8601(latest["at"]) : nil
+    [previous_at || ((until_at || @episode.now) - (lookback_hours * 3600)), until_at]
   rescue LastFetchStore::OlderEpisodeError => e
     abort e.message
   end
 
-  # FeedCache から since 以降に初登場した記事を集め、フラットなテキストにする。
-  def collect_news(since)
+  # FeedCache から since 以降（until_at があればそれ以前まで）に初登場した記事を集め、
+  # フラットなテキストにする。
+  def collect_news(since, until_at: nil)
     target_sources = sources
-    items_per_source = fetch_sources_in_parallel(target_sources, since)
+    items_per_source = fetch_sources_in_parallel(target_sources, since, until_at)
     items = dedup_by_title(items_per_source.flatten)
 
     @collect_stats = CollectStats.new(
@@ -275,7 +279,7 @@ class ScriptGenerator
   end
 
   # 全ソースを fetch_threads 並列で収集する。戻り値は sources と同じ順の items 配列。
-  def fetch_sources_in_parallel(sources, since)
+  def fetch_sources_in_parallel(sources, since, until_at)
     queue = Queue.new
     sources.each_with_index { |src, i| queue << [src, i] }
     queue.close
@@ -286,7 +290,7 @@ class ScriptGenerator
         Thread.current.report_on_exception = false
         while (job = queue.pop)
           src, i = job
-          items_per_source[i] = collect_source(src, since)
+          items_per_source[i] = collect_source(src, since, until_at)
         end
       end
     end
@@ -302,10 +306,14 @@ class ScriptGenerator
   end
 
   # 1ソース分の新着記事を FeedCache から全件取得し、メタ情報を付けて返す。
-  def collect_source(src, since)
-    items = @feed_cache.fetch(src.url, now: @episode.now, since: since,
-      extra_extractor: Internal::HatenaBookmarks)
-    items = items.reject { |item| Internal::Arxiv.old?(item[:link], max_age_days: src.max_age_days, now: @episode.now) } if src.max_age_days
+  def collect_source(src, since, until_at = nil)
+    items = if until_at
+              @feed_cache.cached_window(src.url, since:, until_at:)
+            else
+              @feed_cache.fetch(src.url, now: @episode.now, since:, extra_extractor: Internal::HatenaBookmarks)
+            end
+    reference_time = until_at || @episode.now
+    items = items.reject { |item| Internal::Arxiv.old?(item[:link], max_age_days: src.max_age_days, now: reference_time) } if src.max_age_days
 
     items.map do |item|
       picked = { title: item[:title], link: item[:link], date: item[:date],

@@ -10,7 +10,7 @@ module StateDir
   NAME = "state"
 
   # 内部状態を work/ 直下に置いていた頃のエントリ名。
-  LEGACY_ENTRIES = %w[last_fetch.json feed_cache.json feed_cache used_news_history news_snapshots].freeze
+  LEGACY_ENTRIES = %w[last_fetch.json feed_cache.json feed_cache used_news_history].freeze
 
   def path(work_dir) = File.join(work_dir, NAME)
 

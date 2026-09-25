@@ -92,7 +92,7 @@ RSpec.describe ScriptGenerator do
       it "news_collected_path の既存スナップショットを再利用する場合は nil のまま" do
         generator = described_class.new(work_dir: work_dir, episode: episode)
         File.write(generator.send(:news_collected_path), "1. Title A\n")
-        NewsSnapshot.save!(work_dir: work_dir, episode_key: generator.episode_key, news: "1. Title A\n", at: now)
+        File.write(generator.send(:news_collected_at_path), now.iso8601)
 
         generator.send(:load_or_collect_news)
 
@@ -120,7 +120,7 @@ RSpec.describe ScriptGenerator do
       it "news_collected_path の既存スナップショットを再利用する場合は件数行を出力しない" do
         generator = described_class.new(work_dir: work_dir, episode: episode)
         File.write(generator.send(:news_collected_path), "1. Title A\n")
-        NewsSnapshot.save!(work_dir: work_dir, episode_key: generator.episode_key, news: "1. Title A\n", at: now)
+        File.write(generator.send(:news_collected_at_path), now.iso8601)
         messages = []
         allow(generator).to receive(:warn) { |msg| messages << msg }
 
@@ -163,6 +163,17 @@ RSpec.describe ScriptGenerator do
       result = generator.send(:collect_source, src, now - 3600)
 
       expect(result.map { |i| i[:link] }).to contain_exactly(old_arxiv_link, fresh_arxiv_link)
+    end
+
+    it "judges max_age_days against the regenerated episode's collection time when selecting from the cache" do
+      allow(fake_feed_cache).to receive(:cached_window).and_return(arxiv_items)
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+      long_after = now + (400 * 86_400)
+
+      result = generator.send(:collect_source, src(max_age_days: 30), now - 3600, long_after)
+
+      expect(fake_feed_cache).to have_received(:cached_window).with(anything, since: now - 3600, until_at: long_after)
+      expect(result).to be_empty
     end
   end
 
@@ -454,12 +465,12 @@ RSpec.describe ScriptGenerator do
     end
   end
 
-  describe "収集 window と収集結果のスナップショット" do
+  describe "収集 window" do
     def collect(generator) = generator.send(:load_or_collect_news)
 
     def commit(key, at) = LastFetchStore.commit!(work_dir: work_dir, episode_key: key, at: at)
 
-    it "collects since the previous episode's collection time and snapshots the news with this collection time" do
+    it "fetches since the previous episode's collection time and records this collection time" do
       morning_at = Time.utc(2026, 7, 13, 21, 0, 0)
       commit("20260714_morning", morning_at)
       generator = described_class.new(work_dir: work_dir, episode: episode)
@@ -467,9 +478,7 @@ RSpec.describe ScriptGenerator do
       collect(generator)
 
       expect(fake_feed_cache).to have_received(:fetch).with(anything, hash_including(since: morning_at)).at_least(:once)
-      snapshot = NewsSnapshot.load(work_dir, generator.episode_key)
-      expect(snapshot.at).to eq(now)
-      expect(snapshot.news).to include("Title A")
+      expect(generator.collected_at).to eq(now)
     end
 
     it "falls back to lookback_hours when nothing has been committed yet" do
@@ -481,15 +490,33 @@ RSpec.describe ScriptGenerator do
         .with(anything, hash_including(since: now - (generator.send(:lookback_hours) * 3600))).at_least(:once)
     end
 
-    it "regenerating the latest committed episode collects since the episode before it, not its own collection time" do
+    it "regenerating the latest committed episode selects its window from the cache without fetching" do
       morning_at = Time.utc(2026, 7, 13, 21, 0, 0)
+      afternoon_at = Time.utc(2026, 7, 14, 3, 0, 0)
       commit("20260714_morning", morning_at)
-      commit("20260714_afternoon", now)
+      commit("20260714_afternoon", afternoon_at)
+      allow(fake_feed_cache).to receive(:cached_window).and_return(news_items)
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      news = collect(generator)
+
+      expect(fake_feed_cache).not_to have_received(:fetch)
+      expect(fake_feed_cache).to have_received(:cached_window)
+        .with(anything, since: morning_at, until_at: afternoon_at).exactly(generator.send(:sources).size).times
+      expect(news).to include("Title A")
+      expect(generator.collected_at).to eq(afternoon_at)
+    end
+
+    it "regenerating the only committed episode selects from lookback_hours before its collection time" do
+      afternoon_at = Time.utc(2026, 7, 14, 3, 0, 0)
+      commit("20260714_afternoon", afternoon_at)
+      allow(fake_feed_cache).to receive(:cached_window).and_return(news_items)
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       collect(generator)
 
-      expect(fake_feed_cache).to have_received(:fetch).with(anything, hash_including(since: morning_at)).at_least(:once)
+      expect(fake_feed_cache).to have_received(:cached_window)
+        .with(anything, since: afternoon_at - (generator.send(:lookback_hours) * 3600), until_at: afternoon_at).at_least(:once)
     end
 
     it "aborts for an episode older than the latest committed one" do
@@ -500,29 +527,22 @@ RSpec.describe ScriptGenerator do
       expect(fake_feed_cache).not_to have_received(:fetch)
     end
 
-    it "restores news_*.txt from the snapshot without fetching when only the snapshot exists (e.g. pulled from R2)" do
-      generator = described_class.new(work_dir: work_dir, episode: episode)
-      NewsSnapshot.save!(work_dir: work_dir, episode_key: generator.episode_key, news: "1. Saved Title\n", at: now)
-
-      expect(collect(generator)).to eq("1. Saved Title\n")
-      expect(File.read(generator.send(:news_collected_path))).to eq("1. Saved Title\n")
-      expect(fake_feed_cache).not_to have_received(:fetch)
-    end
-
-    it "aborts when news_*.txt exists without its snapshot (left over from before snapshots existed)" do
+    it "aborts when news_*.txt exists without its collection time (left over from before this change)" do
       generator = described_class.new(work_dir: work_dir, episode: episode)
       File.write(generator.send(:news_collected_path), "1. Title A\n")
 
       expect { collect(generator) }.to raise_error(SystemExit)
     end
 
-    it "reuses news_*.txt together with its snapshot without fetching again" do
+    it "reuses news_*.txt and its collection time without fetching again" do
       generator = described_class.new(work_dir: work_dir, episode: episode)
       collect(generator)
 
-      described_class.new(work_dir: work_dir, episode: episode).send(:load_or_collect_news)
+      reused = described_class.new(work_dir: work_dir, episode: episode)
+      reused.send(:load_or_collect_news)
 
       expect(fake_feed_cache).to have_received(:fetch).exactly(generator.send(:sources).size).times
+      expect(reused.collected_at).to eq(now)
     end
   end
 

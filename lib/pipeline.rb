@@ -4,7 +4,6 @@ require "fileutils"
 require_relative "episode"
 require_relative "internal/config"
 require_relative "internal/last_fetch_store"
-require_relative "internal/news_snapshot"
 require_relative "internal/used_news_history"
 require_relative "internal/episode_logger"
 require_relative "internal/phase_timer"
@@ -84,7 +83,6 @@ class Pipeline
 
     reverted_key = reverted["episode"]
     UsedNewsHistory.remove!(work_dir: @work_dir, episode_key: reverted_key)
-    retain_news_snapshots!
     published = Publisher.new.published?("miyamai_news_#{reverted_key}.mp3")
     warn "moved the unpublished handoff #{reverted_key} to #{Internal::Handoff::REVERTED_PREFIX}/" if handoff.discard!(reverted_key).positive?
     push_state!
@@ -255,18 +253,13 @@ class Pipeline
     abort e.message
   end
 
-  # この回の収集 window を確定して履歴に記録し、確定履歴に無い回の収集結果を消す。
+  # この回の収集 window を確定して履歴に記録する。
   def commit_episode!
-    snapshot = NewsSnapshot.load(@work_dir, episode_key) or abort "news snapshot not found for #{episode_key}"
-    LastFetchStore.commit!(work_dir: @work_dir, episode_key: episode_key, at: snapshot.at)
+    at = @generator.collected_at or abort "collection time not found for #{episode_key}"
+    LastFetchStore.commit!(work_dir: @work_dir, episode_key: episode_key, at: at)
     ScriptGenerator.record_used_news_history!(work_dir: @work_dir, episode_key: episode_key)
-    retain_news_snapshots!
   rescue LastFetchStore::OlderEpisodeError => e
     abort e.message
-  end
-
-  def retain_news_snapshots!
-    NewsSnapshot.retain!(work_dir: @work_dir, keep_keys: LastFetchStore.commits(@work_dir).map { |c| c["episode"] })
   end
 
   def mark_handoff_done

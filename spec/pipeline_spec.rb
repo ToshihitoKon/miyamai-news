@@ -22,7 +22,7 @@ RSpec.describe Pipeline do
   let(:generated_used_path) { File.join(base_dir, "used.txt") }
   let(:fake_generator) do
     instance_double(ScriptGenerator,
-      digest: "news_facts_path", generate: generated_tts_path, episode_key: "20260714_afternoon",
+      digest: "news_facts_path", generate: generated_tts_path, episode_key: "20260714_afternoon", collected_at: now,
       used_news_file: generated_used_path, script_file: generated_script_path, collect_stats: nil)
   end
   let(:fake_publisher) { instance_double(Publisher, run: nil, published?: false) }
@@ -36,9 +36,6 @@ RSpec.describe Pipeline do
   # fake_handoff の exist? は upload! されたら true になる（R2 上に台本一式が揃ったかを模す）。
   let(:handoff_state) { { uploaded: false } }
   let(:phase_timer) { Internal::PhaseTimer.new }
-  let(:snapshot) do
-    NewsSnapshot::Snapshot.new(news: "news", at: now)
-  end
 
   before do
     allow(ScriptGenerator).to receive(:new).and_return(fake_generator)
@@ -60,8 +57,6 @@ RSpec.describe Pipeline do
       paths.each { |name, path| File.write(path, "downloaded #{name}") }
     end
     allow(UsedNewsFormatter).to receive(:ensure_valid!) { |text| text }
-    allow(NewsSnapshot).to receive(:load).and_return(snapshot)
-    allow(NewsSnapshot).to receive(:retain!)
     allow(LastFetchStore).to receive(:commit!)
     allow(LastFetchStore).to receive(:commits).and_return([])
     File.write(generated_tts_path, "tts")
@@ -153,7 +148,7 @@ RSpec.describe Pipeline do
       expect(publisher).to have_received(:clean_archive)
     end
 
-    it "--restore-fetch は最新の確定を取り消し、その回の履歴と収集結果を消して R2 へ書き戻す" do
+    it "--restore-fetch は最新の確定を取り消し、その回の履歴を消して R2 へ書き戻す" do
       allow(LastFetchStore).to receive(:revert_latest!).with(work_dir: work_dir)
         .and_return({ "episode" => "20260714_morning", "at" => "2026-07-14T06:00:00+09:00" })
       allow(LastFetchStore).to receive(:commits).and_return([{ "episode" => "20260713_evening" }])
@@ -163,7 +158,6 @@ RSpec.describe Pipeline do
 
       expect(fake_remote_state).to have_received(:checkout!)
       expect(UsedNewsHistory).to have_received(:remove!).with(work_dir: work_dir, episode_key: "20260714_morning")
-      expect(NewsSnapshot).to have_received(:retain!).with(work_dir: work_dir, keep_keys: ["20260713_evening"])
       expect(fake_remote_state).to have_received(:push!)
     end
 
@@ -387,11 +381,11 @@ RSpec.describe Pipeline do
         expect(fake_handoff).to have_received(:upload!).with(anything, hash_including(used_news: "repaired used"))
       end
 
-      it "収集結果のスナップショットの範囲でこの回を確定し、履歴に記録して、状態を書き戻してから upload する" do
+      it "この回の収集時刻で確定し、履歴に記録して、状態を書き戻してから upload する" do
         build_pipeline(date: now, slot: "afternoon").run
 
         expect(LastFetchStore).to have_received(:commit!).with(
-          work_dir: work_dir, episode_key: "20260714_afternoon", at: snapshot.at
+          work_dir: work_dir, episode_key: "20260714_afternoon", at: now
         ).ordered
         expect(ScriptGenerator).to have_received(:record_used_news_history!)
           .with(work_dir: work_dir, episode_key: "20260714_afternoon").ordered
@@ -399,17 +393,8 @@ RSpec.describe Pipeline do
         expect(fake_handoff).to have_received(:upload!).ordered
       end
 
-      it "確定したら、確定履歴に残っている回以外の収集結果を消す" do
-        allow(LastFetchStore).to receive(:commits).and_return([{ "episode" => "20260714_afternoon" }, { "episode" => "20260714_morning" }])
-
-        build_pipeline(handoff_only: true, date: now, slot: "afternoon").run
-
-        expect(NewsSnapshot).to have_received(:retain!)
-          .with(work_dir: work_dir, keep_keys: %w[20260714_afternoon 20260714_morning])
-      end
-
-      it "収集結果のスナップショットが無ければ確定せずに abort する" do
-        allow(NewsSnapshot).to receive(:load).and_return(nil)
+      it "この回の収集時刻が分からなければ確定せずに abort する" do
+        allow(fake_generator).to receive(:collected_at).and_return(nil)
 
         expect { build_pipeline(handoff_only: true, date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
