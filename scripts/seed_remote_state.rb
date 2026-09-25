@@ -3,7 +3,7 @@
 
 # 手元のパイプラインの内部状態（last_fetch.json・フィードキャッシュ・紹介済み履歴）を
 # R2 の state/ へ初回だけ置く。work/ 直下にある旧配置の内部状態は、先に work/state/ へ移す。
-# R2 側に状態が既にあれば何もせず終了する。
+# R2 側に状態が既にあれば、何も変更せずにエラーで中断する。
 #
 #   bundle exec ruby scripts/seed_remote_state.rb                              # 計画のみ
 #   envchain cloudflare bundle exec ruby scripts/seed_remote_state.rb --apply

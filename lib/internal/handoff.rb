@@ -18,6 +18,15 @@ module Internal
 
     def exist?(episode_key) = FILES.values.all? { |object| @storage.exist?(key(PREFIX, episode_key, object)) }
 
+    # handoff/ に台本一式が揃っている回。
+    def pending_episode_keys
+      objects_by_episode = @storage.list("#{PREFIX}/").filter_map do |object_key|
+        _prefix, episode_key, object = object_key.split("/", 3)
+        [episode_key, object] if object
+      end.group_by(&:first)
+      objects_by_episode.select { |_episode_key, pairs| (FILES.values - pairs.map(&:last)).empty? }.keys
+    end
+
     # contents: FILES と同じキーを持つ Hash（値はファイル本文）。
     def upload!(episode_key, contents)
       FILES.each do |name, object|

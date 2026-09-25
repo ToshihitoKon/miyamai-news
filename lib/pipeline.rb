@@ -4,7 +4,6 @@ require "fileutils"
 require_relative "episode"
 require_relative "internal/config"
 require_relative "internal/last_fetch_store"
-require_relative "internal/used_news_history"
 require_relative "internal/episode_logger"
 require_relative "internal/phase_timer"
 require_relative "internal/relative_path"
@@ -202,6 +201,7 @@ class Pipeline
 
   # この回の台本一式を R2 に用意する。既に置かれていればそれを使い、生成しない。
   def prepare_handoff
+    warn_other_pending_handoffs
     if handoff.exist?(episode_key)
       warn "reuse handoff: #{episode_key}"
       return
@@ -220,6 +220,13 @@ class Pipeline
     handoff.upload!(episode_key,
       tts_script: File.read(tts_script_path), script: File.read(@generator.script_file), used_news: used_news)
     warn "handoff: #{episode_key}"
+  end
+
+  def warn_other_pending_handoffs
+    others = handoff.pending_episode_keys - [episode_key]
+    return if others.empty?
+
+    warn "unpublished handoffs remain in R2: #{others.join(', ')} (publish one with --date/--slot)"
   end
 
   def ensure_no_concurrent_run!

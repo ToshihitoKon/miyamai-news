@@ -132,7 +132,7 @@ bundle exec ruby miyamai_news.rb # pipeline.mode の上限まで自動的に進�
 bundle exec ruby miyamai_news.rb --digest-only     # ニュース選別・facts抽出のみ生成して停止（digest以上。R2 の状態は書き戻さない）
 bundle exec ruby miyamai_news.rb --script-only     # 台本のみ生成して停止（work/ に書き出す。synthesize以上。R2 の状態は書き戻さない）
 bundle exec ruby miyamai_news.rb --handoff-only    # 台本一式を R2 の handoff/ に置いて停止（pipeline.mode によらない。CI 向け）
-bundle exec ruby miyamai_news.rb --synthesize-only # R2 の台本から音声合成・BGM合成まで（dist/ に書き出して終了。synthesize以上）
+bundle exec ruby miyamai_news.rb --synthesize-only # R2 の台本（無ければ生成して置く）から音声合成・BGM合成まで（dist/ に書き出して終了。synthesize以上）
 bundle exec ruby miyamai_news.rb --publish-only    # dist/ の該当回を公開のみ（publish のみ）
 bundle exec ruby miyamai_news.rb --ui-only         # 新しい回を公開せず index.html / manifest.json だけ再生成
 
@@ -160,6 +160,9 @@ R2 の `handoff/<date_tag>_<slot>/` を経由する。フラグなしで実行�
    （`--handoff-only` はここで停止する）
 4. R2 から台本一式を取得して音声合成・BGM 合成（`synthesize` まではここで停止する）
 5. publish し、台本一式を `handoff_done/` へ移す
+
+現在の回以外に未公開の台本一式が R2 に残っていれば、1 の時点で警告が出る。`--date`/`--slot` で
+その回を指定して実行すれば、残っている台本から合成・publish できる。
 
 リモート（CI 等）で `TZ=Asia/Tokyo` を付けて `--handoff-only --ci` を回して
 おけば、手元の実行は 1 で R2 の台本を見つけ、生成を飛ばして音声合成から始まる。

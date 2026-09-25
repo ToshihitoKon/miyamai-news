@@ -5,7 +5,6 @@ require "time"
 require "optparse"
 
 require_relative "lib/internal/config"
-require_relative "lib/internal/last_fetch_store"
 require_relative "lib/internal/node_deps"
 require_relative "lib/internal/progress"
 require_relative "lib/pipeline"

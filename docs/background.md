@@ -1043,6 +1043,14 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `#run_synthesize` が BGM パス（`assets.bgm_path`）を差し替え可能にしていないのは、
   `templates/index.html.erb` にクレジット表記（BGM 作者名）を固定で埋め込んでいるため。
   BGM を差し替えるとクレジット表記との整合が崩れる。
+- `--ci`（`Internal::Progress.ci`）は、進捗表示をスピナーのアニメーションではなく開始と
+  結果の 1 行ずつにする。CI のログに制御文字や再描画が残らないようにするため。確認
+  プロンプトはもう無いので、`--ci` が変えるのは進捗表示だけ。
+- 現在の回以外に、台本一式が揃った handoff が R2 に残っていれば警告する
+  （`Pipeline#warn_other_pending_handoffs`）。リモートが作った回を手元で拾わないまま次の
+  slot に進むと、その回は公開されず、記事は確定済み・紹介済みとして扱われたまま残る。
+  残った handoff は `--date`/`--slot` でその回を指定すれば「handoff あり」の経路で合成・
+  publish できる（最新の確定より古い回でも、handoff があれば収集し直さないので作れる）。
 - `--handoff-only` は `pipeline.mode` を見ない（digest でも R2 に台本を置くところまで進む）。
   VOICEPEAK の無いリモートでは voicepeak/mixer/assets を持たない digest 相当の config で
   動かすため。台本の生成（TTS 整形まで）に必要なのは digest の必須セクションだけなので、

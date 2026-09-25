@@ -46,7 +46,8 @@ module LastFetchStore
     return if latest.nil? || latest["episode"] == episode_key
     return if (sort_key(episode_key) <=> sort_key(latest["episode"])) == 1
 
-    raise OlderEpisodeError, "#{episode_key} is older than the latest committed episode #{latest['episode']}"
+    raise OlderEpisodeError, "#{episode_key} is older than the latest committed episode #{latest['episode']}; " \
+                             "its news cannot be collected again because the window overlaps later episodes"
   end
   private_class_method :ensure_not_older!
 

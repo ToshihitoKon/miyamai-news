@@ -29,6 +29,19 @@ RSpec.describe Internal::Handoff do
     end
   end
 
+  describe "#pending_episode_keys" do
+    it "lists only episodes whose files are all present, from a single listing" do
+      handoff.upload!(episode_key, contents)
+      handoff.upload!("20260714_morning", contents)
+      storage.put("handoff/20260714_evening/tts_script.txt", "partial", content_type: "text/plain")
+      storage.put("handoff/stray.txt", "stray", content_type: "text/plain")
+      allow(storage).to receive(:exist?).and_call_original
+
+      expect(handoff.pending_episode_keys).to contain_exactly(episode_key, "20260714_morning")
+      expect(storage).not_to have_received(:exist?)
+    end
+  end
+
   describe "#download!" do
     it "writes each file to the given local path" do
       handoff.upload!(episode_key, contents)

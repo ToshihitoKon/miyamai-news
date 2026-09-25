@@ -32,7 +32,7 @@ RSpec.describe Pipeline do
     instance_double(Internal::RemoteState,
       checkout!: :pulled, checked_out_by: nil, ensure_current!: nil, push!: 3, release!: nil)
   end
-  let(:fake_handoff) { instance_double(Internal::Handoff, mark_done!: 3) }
+  let(:fake_handoff) { instance_double(Internal::Handoff, mark_done!: 3, pending_episode_keys: []) }
   # fake_handoff の exist? は upload! されたら true になる（R2 上に台本一式が揃ったかを模す）。
   let(:handoff_state) { { uploaded: false } }
   let(:phase_timer) { Internal::PhaseTimer.new }
@@ -375,6 +375,28 @@ RSpec.describe Pipeline do
       end
     end
 
+    it "現在の回以外の未公開の handoff が R2 に残っていれば、その回を警告する" do
+      handoff_state[:uploaded] = true
+      allow(fake_handoff).to receive(:pending_episode_keys).and_return(%w[20260714_morning 20260714_afternoon])
+      pipeline = build_pipeline(date: now, slot: "afternoon")
+      messages = collect_warnings(pipeline)
+
+      pipeline.run
+
+      expect(messages).to include("unpublished handoffs remain in R2: 20260714_morning (publish one with --date/--slot)")
+    end
+
+    it "最新の確定より古い回でも、その回の handoff が残っていれば --date/--slot で合成・publish できる" do
+      handoff_state[:uploaded] = true
+      allow(LastFetchStore).to receive(:commits).and_return([{ "episode" => "20260714_evening", "at" => now.iso8601 }])
+
+      build_pipeline(date: now, slot: "afternoon").run
+
+      expect(ScriptGenerator).not_to have_received(:new)
+      expect(fake_publisher).to have_received(:run)
+      expect(fake_handoff).to have_received(:mark_done!).with("20260714_afternoon")
+    end
+
     it "フラグなし実行で R2 にこの回の handoff があれば、生成も状態取得もせずに合成・publish する" do
       handoff_state[:uploaded] = true
 
@@ -420,6 +442,15 @@ RSpec.describe Pipeline do
       build_pipeline(handoff_only: true, date: now, slot: "afternoon").run
 
       expect(File.read(generated_used_path)).to eq("repaired used")
+    end
+
+    it "--synthesize-only は R2 にこの回の handoff が無ければ、生成して置いてから R2 経由で合成する" do
+      build_pipeline(synthesize_only: true, date: now, slot: "afternoon").run
+
+      expect(fake_generator).to have_received(:generate).with(no_args)
+      expect(fake_handoff).to have_received(:upload!)
+      expect(fake_handoff).to have_received(:download!)
+      expect(fake_publisher).not_to have_received(:run)
     end
 
     it "--synthesize-only は R2 経由で synthesize までで止まる（publish も handoff の処理済み化もしない）" do
