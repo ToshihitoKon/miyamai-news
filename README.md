@@ -41,8 +41,9 @@ bundle install
 cp config.sample.yaml config.yaml
 ```
 
-publish には以下の環境変数が必要。config.yaml には書かない（config.yaml は機密を
-持たない前提で運用しているため）。
+R2 の状態・台本置き場（後述）を使うため、`pipeline.mode` によらず `--help` 以外のほぼすべての
+実行（`--clean` 系を含む）に以下の環境変数が必要。
+config.yaml には書かない（config.yaml は機密を持たない前提で運用しているため）。
 
 | 環境変数 | 用途 |
 | --- | --- |
@@ -128,20 +129,19 @@ synthesize には BGM 素材を用意し `assets.bgm_path` にパスをセット
 bundle exec ruby miyamai_news.rb # pipeline.mode の上限まで自動的に進む 
 
 # 特定のフェーズのみを実行する
-bundle exec ruby miyamai_news.rb --digest-only     # ニュース選別・facts抽出のみ生成して停止（digest以上）
-bundle exec ruby miyamai_news.rb --script-only     # 台本のみ生成して停止（work/ に書き出す。synthesize以上）
-bundle exec ruby miyamai_news.rb --synthesize-only # 音声合成・BGM合成のみ（dist/ に書き出して終了。synthesize以上）
+bundle exec ruby miyamai_news.rb --digest-only     # ニュース選別・facts抽出のみ生成して停止（digest以上。R2 の状態は書き戻さない）
+bundle exec ruby miyamai_news.rb --script-only     # 台本のみ生成して停止（work/ に書き出す。synthesize以上。R2 の状態は書き戻さない）
+bundle exec ruby miyamai_news.rb --handoff-only    # 台本一式を R2 の handoff/ に置いて停止（pipeline.mode によらない。CI 向け）
+bundle exec ruby miyamai_news.rb --synthesize-only # R2 の台本（無ければ生成して置く）から音声合成・BGM合成まで（dist/ に書き出して終了。synthesize以上）
 bundle exec ruby miyamai_news.rb --publish-only    # dist/ の該当回を公開のみ（publish のみ）
 bundle exec ruby miyamai_news.rb --ui-only         # 新しい回を公開せず index.html / manifest.json だけ再生成
 
 # cleaner
-bundle exec ruby miyamai_news.rb --clean         # work/ を掃除し、公開済みまたは保持期間を過ぎた dist/ 成果物を削除
+bundle exec ruby miyamai_news.rb --clean         # work/ を掃除し（未完了の実行の作業コピーも破棄）、公開済みまたは保持期間を過ぎた dist/ 成果物を削除
 bundle exec ruby miyamai_news.rb --clean-archive # archived/ 配下の退避済み成果物を完全削除
 
-# last_fetched_at (RSS Feed 最終 fetch 時刻）の管理
-bundle exec ruby miyamai_news.rb --confirm-fetch # 前回実行分の収集windowを確定する（成果物確認後に使う）
-bundle exec ruby miyamai_news.rb --restore-fetch # 誤ってロールバックした収集windowを復元する
-bundle exec ruby miyamai_news.rb --auto-confirm  # 前回分を確認せず自動確定してから実行（CI向け）
+# 非対話実行（CI 向け）
+bundle exec ruby miyamai_news.rb --ci            # スピナーを出さず進捗を1行ずつ出す
 
 # オプション一覧を表示
 bundle exec ruby miyamai_news.rb --help
@@ -149,28 +149,57 @@ bundle exec ruby miyamai_news.rb --help
 
 ## Tips
 
+### R2 を経由した台本の受け渡し
+
+台本の生成（収集〜TTS 整形）と音声合成は、同じ端末で続けて実行する場合も含めて、必ず
+R2 の `handoff/<date_tag>_<slot>/` を経由する。フラグなしで実行すると次の順に進む。
+
+1. R2 に現在の回（`--date`/`--slot` で指定も可）の台本一式があれば、それを使って 4 へ進む
+2. 無ければ、公開台帳（`archives.csv`）に既にこの回があれば中断する
+3. 台本を生成し、収集windowを確定して内部状態を R2 へ書き戻してから、台本一式を R2 に置く
+   （`--handoff-only` はここで停止する）
+4. R2 から台本一式を取得して音声合成・BGM 合成（`synthesize` まではここで停止する）
+5. publish し、台本一式を `handoff_done/` へ移す
+
+現在の回以外に未公開の台本一式が R2 に残っていれば、1 の時点で警告が出る。`--date`/`--slot` で
+その回を指定して実行すれば、残っている台本から合成・publish できる。
+
+リモート（CI 等）で `--handoff-only --ci` を回しておけば、手元の実行は 1 で R2 の台本を見つけ、
+生成を飛ばして音声合成から始まる。「現在の回」は端末のタイムゾーンによらず JST で決める。
+
+### パイプラインの内部状態（R2 の state/）
+
+`last_fetch.json`・`feed_cache/`・`used_news_history/` など、実行をまたいで
+保持するパイプラインの内部状態は `work/state/` にまとめ、R2 の `state/` と同じ構成で同期する。
+正は R2 側で、台本を生成する実行は開始時に `work/state/` へ取り出し、台本を R2 に置く前に書き戻す。途中で失敗した実行の作業コピーは `work/` に残り、R2 がその後更新されていなければ
+次の実行がそのまま引き継ぐ。別の実行が先に R2 を更新していた場合は衝突として中断するので、
+`--clean` で手元の作業コピーを破棄してから実行し直す。
+
+初回だけ、手元の状態を R2 に置く（`work/` 直下にある旧配置の状態は `work/state/` へ移してから置く）。
+
+```sh
+bundle exec ruby scripts/seed_remote_state.rb                              # 計画のみ
+envchain cloudflare bundle exec ruby scripts/seed_remote_state.rb --apply  # R2 に状態が無いときだけ置く
+```
+
 ### 収集window（last_fetch）の確定フロー
 
-`digest`/`script`/`synthesize` 相当の実行で新規にRSS収集が発生しても、収集windowは実行完了と
-同時には確定せず `work/last_fetch.json` の `pending_at` に留まる（同じ収集windowでの再実行・台本の
-手直しが起こり得るため）。既存の `news_<date>_<slot>.txt` を再利用しただけの実行では pending 化も起きない。
+収集windowは、台本一式を R2 に置く直前に、その回（`<date_tag>_<slot>`）の確定として進む
+（音声合成・publish を待たない）。`last_fetch.json` には直近3回分の確定（回と収集時刻）を残し、
+次の回は直前の確定の収集時刻から収集する。`--digest-only`/`--script-only` は状態を
+R2 へ書き戻さないので、収集windowは進まない。
 
-次回実行の開始時、前回の `pending_at` が残っていればダイアログで confirm か rollback かを選択する。
-
-成果物（facts/台本/mp3）を確認できたタイミングで、次回実行を待たずに即座に確定
-させたい場合は `--confirm-fetch` を使う。CI等の非対話実行では `--auto-confirm` を
-付けて実行すると、確認なしで前回分を自動確定してから続行する。
-
-publish は pending を経由せずに確定する。
+確定済みの回を作り直す場合（台本の受け渡しが揃わなかった等）は、1つ前の確定の収集時刻から
+収集し直し、紹介済み履歴からその回自身を除いて選定する。作り直せるのは最新の確定の回だけ。
 
 ### フィードキャッシュ
 
-各フィードの取得結果は `work/feed_cache/<hash>.json` に URL ごと1ファイルで保持する。
+各フィードの取得結果は `work/state/feed_cache/<hash>.json` に URL ごと1ファイルで保持する。
 同じフィードを最後に取得してから `collect.fetch_skip_minutes` 以内に再実行した場合はキャッシュから結果を返す。`0` にするとスキップを無効化する。
 
-#### deprecated: `work/feed_cache.json`
+#### deprecated: `work/state/feed_cache.json`
 
-旧・単一ファイル形式のキャッシュ `work/feed_cache.json` は、URL 別形式への移行後も
+旧・単一ファイル形式のキャッシュ `work/state/feed_cache.json` は、URL 別形式への移行後も
 seen_at の継承元として残している。
 安全に削除できるかどうかのチェックスクリプトを同梱している。
 

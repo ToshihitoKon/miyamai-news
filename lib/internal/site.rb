@@ -28,9 +28,7 @@ module Internal
       new(
         public_base: cf.public_base,
         retention_episodes: cf.retention_episodes,
-        storage: R2Storage.new(
-          bucket: cf.bucket, account_id: cf.account_id, episode_prefix: cf.episode_prefix
-        )
+        storage: R2Storage.from_config
       )
     end
 

@@ -12,6 +12,7 @@ require_relative "internal/used_news_history"
 require_relative "internal/ai_cli"
 require_relative "internal/preamble_stripper"
 require_relative "internal/relative_path"
+require_relative "internal/state_dir"
 
 class ScriptGenerator
   OPENING_GREETING = "宮舞モカです。"
@@ -19,8 +20,8 @@ class ScriptGenerator
 
   CollectStats = Struct.new(:per_source, :total_before_dedup, :total_after_dedup, keyword_init: true)
 
-  def self.feed_cache_dir(work_dir) = File.join(work_dir, "feed_cache")
-  def self.legacy_feed_cache_path(work_dir) = File.join(work_dir, "feed_cache.json")
+  def self.feed_cache_dir(work_dir) = File.join(StateDir.path(work_dir), "feed_cache")
+  def self.legacy_feed_cache_path(work_dir) = File.join(StateDir.path(work_dir), "feed_cache.json")
 
   def self.work_globs(work_dir)
     %w[news_*.txt script_*.txt tts_script_*.txt]
@@ -44,10 +45,8 @@ class ScriptGenerator
     )
   end
 
-  def initialize(work_dir:, episode:, auto_confirm: false)
+  def initialize(work_dir:, episode:)
     @work_dir = work_dir
-    @auto_confirm = auto_confirm
-    @fetched_news = false
     @episode = episode
     @feed_cache = FeedCache.new(
       dir: self.class.feed_cache_dir(work_dir),
@@ -82,12 +81,11 @@ class ScriptGenerator
 
   def script_file = script_path
   def used_news_file = used_news_path
-  def fetched_news? = @fetched_news == true
-  def collect_since_anchor = @episode.now
   def episode_key = "#{@episode.date_tag}_#{@episode.slot}"
 
-  def record_used_news_history!(episode_key)
-    self.class.record_used_news_history!(work_dir: @work_dir, episode_key: episode_key)
+  # この回の候補ニュースを収集した時刻（収集 window の確定に使う）。未収集なら nil。
+  def collected_at
+    File.exist?(news_collected_at_path) ? Time.iso8601(File.read(news_collected_at_path).strip) : nil
   end
 
   private
@@ -113,7 +111,8 @@ class ScriptGenerator
   def used_news_history_episodes = Config.collect.used_news_history_episodes
 
   def news_collected_path = File.join(@work_dir, "news_#{@episode.date_tag}_#{@episode.slot}.txt")
-  def news_selected_path  = File.join(@work_dir, "news_selected_#{@episode.date_tag}_#{@episode.slot}.txt")
+  def news_collected_at_path = File.join(@work_dir, "news_collected_at_#{episode_key}.txt")
+  def news_selected_path = File.join(@work_dir, "news_selected_#{@episode.date_tag}_#{@episode.slot}.txt")
   def news_facts_path  = File.join(@work_dir, "news_facts_#{@episode.date_tag}_#{@episode.slot}.txt")
   def script_path      = File.join(@work_dir, "script_#{@episode.date_tag}_#{@episode.slot}.txt")
   def tts_script_path  = File.join(@work_dir, "tts_script_#{@episode.date_tag}_#{@episode.slot}.txt")
@@ -213,18 +212,18 @@ class ScriptGenerator
 
   # --- ニュース収集 ---
 
-  # 全候補のニュース一覧（選定ステップへの入力）を返す。news_*.txt にスナップショット
-  # として残し、あれば再利用する。
+  # 全候補のニュース一覧（選定ステップへの入力）を返す。news_*.txt に中間ファイルとして
+  # 残し、あれば再利用する。収集時刻は news_collected_at_*.txt に残す。
   def load_or_collect_news
     if File.exist?(news_collected_path)
+      abort "#{relative(news_collected_path)} has no collection time; discard it with --clean and run again" unless collected_at
       warn "reuse: #{relative(news_collected_path)}"
       return File.read(news_collected_path)
     end
 
-    @fetched_news = true
-    news_body = collect_news
+    news_body = collect_news(collect_since)
+    File.write(news_collected_at_path, @episode.now.iso8601)
     File.write(news_collected_path, news_body)
-    LastFetchStore.mark_pending!(work_dir: @work_dir, at: collect_since_anchor, episode_key:)
     warn "news: #{relative(news_collected_path)}"
     report_collect_stats
     news_body
@@ -237,18 +236,16 @@ class ScriptGenerator
     warn "new articles total: #{@collect_stats.total_after_dedup} (#{@collect_stats.total_before_dedup} before dedup)"
   end
 
+  # この回より前の確定の収集時刻（最新の確定がこの回なら、その 1 つ前）。確定が無い初回は
+  # lookback_hours 前。
   def collect_since
-    last_fetch_time || (@episode.now - (lookback_hours * 3600))
+    LastFetchStore.since_for(@work_dir, episode_key) || (@episode.now - (lookback_hours * 3600))
+  rescue LastFetchStore::OlderEpisodeError => e
+    abort e.message
   end
 
-  def last_fetch_time = LastFetchStore.confirmed_at(@work_dir)
-
   # FeedCache から since 以降に初登場した記事を集め、フラットなテキストにする。
-  def collect_news
-    confirmed_episode = LastFetchStore.resolve_pending!(work_dir: @work_dir, auto_confirm: @auto_confirm)
-    record_used_news_history!(confirmed_episode)
-
-    since = collect_since
+  def collect_news(since)
     target_sources = sources
     items_per_source = fetch_sources_in_parallel(target_sources, since)
     items = dedup_by_title(items_per_source.flatten)
@@ -304,8 +301,7 @@ class ScriptGenerator
 
   # 1ソース分の新着記事を FeedCache から全件取得し、メタ情報を付けて返す。
   def collect_source(src, since)
-    items = @feed_cache.fetch(src.url, now: @episode.now, since: since,
-      extra_extractor: Internal::HatenaBookmarks)
+    items = @feed_cache.fetch(src.url, now: @episode.now, since:, extra_extractor: Internal::HatenaBookmarks)
     items = items.reject { |item| Internal::Arxiv.old?(item[:link], max_age_days: src.max_age_days, now: @episode.now) } if src.max_age_days
 
     items.map do |item|
@@ -333,7 +329,7 @@ class ScriptGenerator
       today_ja: @episode.today_ja,
       category_details:,
       total_news_count:,
-      recently_used: UsedNewsHistory.render_for_prompt(@work_dir, used_news_history_episodes),
+      recently_used: UsedNewsHistory.render_for_prompt(@work_dir, used_news_history_episodes, exclude: episode_key),
       news_selected_path: File.expand_path(news_selected_path))
   end
 

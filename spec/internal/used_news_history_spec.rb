@@ -116,5 +116,16 @@ RSpec.describe UsedNewsHistory do
       expect(rendered).to include("昼ニュース")
       expect(rendered).not_to include("朝ニュース") # morning は 3 件目なので除外
     end
+
+    it "leaves out the excluded episode and still returns keep_episodes others" do
+      record("20260720_morning", used_news_text(title: "朝ニュース", link: "https://a"), keep_episodes: 10)
+      record("20260720_afternoon", used_news_text(title: "昼ニュース", link: "https://b"), keep_episodes: 10)
+      record("20260720_evening", used_news_text(title: "夜ニュース", link: "https://c"), keep_episodes: 10)
+
+      rendered = described_class.render_for_prompt(work_dir, 2, exclude: "20260720_evening")
+
+      expect(rendered).not_to include("夜ニュース")
+      expect(rendered).to include("昼ニュース", "朝ニュース")
+    end
   end
 end

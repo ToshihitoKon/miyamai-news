@@ -1,7 +1,14 @@
-# pipeline.mode: digest の最小構成。gcs/voicepeak/mixer/assets を持たない
+# pipeline.mode: digest の最小構成。voicepeak/mixer/assets を持たない
 # fixture で、Config.validate_for!("digest") が通ることを検証する。
 pipeline:
   mode: digest
+
+cloudflare:
+  account_id: test-account-id
+  worker_name: miyamai-news-test
+  bucket: test-bucket
+  public_base: https://news.example.com
+  retention_episodes: 5
 
 ai_agent:
   bin: claude

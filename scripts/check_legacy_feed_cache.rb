@@ -1,14 +1,14 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# 旧・単一ファイル形式のフィードキャッシュ（work/feed_cache.json）を安全に削除できるかを
+# 旧・単一ファイル形式のフィードキャッシュ（work/state/feed_cache.json）を安全に削除できるかを
 # 判定して表示する（削除はしない。安全側に倒し、削除は人間が手で行う）。
 
 require "json"
 require "time"
 require_relative "../lib/internal/config"
 
-legacy_path = File.join(Config::ROOT_DIR, "work", "feed_cache.json")
+legacy_path = File.join(Config::ROOT_DIR, "work", "state", "feed_cache.json")
 
 unless File.exist?(legacy_path)
   puts "Legacy cache #{legacy_path} does not exist (already removed, or pre-migration)."

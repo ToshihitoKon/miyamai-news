@@ -34,7 +34,7 @@ RSpec.describe ScriptGenerator do
         it "collects entries from the injected FeedCache for every configured source" do
           generator = described_class.new(work_dir: work_dir, episode: episode)
 
-          body = generator.send(:collect_news)
+          body = generator.send(:collect_news, now - 3600)
 
           expect(fake_feed_cache).to have_received(:fetch).exactly(generator.send(:sources).size).times
           expect(body).to include("Title A")
@@ -46,7 +46,7 @@ RSpec.describe ScriptGenerator do
           allow(fake_feed_cache).to receive(:fetch).and_raise(FeedCache::FetchError, "boom")
           generator = described_class.new(work_dir: work_dir, episode: episode)
 
-          expect { generator.send(:collect_news) }.to raise_error(SystemExit)
+          expect { generator.send(:collect_news, now - 3600) }.to raise_error(SystemExit)
         end
       end
     end
@@ -56,7 +56,7 @@ RSpec.describe ScriptGenerator do
         generator = described_class.new(work_dir: work_dir, episode: episode)
         sources = generator.send(:sources)
 
-        generator.send(:collect_news)
+        generator.send(:collect_news, now - 3600)
         stats = generator.collect_stats
 
         expect(stats.per_source.size).to eq(sources.size)
@@ -69,7 +69,7 @@ RSpec.describe ScriptGenerator do
         # 複数ソースを持つ fixture では既にタイトル重複が起きている。
         generator = described_class.new(work_dir: work_dir, episode: episode)
 
-        generator.send(:collect_news)
+        generator.send(:collect_news, now - 3600)
         stats = generator.collect_stats
 
         expect(stats.total_before_dedup).to be > stats.total_after_dedup
@@ -81,7 +81,7 @@ RSpec.describe ScriptGenerator do
         generator = described_class.new(work_dir: work_dir, episode: episode)
         sources = generator.send(:sources)
 
-        generator.send(:collect_news)
+        generator.send(:collect_news, now - 3600)
         stats = generator.collect_stats
 
         expect(stats.per_source).to eq(sources.map { |src| [src.name, 0] })
@@ -92,6 +92,7 @@ RSpec.describe ScriptGenerator do
       it "news_collected_path の既存スナップショットを再利用する場合は nil のまま" do
         generator = described_class.new(work_dir: work_dir, episode: episode)
         File.write(generator.send(:news_collected_path), "1. Title A\n")
+        File.write(generator.send(:news_collected_at_path), now.iso8601)
 
         generator.send(:load_or_collect_news)
 
@@ -119,6 +120,7 @@ RSpec.describe ScriptGenerator do
       it "news_collected_path の既存スナップショットを再利用する場合は件数行を出力しない" do
         generator = described_class.new(work_dir: work_dir, episode: episode)
         File.write(generator.send(:news_collected_path), "1. Title A\n")
+        File.write(generator.send(:news_collected_at_path), now.iso8601)
         messages = []
         allow(generator).to receive(:warn) { |msg| messages << msg }
 
@@ -302,6 +304,17 @@ RSpec.describe ScriptGenerator do
 
       expect(stdin).not_to include("<recently_used>")
     end
+
+    it "leaves out the history of the episode being regenerated" do
+      record_history("20260713_evening", "■ 生成AI\n・前の回の話題\n")
+      record_history("#{episode.date_tag}_#{episode.slot}", "■ 生成AI\n・この回自身の話題\n")
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+
+      stdin = capture_selector_stdin(generator)
+
+      expect(stdin).to include("前の回の話題")
+      expect(stdin).not_to include("この回自身の話題")
+    end
   end
 
   describe "#generate" do
@@ -441,114 +454,77 @@ RSpec.describe ScriptGenerator do
     end
   end
 
-  describe "#collect_since" do
-    it "uses the confirmed timestamp" do
-      at = Time.utc(2026, 7, 14, 9, 0, 0)
-      LastFetchStore.confirm_immediately!(work_dir: work_dir, at: at)
+  describe "収集 window" do
+    def collect(generator) = generator.send(:load_or_collect_news)
+
+    def commit(key, at) = LastFetchStore.commit!(work_dir: work_dir, episode_key: key, at: at)
+
+    it "fetches since the previous episode's collection time and records this collection time" do
+      morning_at = Time.utc(2026, 7, 13, 21, 0, 0)
+      commit("20260714_morning", morning_at)
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
-      expect(generator.send(:collect_since)).to eq(at)
+      collect(generator)
+
+      expect(fake_feed_cache).to have_received(:fetch).with(anything, hash_including(since: morning_at)).at_least(:once)
+      expect(generator.collected_at).to eq(now)
     end
 
-    it "falls back to lookback_hours when nothing has been confirmed yet" do
+    it "falls back to lookback_hours when nothing has been committed yet" do
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
-      expect(generator.send(:collect_since)).to eq(now - generator.send(:lookback_hours) * 3600)
-    end
-  end
+      collect(generator)
 
-  describe "#fetched_news?" do
-    it "is true after collecting news for the first time" do
+      expect(fake_feed_cache).to have_received(:fetch)
+        .with(anything, hash_including(since: now - (generator.send(:lookback_hours) * 3600))).at_least(:once)
+    end
+
+    it "regenerating the latest committed episode fetches since the episode before it and records the new collection time" do
+      morning_at = Time.utc(2026, 7, 13, 21, 0, 0)
+      commit("20260714_morning", morning_at)
+      commit("20260714_afternoon", Time.utc(2026, 7, 14, 3, 0, 0))
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
-      generator.send(:load_or_collect_news)
+      collect(generator)
 
-      expect(generator.fetched_news?).to be true
+      expect(fake_feed_cache).to have_received(:fetch).with(anything, hash_including(since: morning_at)).at_least(:once)
+      expect(generator.collected_at).to eq(now)
     end
 
-    it "is false when an existing news snapshot is reused" do
-      generator = described_class.new(work_dir: work_dir, episode: episode)
-      File.write(generator.send(:news_collected_path), "1. Title A\n")
-
-      generator.send(:load_or_collect_news)
-
-      expect(generator.fetched_news?).to be false
-    end
-
-    it "is false before any collection has run" do
+    it "regenerating the only committed episode fetches from lookback_hours before now" do
+      commit("20260714_afternoon", Time.utc(2026, 7, 14, 3, 0, 0))
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
-      expect(generator.fetched_news?).to be false
+      collect(generator)
+
+      expect(fake_feed_cache).to have_received(:fetch)
+        .with(anything, hash_including(since: now - (generator.send(:lookback_hours) * 3600))).at_least(:once)
     end
 
-    # digest→synthesize は同一インスタンスで load_or_collect_news を 2 回通り、2 回目は
-    # スナップショット再利用になる。それで false に戻ると「新規収集したのに confirmed_at を
-    # 進めない」取り違えが起きるので、一度収集したら true を保つ。
-    it "stays true on a subsequent reuse within the same instance" do
+    it "aborts for an episode older than the latest committed one" do
+      commit("20260714_evening", now + 3600)
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
-      generator.send(:load_or_collect_news) # 新規収集
-      generator.send(:load_or_collect_news) # スナップショット再利用
-
-      expect(generator.fetched_news?).to be true
-    end
-  end
-
-  describe "#collect_since_anchor" do
-    # 次回の収集 window 起点として保存すべき時刻。新規 entry の seen_at はこの時刻で
-    # 記録されるので、実行完了時刻ではなく収集基準時刻(episode.now)でなければ、実行に
-    # 時間がかかった場合に seen_at がその間に刻まれた記事を次回取りこぼす。
-    it "returns the collection anchor (episode.now), not the wall clock at completion" do
-      generator = described_class.new(work_dir: work_dir, episode: episode)
-
-      expect(generator.collect_since_anchor).to eq(now)
-    end
-  end
-
-  describe "fetch事実の永続化（プロセスをまたいだ引き継ぎ）" do
-    # 新規fetchが起きたプロセスが publish 到達前に終了しても、後続の別プロセス
-    # （同じ news_collected_path を reuse するだけの generator）が正しく
-    # confirmed_at・履歴記録を引き継げることを保証する（回またぎの二重紹介を防ぐ）。
-    it "collect完了と同時にpendingを永続化し、fetched_news?がfalseな後続インスタンスからも確定できる" do
-      generator_a = described_class.new(work_dir: work_dir, episode: episode)
-      generator_a.send(:load_or_collect_news)
-
-      expect(LastFetchStore.pending_at(work_dir)).to eq(now)
-      expect(LastFetchStore.pending_episode(work_dir)).to eq(generator_a.episode_key)
-
-      generator_b = described_class.new(work_dir: work_dir, episode: episode)
-      generator_b.send(:load_or_collect_news) # 既存スナップショットを reuse するだけ
-
-      expect(generator_b.fetched_news?).to be false
-
-      episode_key = LastFetchStore.confirm!(work_dir: work_dir)
-
-      expect(episode_key).to eq(generator_a.episode_key)
-      expect(LastFetchStore.confirmed_at(work_dir)).to eq(now)
-    end
-  end
-
-  describe "pending fetch resolution timing" do
-    # 前回 pending の確定/ロールバック確認は「新規 fetch が実際に走る直前」だけに出したい。
-    # --script-only の後にフラグなしで synthesize へ進むと、収集は既存スナップショットの
-    # 再利用になり fetch しないので、確認が出てはいけない。解決自体は LastFetchStore に委ねる。
-    it "resolves pending exactly once when news is actually fetched" do
-      allow(LastFetchStore).to receive(:resolve_pending!)
-      generator = described_class.new(work_dir: work_dir, episode: episode, auto_confirm: true)
-
-      generator.send(:load_or_collect_news)
-
-      expect(LastFetchStore).to have_received(:resolve_pending!).with(work_dir: work_dir, auto_confirm: true).once
+      expect { collect(generator) }.to raise_error(SystemExit)
+      expect(fake_feed_cache).not_to have_received(:fetch)
     end
 
-    it "does not resolve pending when an existing news snapshot is reused" do
-      allow(LastFetchStore).to receive(:resolve_pending!)
+    it "aborts when news_*.txt exists without its collection time (left over from before this change)" do
       generator = described_class.new(work_dir: work_dir, episode: episode)
       File.write(generator.send(:news_collected_path), "1. Title A\n")
 
-      generator.send(:load_or_collect_news)
+      expect { collect(generator) }.to raise_error(SystemExit)
+    end
 
-      expect(LastFetchStore).not_to have_received(:resolve_pending!)
+    it "reuses news_*.txt and its collection time without fetching again" do
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+      collect(generator)
+
+      reused = described_class.new(work_dir: work_dir, episode: episode)
+      reused.send(:load_or_collect_news)
+
+      expect(fake_feed_cache).to have_received(:fetch).exactly(generator.send(:sources).size).times
+      expect(reused.collected_at).to eq(now)
     end
   end
 

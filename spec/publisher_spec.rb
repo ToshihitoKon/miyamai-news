@@ -63,6 +63,21 @@ RSpec.describe Publisher do
   # ファイルは公開サイトから消える）。
   def staged_files = deployed.flat_map { |d| d[:files] }
 
+  describe "#published?" do
+    it "is true only for an mp3 listed in the public ledger" do
+      publisher = build_publisher(ledger: ledger_csv([
+        ["2026-07-14", "miyamai_news_20260714_morning.mp3", "title", "", "2026-07-14T00:00:00Z"]
+      ]))
+
+      expect(publisher.published?("miyamai_news_20260714_morning.mp3")).to be true
+      expect(publisher.published?("miyamai_news_20260714_evening.mp3")).to be false
+    end
+
+    it "is false when nothing has been published yet" do
+      expect(build_publisher.published?("miyamai_news_20260714_morning.mp3")).to be false
+    end
+  end
+
   describe "#run" do
     it "uploads the episode files to R2 and deploys the site once" do
       publisher = build_publisher

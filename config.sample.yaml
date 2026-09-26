@@ -5,6 +5,7 @@ pipeline:
   # mode: publish    # synthesize + Cloudflare への publish
 
 # Cloudflare への公開まわり（Workers static assets + R2）。
+# パイプラインの内部状態（state/）と台本の受け渡し（handoff/）にも R2 を使うため、どの mode でも必須。
 # R2 の S3 互換 API 認証情報は config には書かず、環境変数で渡す。
 #   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
 # wrangler の認証も環境変数（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）。
@@ -96,7 +97,7 @@ program_details:
 
 # RSS 収集まわり。
 collect:
-  # 何時間前までのニュースを取得するか。confirmed_at が無い初回のみ使われるフォールバック値。
+  # 何時間前までのニュースを取得するか。確定済みの回が無い初回のみ使われるフォールバック値。
   lookback_hours: 24
   # フィードキャッシュが entry を保持する日数。
   retention_days: 30
