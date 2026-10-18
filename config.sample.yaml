@@ -103,9 +103,15 @@ collect:
   retention_days: 30
   # フィード取得の並列数。
   fetch_threads: 5
-  # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
-  fetch_max_retries: 3
+  # フィード取得のリトライ。5xx・429・通信エラーのときだけ、指数バックオフ（初期待機
+  # fetch_retry_base_sec 秒、1 回の待機は最大 fetch_retry_max_interval_sec 秒）で再試行する。
+  # 再試行は収集開始から fetch_retry_timeout_sec 秒以内に始められる分だけ（全フィード共通）
+  # 行い、それでも取れなければ、そのフィードはこの回は諦める。
+  fetch_retry_timeout_sec: 300
   fetch_retry_base_sec: 2
+  fetch_retry_max_interval_sec: 10
+  # 取得を諦めたフィードがこの数に達したら、残りのフィードは取りに行かず実行全体を中断する。
+  fetch_failure_abort_threshold: 3
   # 前回 fetch のキャッシュを使い回す時間。
   fetch_skip_minutes: 5
   # 直近何回分の紹介済みニュースを selector に渡して、回またぎの重複紹介を避けるか。

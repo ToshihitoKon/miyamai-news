@@ -108,9 +108,12 @@ collect:
   retention_days: 30
   # フィード取得の並列数。
   fetch_threads: 5
-  # フィード取得のリトライ回数と、指数バックオフの初期待機秒数。
-  fetch_max_retries: 3
+  # フィード取得のリトライを打ち切るまでの秒数と、指数バックオフの初期・最大待機秒数。
+  fetch_retry_timeout_sec: 300
   fetch_retry_base_sec: 2
+  fetch_retry_max_interval_sec: 10
+  # 取得を諦めたフィードがこの数に達したら中断する。
+  fetch_failure_abort_threshold: 3
 
 # 収集元定義（フラット配列）。カテゴリ区分は持たない。番組編成上のカテゴリは
 # program_details.categories 側で一元管理し、記事がどのカテゴリに属するかは

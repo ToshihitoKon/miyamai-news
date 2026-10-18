@@ -62,22 +62,42 @@ RSpec.describe Internal::Config do
   end
 
   describe Internal::Config::Collect do
-    it "defaults fetch_skip_minutes to 5 when absent" do
-      collect = described_class.new(
+    let(:required_settings) do
+      {
         lookback_hours: 24, retention_days: 30, fetch_threads: 5,
-        fetch_max_retries: 3, fetch_retry_base_sec: 2
-      )
+        fetch_retry_timeout_sec: 300, fetch_retry_base_sec: 2, fetch_retry_max_interval_sec: 10,
+        fetch_failure_abort_threshold: 3
+      }
+    end
+
+    it "defaults fetch_skip_minutes to 5 when absent" do
+      collect = described_class.new(required_settings)
 
       expect(collect.fetch_skip_minutes).to eq(5)
     end
 
     it "defaults used_news_history_episodes to 4 when absent" do
-      collect = described_class.new(
-        lookback_hours: 24, retention_days: 30, fetch_threads: 5,
-        fetch_max_retries: 3, fetch_retry_base_sec: 2
-      )
+      collect = described_class.new(required_settings)
 
       expect(collect.used_news_history_episodes).to eq(4)
+    end
+
+    it "coerces the fetch_retry_* settings to Float" do
+      collect = described_class.new(required_settings)
+
+      expect([collect.fetch_retry_timeout_sec, collect.fetch_retry_base_sec, collect.fetch_retry_max_interval_sec])
+        .to eq([300.0, 2.0, 10.0])
+    end
+
+    [
+      :fetch_retry_timeout_sec,
+      :fetch_retry_base_sec,
+      :fetch_retry_max_interval_sec,
+      :fetch_failure_abort_threshold
+    ].each do |key|
+      it "rejects a non-positive #{key}" do
+        expect { described_class.new(required_settings.merge(key => 0)) }.to raise_error(Dry::Struct::Error, /#{key}/)
+      end
     end
   end
 

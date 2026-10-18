@@ -27,8 +27,10 @@ collect:
   lookback_hours: 24
   retention_days: 30
   fetch_threads: 5
-  fetch_max_retries: 3
+  fetch_retry_timeout_sec: 300
   fetch_retry_base_sec: 2
+  fetch_retry_max_interval_sec: 10
+  fetch_failure_abort_threshold: 3
 
 rss_feed_sources:
   - name: "Hacker News (AI)"

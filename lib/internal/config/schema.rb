@@ -74,8 +74,10 @@ module Internal
       attribute :lookback_hours, Types::Strict::Integer
       attribute :retention_days, Types::Strict::Integer
       attribute :fetch_threads, Types::Strict::Integer
-      attribute :fetch_max_retries, Types::Strict::Integer
-      attribute :fetch_retry_base_sec, Types::Coercible::Float
+      attribute :fetch_retry_timeout_sec, Types::Coercible::Float.constrained(gt: 0)
+      attribute :fetch_retry_base_sec, Types::Coercible::Float.constrained(gt: 0)
+      attribute :fetch_retry_max_interval_sec, Types::Coercible::Float.constrained(gt: 0)
+      attribute :fetch_failure_abort_threshold, Types::Strict::Integer.constrained(gt: 0)
       # 各フィードの最終 fetch からこの分数以内は、再取得せず前回キャッシュから返す。
       # 0 でスキップ無効。
       attribute? :fetch_skip_minutes, Types::Strict::Integer.default(5)
