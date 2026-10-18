@@ -42,11 +42,108 @@ RSpec.describe ScriptGenerator do
       end
 
       context "failure" do
-        it "aborts news collection when FeedCache raises FetchError" do
-          allow(fake_feed_cache).to receive(:fetch).and_raise(FeedCache::FetchError, "boom")
+        it "skips a source whose FeedCache#fetch raises FetchError and collects the rest" do
           generator = described_class.new(work_dir: work_dir, episode: episode)
+          failed_source, *other_sources = generator.send(:sources)
+          allow(fake_feed_cache).to receive(:fetch).with(failed_source.url, any_args)
+            .and_raise(FeedCache::FetchError, "boom")
+          allow(Internal::EpisodeLogger).to receive(:record)
 
-          expect { generator.send(:collect_news, now - 3600) }.to raise_error(SystemExit)
+          body = generator.send(:collect_news, now - 3600)
+
+          expect(body).to include("Title A")
+          expect(generator.collect_stats.failed_sources).to eq([failed_source.name])
+          expect(generator.collect_stats.per_source.map(&:first)).to eq(other_sources.map(&:name))
+          expect(generator.collect_stats.total_before_dedup).to eq(news_items.size * other_sources.size)
+          expect(Internal::EpisodeLogger).to have_received(:record)
+            .with("feed_skipped", source: failed_source.name, url: failed_source.url, error: "boom")
+        end
+
+        it "keeps collecting while the failures stay below fetch_failure_abort_threshold" do
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          failed_sources = generator.send(:sources).first(Config.collect.fetch_failure_abort_threshold - 1)
+          failed_sources.each do |src|
+            allow(fake_feed_cache).to receive(:fetch).with(src.url, any_args).and_raise(FeedCache::FetchError, "boom")
+          end
+
+          generator.send(:collect_news, now - 3600)
+
+          expect(generator.collect_stats.failed_sources).to eq(failed_sources.map(&:name))
+        end
+
+        it "aborts, naming the failed sources, once the failures reach fetch_failure_abort_threshold" do
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          failed_sources = generator.send(:sources).first(Config.collect.fetch_failure_abort_threshold)
+          failed_sources.each do |src|
+            allow(fake_feed_cache).to receive(:fetch).with(src.url, any_args).and_raise(FeedCache::FetchError, "boom")
+          end
+
+          expect { generator.send(:collect_news, now - 3600) }
+            .to raise_error(SystemExit)
+            .and output(/#{failed_sources.size} source\(s\) failed to fetch: #{Regexp.escape(failed_sources.map(&:name).join(', '))}/).to_stderr
+        end
+
+        it "stops fetching the remaining sources once the failures reach fetch_failure_abort_threshold" do
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          allow(generator).to receive(:fetch_threads).and_return(1)
+          allow(fake_feed_cache).to receive(:fetch).and_raise(FeedCache::FetchError, "boom")
+
+          expect { generator.send(:collect_news, now - 3600) }.to raise_error(SystemExit).and output.to_stderr
+          expect(fake_feed_cache).to have_received(:fetch).exactly(Config.collect.fetch_failure_abort_threshold).times
+        end
+
+        it "aborts when every source fails even if there are fewer sources than the threshold" do
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          allow(generator).to receive(:sources).and_return(generator.send(:sources).first(1))
+          allow(fake_feed_cache).to receive(:fetch).and_raise(FeedCache::FetchError, "boom")
+
+          expect { generator.send(:collect_news, now - 3600) }
+            .to raise_error(SystemExit)
+            .and output(/1 source\(s\) failed to fetch/).to_stderr
+        end
+
+        it "raises an unexpected worker error without waiting for the other workers to finish" do
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          slow_source, buggy_source = generator.send(:sources).first(2)
+          allow(generator).to receive_messages(fetch_threads: 2, sources: [slow_source, buggy_source])
+          release = Queue.new
+          slow_source_finished = false
+          allow(fake_feed_cache).to receive(:fetch).with(slow_source.url, any_args) do
+            release.pop(timeout: 10)
+            slow_source_finished = true
+            news_items
+          end
+          allow(fake_feed_cache).to receive(:fetch).with(buggy_source.url, any_args).and_raise(NoMethodError, "bug")
+
+          expect { generator.send(:collect_news, now - 3600) }.to raise_error(NoMethodError, "bug")
+          expect(slow_source_finished).to be(false)
+        ensure
+          release&.push(:go)
+        end
+
+        it "does not abort when no source is configured" do
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          allow(generator).to receive(:sources).and_return([])
+
+          expect(generator.send(:collect_news, now - 3600)).to eq("")
+        end
+      end
+
+      context "retry settings" do
+        it "builds one FeedCache per collection with a retry deadline fetch_retry_timeout_sec from the start" do
+          deadline = Internal::Deadline.new(0.0)
+          allow(Internal::Deadline).to receive(:in).with(Config.collect.fetch_retry_timeout_sec).and_return(deadline)
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          expect(Internal::Deadline).not_to have_received(:in)
+          expect(FeedCache).not_to have_received(:new)
+
+          generator.send(:collect_news, now - 3600)
+
+          expect(FeedCache).to have_received(:new).once.with(hash_including(
+            retry_deadline: deadline,
+            retry_base_sec: Config.collect.fetch_retry_base_sec,
+            retry_max_interval_sec: Config.collect.fetch_retry_max_interval_sec
+          ))
         end
       end
     end
@@ -117,6 +214,20 @@ RSpec.describe ScriptGenerator do
         expect(messages.last).to match(/\Anew articles total: \d+ \(\d+ before dedup\)\z/)
       end
 
+      it "取得に失敗したソースを件数行の代わりに skipped 行として出力する" do
+        generator = described_class.new(work_dir: work_dir, episode: episode)
+        failed_source = generator.send(:sources).first
+        allow(fake_feed_cache).to receive(:fetch).with(failed_source.url, any_args)
+          .and_raise(FeedCache::FetchError, "boom")
+        messages = []
+        allow(generator).to receive(:warn) { |msg| messages << msg }
+
+        generator.send(:load_or_collect_news)
+
+        expect(messages).to include("skipped (fetch failed): #{failed_source.name}")
+        expect(messages).not_to include("new articles from #{failed_source.name}: 0")
+      end
+
       it "news_collected_path の既存スナップショットを再利用する場合は件数行を出力しない" do
         generator = described_class.new(work_dir: work_dir, episode: episode)
         File.write(generator.send(:news_collected_path), "1. Title A\n")
@@ -151,7 +262,7 @@ RSpec.describe ScriptGenerator do
       allow(fake_feed_cache).to receive(:fetch).and_return(arxiv_items)
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
-      result = generator.send(:collect_source, src(max_age_days: 30), now - 3600)
+      result = generator.send(:collect_source, fake_feed_cache, src(max_age_days: 30), now - 3600)
 
       expect(result.map { |i| i[:link] }).to eq([fresh_arxiv_link])
     end
@@ -160,7 +271,7 @@ RSpec.describe ScriptGenerator do
       allow(fake_feed_cache).to receive(:fetch).and_return(arxiv_items)
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
-      result = generator.send(:collect_source, src, now - 3600)
+      result = generator.send(:collect_source, fake_feed_cache, src, now - 3600)
 
       expect(result.map { |i| i[:link] }).to contain_exactly(old_arxiv_link, fresh_arxiv_link)
     end

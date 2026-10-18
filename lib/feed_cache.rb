@@ -12,12 +12,12 @@ require_relative "internal/feed_parser"
 class FeedCache
   class FetchError < StandardError; end
 
-  def initialize(dir:, retention_days:, skip_window_sec: 0, legacy_path: nil,
-                 max_retries: 3, retry_base_sec: 2.0)
+  def initialize(dir:, retention_days:, retry_deadline:, skip_window_sec: 0, legacy_path: nil,
+                 retry_base_sec: 2.0, retry_max_interval_sec: 10.0)
     @dir = dir
     @retention_days = retention_days
     @skip_window_sec = skip_window_sec
-    @fetcher = Internal::HttpFetcher.new(max_retries: max_retries, retry_base_sec: retry_base_sec)
+    @fetcher = Internal::HttpFetcher.new(retry_deadline:, retry_base_sec:, retry_max_interval_sec:)
     @legacy_seen_at = load_legacy_seen_at(legacy_path)
   end
 

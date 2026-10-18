@@ -13,12 +13,14 @@ require_relative "internal/ai_cli"
 require_relative "internal/preamble_stripper"
 require_relative "internal/relative_path"
 require_relative "internal/state_dir"
+require_relative "internal/episode_logger"
+require_relative "internal/deadline"
 
 class ScriptGenerator
   OPENING_GREETING = "宮舞モカです。"
   DEDUP_PRIORITY_RANK = { "high" => 0, "low" => 2 }.freeze
 
-  CollectStats = Struct.new(:per_source, :total_before_dedup, :total_after_dedup, keyword_init: true)
+  CollectStats = Struct.new(:per_source, :failed_sources, :total_before_dedup, :total_after_dedup, keyword_init: true)
 
   def self.feed_cache_dir(work_dir) = File.join(StateDir.path(work_dir), "feed_cache")
   def self.legacy_feed_cache_path(work_dir) = File.join(StateDir.path(work_dir), "feed_cache.json")
@@ -48,14 +50,6 @@ class ScriptGenerator
   def initialize(work_dir:, episode:)
     @work_dir = work_dir
     @episode = episode
-    @feed_cache = FeedCache.new(
-      dir: self.class.feed_cache_dir(work_dir),
-      legacy_path: self.class.legacy_feed_cache_path(work_dir),
-      retention_days:,
-      skip_window_sec: fetch_skip_minutes * 60,
-      max_retries: fetch_max_retries,
-      retry_base_sec: fetch_retry_base_sec
-    )
   end
 
   # 戻り値は facts ファイルのパス。
@@ -105,8 +99,10 @@ class ScriptGenerator
   def lookback_hours = Config.collect.lookback_hours
   def retention_days = Config.collect.retention_days
   def fetch_threads = Config.collect.fetch_threads
-  def fetch_max_retries = Config.collect.fetch_max_retries
+  def fetch_retry_timeout_sec = Config.collect.fetch_retry_timeout_sec
   def fetch_retry_base_sec = Config.collect.fetch_retry_base_sec
+  def fetch_retry_max_interval_sec = Config.collect.fetch_retry_max_interval_sec
+  def fetch_failure_abort_threshold = Config.collect.fetch_failure_abort_threshold
   def fetch_skip_minutes = Config.collect.fetch_skip_minutes
   def used_news_history_episodes = Config.collect.used_news_history_episodes
 
@@ -233,6 +229,7 @@ class ScriptGenerator
     return unless @collect_stats
 
     @collect_stats.per_source.each { |name, count| warn "new articles from #{name}: #{count}" }
+    @collect_stats.failed_sources.each { |name| warn "skipped (fetch failed): #{name}" }
     warn "new articles total: #{@collect_stats.total_after_dedup} (#{@collect_stats.total_before_dedup} before dedup)"
   end
 
@@ -245,20 +242,46 @@ class ScriptGenerator
   end
 
   # FeedCache から since 以降に初登場した記事を集め、フラットなテキストにする。
+  # 取得に失敗したソースはこの回は飛ばすが、失敗が多すぎれば中断する。
   def collect_news(since)
     target_sources = sources
-    items_per_source = fetch_sources_in_parallel(target_sources, since)
-    items = dedup_by_title(items_per_source.flatten)
+    items_per_source, failed_indexes = fetch_sources_in_parallel(build_feed_cache, target_sources, since)
+    failed_sources = failed_indexes.sort.map { |i| target_sources[i].name }
+    fetched = target_sources.zip(items_per_source).select { |_src, srcitems| srcitems }
+    abort_if_too_many_failures(failed_sources, fetched_count: fetched.size)
+
+    fetched_items = fetched.map { |_src, srcitems| srcitems }
+    items = dedup_by_title(fetched_items.flatten)
 
     @collect_stats = CollectStats.new(
-      per_source: target_sources.zip(items_per_source).map { |src, srcitems| [src.name, srcitems.size] },
-      total_before_dedup: items_per_source.sum(&:size),
+      per_source: fetched.map { |src, srcitems| [src.name, srcitems.size] },
+      failed_sources:,
+      total_before_dedup: fetched_items.sum(&:size),
       total_after_dedup: items.size
     )
 
     render_news_text(items)
-  rescue FeedCache::FetchError => e
-    abort "aborting, news collection incomplete: #{e.message}"
+  end
+
+  # 失敗が fetch_failure_abort_threshold に達したか、1 つも取得できなかったら中断する。
+  def abort_if_too_many_failures(failed_sources, fetched_count:)
+    return if failed_sources.empty?
+    return if failed_sources.size < fetch_failure_abort_threshold && fetched_count.positive?
+
+    abort "aborting, #{failed_sources.size} source(s) failed to fetch: #{failed_sources.join(', ')}"
+  end
+
+  # 収集 1 回分の FeedCache。リトライの締め切りは収集開始時に決め、全ソースで共有する。
+  def build_feed_cache
+    FeedCache.new(
+      dir: self.class.feed_cache_dir(@work_dir),
+      legacy_path: self.class.legacy_feed_cache_path(@work_dir),
+      retention_days:,
+      skip_window_sec: fetch_skip_minutes * 60,
+      retry_deadline: Internal::Deadline.in(fetch_retry_timeout_sec),
+      retry_base_sec: fetch_retry_base_sec,
+      retry_max_interval_sec: fetch_retry_max_interval_sec
+    )
   end
 
   def render_news_text(items)
@@ -272,24 +295,37 @@ class ScriptGenerator
     "#{index}. #{item[:title]}\n   #{item[:link]}\n   (#{meta.join(' / ')})"
   end
 
-  # 全ソースを fetch_threads 並列で収集する。戻り値は sources と同じ順の items 配列。
-  def fetch_sources_in_parallel(sources, since)
+  # 全ソースを fetch_threads 並列で収集する。戻り値は sources と同じ順の items 配列と、
+  # 取得に失敗したソースの添字の配列。失敗が fetch_failure_abort_threshold に達したら
+  # 残りのソースは取りに行かない。失敗したソースと取りに行かなかったソースの items は nil。
+  def fetch_sources_in_parallel(feed_cache, sources, since)
     queue = Queue.new
     sources.each_with_index { |src, i| queue << [src, i] }
     queue.close
 
     items_per_source = Array.new(sources.size)
+    failed_indexes = []
+    mutex = Mutex.new
     workers = fetch_threads.times.map do
       Thread.new do
         Thread.current.report_on_exception = false
+        Thread.current.abort_on_exception = true
         while (job = queue.pop)
           src, i = job
-          items_per_source[i] = collect_source(src, since)
+          items = collect_source(feed_cache, src, since)
+          mutex.synchronize do
+            if items
+              items_per_source[i] = items
+            else
+              failed_indexes << i
+              queue.clear if failed_indexes.size >= fetch_failure_abort_threshold
+            end
+          end
         end
       end
     end
     workers.each(&:join)
-    items_per_source
+    [items_per_source, failed_indexes]
   end
 
   # タイトルの重複除去（大文字小文字・空白を無視）。同順位内は先勝ち。
@@ -299,9 +335,9 @@ class ScriptGenerator
       .map { |group| group.min_by { |i, idx| [DEDUP_PRIORITY_RANK.fetch(i[:priority], 1), idx] }.first }
   end
 
-  # 1ソース分の新着記事を FeedCache から全件取得し、メタ情報を付けて返す。
-  def collect_source(src, since)
-    items = @feed_cache.fetch(src.url, now: @episode.now, since:, extra_extractor: Internal::HatenaBookmarks)
+  # 1ソース分の新着記事を FeedCache から全件取得し、メタ情報を付けて返す。取得に失敗したら nil。
+  def collect_source(feed_cache, src, since)
+    items = feed_cache.fetch(src.url, now: @episode.now, since:, extra_extractor: Internal::HatenaBookmarks)
     items = items.reject { |item| Internal::Arxiv.old?(item[:link], max_age_days: src.max_age_days, now: @episode.now) } if src.max_age_days
 
     items.map do |item|
@@ -311,6 +347,10 @@ class ScriptGenerator
       picked[:priority] = src.priority if src.priority
       picked
     end
+  rescue FeedCache::FetchError => e
+    warn "  ! skipping #{src.name} for this episode: #{e.message}"
+    Internal::EpisodeLogger.record("feed_skipped", source: src.name, url: src.url, error: e.message)
+    nil
   end
 
   def strip_preamble(script)

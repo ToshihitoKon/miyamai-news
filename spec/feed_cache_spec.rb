@@ -23,7 +23,7 @@ RSpec.describe FeedCache do
   end
 
   def build_cache(skip_window_sec: 0, retention_days: 7, legacy_path: nil)
-    cache = FeedCache.new(dir: dir, retention_days: retention_days,
+    cache = FeedCache.new(dir: dir, retention_days: retention_days, retry_deadline: Internal::Deadline.in(0),
       skip_window_sec: skip_window_sec, legacy_path: legacy_path)
     cache.instance_variable_set(:@fetcher, fetcher)
     cache
@@ -33,6 +33,19 @@ RSpec.describe FeedCache do
   def read_cache_file
     path = Dir.glob(File.join(dir, "*.json")).first
     path && JSON.parse(File.read(path))
+  end
+
+  describe ".new" do
+    it "passes the retry settings to HttpFetcher" do
+      deadline = Internal::Deadline.in(300)
+      allow(Internal::HttpFetcher).to receive(:new).and_call_original
+
+      FeedCache.new(dir: dir, retention_days: 7, retry_deadline: deadline,
+        retry_base_sec: 3.0, retry_max_interval_sec: 7.0)
+
+      expect(Internal::HttpFetcher).to have_received(:new)
+        .with(retry_deadline: deadline, retry_base_sec: 3.0, retry_max_interval_sec: 7.0)
+    end
   end
 
   describe "#select_since_for" do

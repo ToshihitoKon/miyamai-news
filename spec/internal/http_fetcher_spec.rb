@@ -4,7 +4,21 @@ require "spec_helper"
 require "internal/http_fetcher"
 
 RSpec.describe Internal::HttpFetcher do
-  let(:fetcher) { described_class.new(max_retries: 0) }
+  # 擬似 monotonic clock の 0 秒から 60 秒後が締め切り。
+  let(:fetcher) do
+    described_class.new(retry_deadline: Internal::Deadline.new(60.0), retry_base_sec: 2, retry_max_interval_sec: 10)
+  end
+  let(:sleeps) { [] }
+
+  # sleep した分だけ進む擬似 monotonic clock。リクエストの所要時間は各テストで @clock を進める。
+  before do
+    @clock = 0.0
+    allow(Internal::Deadline).to receive(:now) { @clock }
+    allow(fetcher).to receive(:sleep) do |sec|
+      sleeps << sec
+      @clock += sec
+    end
+  end
 
   def success_response(body)
     instance_double(Net::HTTPSuccess, body: body).tap do |res|
@@ -76,31 +90,142 @@ RSpec.describe Internal::HttpFetcher do
       expect(fetcher.get("https://example.com/feed.xml")).to eq("multi-hop ok")
     end
 
-    it "raises when redirects exceed the hop limit" do
+    it "raises without retrying when redirects exceed the hop limit" do
       allow(Net::HTTP).to receive(:get_response).and_return(redirect_response("301", "https://example.com/loop"))
 
       expect { fetcher.get("https://example.com/feed.xml") }.to raise_error(/too many redirects/)
+      expect(sleeps).to be_empty
     end
 
-    it "raises a descriptive error when a redirect has no Location header" do
+    it "raises a descriptive error without retrying when a redirect has no Location header" do
       allow(Net::HTTP).to receive(:get_response).and_return(redirect_response("301", nil))
 
       expect { fetcher.get("https://example.com/feed.xml") }.to raise_error(/redirect without a Location header/)
+      expect(sleeps).to be_empty
     end
 
-    it "raises on a non-success, non-redirect response" do
-      allow(Net::HTTP).to receive(:get_response).and_return(failure_response("500"))
+    it "raises without retrying on a 4xx response" do
+      allow(Net::HTTP).to receive(:get_response).and_return(failure_response("404"))
 
-      expect { fetcher.get("https://example.com/feed.xml") }.to raise_error(/HTTP 500/)
+      expect { fetcher.get("https://example.com/feed.xml") }
+        .to raise_error("failed to fetch https://example.com/feed.xml: HTTP 404")
+      expect(Net::HTTP).to have_received(:get_response).once
+      expect(sleeps).to be_empty
     end
 
-    it "retries on failure and eventually succeeds" do
-      fetcher = described_class.new(max_retries: 1, retry_base_sec: 0)
-      responses = [failure_response("502"), success_response("recovered")]
+    it "records the give-up in the episode log" do
+      allow(Net::HTTP).to receive(:get_response).and_return(failure_response("404"))
+      allow(Internal::EpisodeLogger).to receive(:record)
+
+      expect { fetcher.get("https://example.com/feed.xml") }.to raise_error(/HTTP 404/)
+      expect(Internal::EpisodeLogger).to have_received(:record)
+        .with("http_fetch", url: "https://example.com/feed.xml", attempt: 1, error: "HTTP 404", gave_up: true)
+    end
+
+    it "does not refetch when recording a successful fetch fails" do
+      allow(Net::HTTP).to receive(:get_response).and_return(success_response("ok"))
+      allow(Internal::EpisodeLogger).to receive(:record).and_raise(IOError, "disk full")
+
+      expect { fetcher.get("https://example.com/feed.xml") }.to raise_error(IOError, "disk full")
+      expect(Net::HTTP).to have_received(:get_response).once
+    end
+
+    it "raises without retrying on an unexpected error such as a programming bug" do
+      allow(Net::HTTP).to receive(:get_response).and_raise(NoMethodError, "undefined method 'body'")
+
+      expect { fetcher.get("https://example.com/feed.xml") }.to raise_error(/failed to fetch .*undefined method/)
+      expect(Net::HTTP).to have_received(:get_response).once
+      expect(sleeps).to be_empty
+    end
+
+    it "retries a 5xx response and returns the body once the server recovers" do
+      responses = [failure_response("503"), failure_response("502"), success_response("recovered")]
       allow(Net::HTTP).to receive(:get_response) { responses.shift }
-      allow(fetcher).to receive(:sleep)
 
       expect(fetcher.get("https://example.com/feed.xml")).to eq("recovered")
+      expect(sleeps).to eq([2, 4])
+    end
+
+    it "retries 429 Too Many Requests like a 5xx response" do
+      responses = [failure_response("429"), success_response("recovered")]
+      allow(Net::HTTP).to receive(:get_response) { responses.shift }
+
+      expect(fetcher.get("https://example.com/feed.xml")).to eq("recovered")
+      expect(sleeps).to eq([2])
+    end
+
+    [
+      Net::OpenTimeout,
+      Errno::ECONNRESET,
+      EOFError,
+      SocketError,
+      OpenSSL::SSL::SSLError,
+      Net::ProtocolError,
+      Net::HTTPBadResponse,
+      Net::HTTPHeaderSyntaxError,
+      Zlib::BufError
+    ].each do |error_class|
+      it "retries a network-level error (#{error_class})" do
+        attempts = 0
+        allow(Net::HTTP).to receive(:get_response) do
+          attempts += 1
+          raise error_class, "transient" if attempts == 1
+
+          success_response("recovered")
+        end
+
+        expect(fetcher.get("https://example.com/feed.xml")).to eq("recovered")
+        expect(sleeps).to eq([2])
+      end
+    end
+
+    context "when the server keeps failing with 5xx until after the retry deadline" do
+      before do
+        responses = Array.new(8) { failure_response("500") } + [success_response("too late")]
+        allow(Net::HTTP).to receive(:get_response) { responses.shift }
+      end
+
+      it "doubles the wait on each retry but caps it at retry_max_interval_sec" do
+        expect { fetcher.get("https://example.com/feed.xml") }.to raise_error(/HTTP 500/)
+        expect(sleeps).to eq([2, 4, 8, 10, 10, 10, 10])
+      end
+
+      it "gives up once the next wait would end past the retry deadline" do
+        # 待機の累計 54 秒の時点で、次の 10 秒待つと締め切りの 60 秒を過ぎるので 8 回目で諦める。
+        expect { fetcher.get("https://example.com/feed.xml") }
+          .to raise_error(/gave up after 8 attempt\(s\) \(retry deadline reached\): HTTP 500/)
+        expect(Net::HTTP).to have_received(:get_response).exactly(8).times
+      end
+    end
+
+    it "counts the time spent on requests, not only the waits, toward the retry deadline" do
+      responses = Array.new(3) { failure_response("500") } + [success_response("too late")]
+      allow(Net::HTTP).to receive(:get_response) do
+        @clock += 25
+        responses.shift
+      end
+
+      # 待機の累計は 6 秒だが、リクエスト時間を含めた経過 25+2+25+4+25 = 81 秒が締め切りの
+      # 60 秒を過ぎているので 3 回目で諦める。
+      expect { fetcher.get("https://example.com/feed.xml") }.to raise_error(/gave up after 3 attempt\(s\)/)
+      expect(sleeps).to eq([2, 4])
+    end
+
+    it "shares the retry deadline across calls instead of restarting it for each URL" do
+      responses = [success_response("ok"), failure_response("500"), success_response("too late")]
+      allow(Net::HTTP).to receive(:get_response) { responses.shift }
+      fetcher.get("https://example.com/feed.xml")
+      @clock = 59.0
+
+      expect { fetcher.get("https://example.com/other.xml") }.to raise_error(/gave up after 1 attempt\(s\)/)
+      expect(sleeps).to be_empty
+    end
+
+    it "still makes the first attempt after the retry deadline" do
+      allow(Net::HTTP).to receive(:get_response).and_return(success_response("ok"))
+      @clock = 120.0
+
+      expect(fetcher.get("https://example.com/feed.xml")).to eq("ok")
     end
   end
 end

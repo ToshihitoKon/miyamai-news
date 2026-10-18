@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
 require "net/http"
+require "openssl"
 require "uri"
+require "zlib"
+require_relative "deadline"
 require_relative "episode_logger"
 
 module Internal
@@ -13,36 +16,64 @@ module Internal
 
     USER_AGENT = "miyamai-news-bot/1.0 (+https://github.com/ToshihitoKon/miyamai-news)"
 
-    # @param max_retries [Integer] 最大リトライ回数
+    class RetryableStatusError < StandardError; end
+
+    # リトライ対象の失敗。HTTP ステータス由来のものと、通信層の例外（タイムアウト・
+    # 接続リセット・名前解決失敗・TLS ハンドシェイク失敗・壊れた応答・途中で切れた gzip 本文など）。
+    RETRYABLE_ERRORS = [
+      RetryableStatusError,
+      Timeout::Error,
+      SystemCallError,
+      SocketError,
+      IOError,
+      OpenSSL::SSL::SSLError,
+      Net::ProtocolError,
+      Net::HTTPBadResponse,
+      Net::HTTPHeaderSyntaxError,
+      Zlib::Error
+    ].freeze
+
+    # @param retry_deadline [Internal::Deadline] 待機明けがこれを過ぎる再試行はしない。全 get で共有する
     # @param retry_base_sec [Float] 指数バックオフの初期待機秒数
-    def initialize(max_retries: 3, retry_base_sec: 2.0)
-      @max_retries = max_retries
+    # @param retry_max_interval_sec [Float] 1 回あたりの待機秒数の上限
+    def initialize(retry_deadline:, retry_base_sec: 2.0, retry_max_interval_sec: 10.0)
+      @retry_deadline = retry_deadline
       @retry_base_sec = retry_base_sec
+      @retry_max_interval_sec = retry_max_interval_sec
     end
 
-    # url を取得して本文を返す。失敗時は指数バックオフで max_retries 回まで再試行し、
-    # それでも取れなければ例外を送出する。
+    # url を取得して本文を返す。RETRYABLE_ERRORS は、待機明けが retry_deadline を過ぎない間だけ
+    # 指数バックオフで再試行する。それ以外の失敗と打ち切り時は例外を送出する。
     def get(url)
       attempt = 0
       begin
         start = Internal::EpisodeLogger.start_timer
         body = get_once(url)
-        Internal::EpisodeLogger.record("http_fetch", url: url, attempt: attempt,
-          duration_sec: Internal::EpisodeLogger.elapsed_since(start))
-        body
-      rescue StandardError => e
+      rescue *RETRYABLE_ERRORS => e
         attempt += 1
-        raise "failed to fetch #{url}: #{e.message}" if attempt > @max_retries
+        wait = [@retry_base_sec * (2**(attempt - 1)), @retry_max_interval_sec].min
+        remaining_sec = @retry_deadline.remaining_sec
+        give_up(url, attempt, "gave up after #{attempt} attempt(s) (retry deadline reached): #{e.message}") if wait > remaining_sec
 
-        wait = @retry_base_sec * (2**(attempt - 1))
-        warn "  ! fetch failed for #{url} (attempt #{attempt}/#{@max_retries}): #{e.message} / retry in #{wait}s"
+        warn "  ! fetch failed for #{url} (attempt #{attempt}, #{remaining_sec.round(1)}s left): #{e.message} / retry in #{wait}s"
         Internal::EpisodeLogger.record("http_fetch", url: url, attempt: attempt, error: e.message, retry_in_sec: wait)
         sleep wait
         retry
+      rescue StandardError => e
+        give_up(url, attempt + 1, e.message)
       end
+
+      Internal::EpisodeLogger.record("http_fetch", url: url, attempt: attempt,
+        duration_sec: Internal::EpisodeLogger.elapsed_since(start))
+      body
     end
 
     private
+
+    def give_up(url, attempt, message)
+      Internal::EpisodeLogger.record("http_fetch", url: url, attempt: attempt, error: message, gave_up: true)
+      raise "failed to fetch #{url}: #{message}"
+    end
 
     # リダイレクトを MAX_REDIRECTS 回まで追従する。
     def get_once(url)
@@ -51,6 +82,7 @@ module Internal
       MAX_REDIRECTS.times do
         res = Net::HTTP.get_response(current, { "User-Agent" => USER_AGENT })
         return res.body if res.is_a?(Net::HTTPSuccess)
+        raise RetryableStatusError, "HTTP #{res.code}" if retryable_status?(res.code)
         raise "HTTP #{res.code}" unless res.is_a?(Net::HTTPRedirection)
 
         location = res["location"] or raise "HTTP #{res.code} redirect without a Location header"
@@ -59,5 +91,7 @@ module Internal
 
       raise "too many redirects (> #{MAX_REDIRECTS}) starting from #{url}"
     end
+
+    def retryable_status?(code) = code.start_with?("5") || code == "429"
   end
 end
