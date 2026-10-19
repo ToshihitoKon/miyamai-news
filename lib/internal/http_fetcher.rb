@@ -14,6 +14,9 @@ module Internal
     # 追従するリダイレクトの上限ホップ数。
     MAX_REDIRECTS = 5
 
+    # 1 リクエストあたりの接続確立・読み取りそれぞれの待ち時間の上限秒数。
+    REQUEST_TIMEOUT_SEC = 15
+
     USER_AGENT = "miyamai-news-bot/1.0 (+https://github.com/ToshihitoKon/miyamai-news)"
 
     class RetryableStatusError < StandardError; end
@@ -79,8 +82,8 @@ module Internal
     def get_once(url)
       current = URI.parse(url)
 
-      MAX_REDIRECTS.times do
-        res = Net::HTTP.get_response(current, { "User-Agent" => USER_AGENT })
+      (MAX_REDIRECTS + 1).times do
+        res = request(current)
         return res.body if res.is_a?(Net::HTTPSuccess)
         raise RetryableStatusError, "HTTP #{res.code}" if retryable_status?(res.code)
         raise "HTTP #{res.code}" unless res.is_a?(Net::HTTPRedirection)
@@ -90,6 +93,13 @@ module Internal
       end
 
       raise "too many redirects (> #{MAX_REDIRECTS}) starting from #{url}"
+    end
+
+    def request(uri)
+      Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https",
+        open_timeout: REQUEST_TIMEOUT_SEC, read_timeout: REQUEST_TIMEOUT_SEC) do |http|
+        http.request_get(uri, { "User-Agent" => USER_AGENT })
+      end
     end
 
     def retryable_status?(code) = code.start_with?("5") || code == "429"

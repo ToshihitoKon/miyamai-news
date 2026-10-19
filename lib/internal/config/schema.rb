@@ -73,7 +73,7 @@ module Internal
     class Collect < Base
       attribute :lookback_hours, Types::Strict::Integer
       attribute :retention_days, Types::Strict::Integer
-      attribute :fetch_threads, Types::Strict::Integer
+      attribute :fetch_threads, Types::Strict::Integer.constrained(gt: 0)
       attribute :fetch_retry_timeout_sec, Types::Coercible::Float.constrained(gt: 0)
       attribute :fetch_retry_base_sec, Types::Coercible::Float.constrained(gt: 0)
       attribute :fetch_retry_max_interval_sec, Types::Coercible::Float.constrained(gt: 0)
