@@ -44,8 +44,6 @@ module Internal
     # --- 公開 URL ----------------------------------------------------------
 
     # 生成ページはサイト直下、エピソード資材は資材用プレフィックス配下を指す。
-    # 再生ページの JS が mp3 URL の拡張子だけを差し替えて .used.html /
-    # .transcript.txt を引くため、mp3 とその派生物は同じ階層に並ぶ。
     def url_for(object)
       return page_url(object) if PAGE_OBJECTS.include?(object)
 
@@ -58,7 +56,7 @@ module Internal
       "#{@public_base}/#{object}"
     end
 
-    # 画像などの恒久素材。R2 に置くのでリポジトリにも配信物にも実体を持たない。
+    # 画像などの恒久素材。
     def asset_url(object) = "#{@public_base}/#{@storage.asset_key(object)}"
 
     def upload_asset(object, path, content_type:)
