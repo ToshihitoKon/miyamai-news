@@ -379,6 +379,10 @@ R2 のキー構成:
   オブジェクト全体を表す値を入れて返すため、`object.range` の有無だけで分岐すると
   **全リクエストが 206 になる**。Slack などのクローラーは 206 を画像として扱わず、
   OGP 展開が黙って壊れる。
+- 206 の `content-range` は `object.range` の 3 形（`{offset, length}`・`{offset}` のみ・
+  `{suffix}`）すべてから組み立てる。`Range: bytes=-N`（末尾 N バイト。ID3v1 タグの
+  読み取り等で使われる）では R2 が `{suffix: N}` を返すので、`offset`/`length` だけを
+  見ると先頭からの範囲として名乗ってしまい、本文とヘッダーが食い違う。
 - `Publisher#run` 中に R2 操作または `wrangler deploy` が 1 つでも失敗したら
   即 abort する。公開物が index.html/feed.xml/manifest.json/archives.csv/mp3 の
   間で中途半端に不整合な状態のまま残らないようにするため。
@@ -462,11 +466,19 @@ R2 のキー構成:
   が必須（Vitest 上での実地確認で、この構成が実際に動くことを確認済み）。
 - 購読の宛先が 404/410 を返したら、その `endpoint` を D1 から削除する
   （ブラウザ側で購読解除・ブラウザデータ削除等が起きた購読は自然に消える）。
-- `POST /subscribe` の `endpoint` は既知の Push サービス（FCM/Mozilla/Apple）の
-  オリジンだけを許可する。ここを検証しないと任意のホストを endpoint として
+- `POST /subscribe` の `endpoint` は既知の Push サービス（FCM/Mozilla/Apple/
+  Microsoft WNS）だけを許可する。ブラウザが `pushManager.subscribe()` で返す endpoint は
+  必ずこのいずれかを指す。ここを検証しないと任意のホストを endpoint として
   登録でき、`/notify` がその都度そこへ `fetch` してしまう（SSRF・D1の汚染）。
+  - FCM/Mozilla/Apple はオリジンの完全一致で許可する。Edge が使う WNS は
+    `wns2-par02p.notify.windows.com` のようにリージョンごとにホスト名が変わるため、
+    `https`・既定ポートで `.notify.windows.com` に終わるホスト名を許可する
+    （`ALLOWED_ENDPOINT_HOST_SUFFIXES`）。先頭の `.` を含めて照合するのは
+    `evilnotify.windows.com` のような別ドメインを通さないため。
   一件でも不正な endpoint への送信が失敗しても他の購読者への配信を止めない
   設計（`handleNotify` の per-row try/catch）と合わせて、被害を最小化している。
+  per-row で握りつぶさないと、1 件の不正な購読・到達不能ホストで `Promise.all` 全体が
+  reject し、他の全購読者への配信と期限切れ購読の削除が巻き添えで止まる。
 - `Internal::EpisodeNotifier#notify` は Worker からのレスポンスが非 2xx
   （共有シークレットのずれによる 401 等）でも例外を投げないため、レスポンスの
   ステータスを明示的に見て `warn` する。見ないと Worker 側の認証エラーが
