@@ -48,9 +48,10 @@ export default {
 
     const ranged = request.headers.has('range') && object.range;
     if (ranged) {
-      const offset = object.range.offset ?? 0;
-      const length = object.range.length ?? object.size - offset;
-      headers.set('content-range', `bytes ${offset}-${offset + length - 1}/${object.size}`);
+      const { range, size } = object;
+      const offset = range.suffix !== undefined ? Math.max(size - range.suffix, 0) : (range.offset ?? 0);
+      const end = range.length !== undefined ? Math.min(offset + range.length, size) : size;
+      headers.set('content-range', `bytes ${offset}-${end - 1}/${size}`);
       return new Response(object.body, { status: 206, headers });
     }
 

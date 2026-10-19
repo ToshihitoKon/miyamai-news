@@ -1,14 +1,12 @@
 import webpush from "web-push";
 
-// ブラウザが pushManager.subscribe() で返す endpoint は、必ずこのいずれかの
-// Push サービスのオリジンを指す。検証を外すと任意のホストを endpoint として
-// 登録でき、/notify がそこへ無制限に fetch してしまう（SSRF・購読者データベースの
-// 汚染）。
 const ALLOWED_ENDPOINT_ORIGINS = [
   "https://fcm.googleapis.com",
   "https://updates.push.services.mozilla.com",
   "https://web.push.apple.com",
 ];
+
+const ALLOWED_ENDPOINT_HOST_SUFFIXES = [".notify.windows.com"];
 
 function isAllowedEndpoint(endpoint) {
   let url;
@@ -17,7 +15,12 @@ function isAllowedEndpoint(endpoint) {
   } catch {
     return false;
   }
-  return ALLOWED_ENDPOINT_ORIGINS.includes(url.origin);
+  if (ALLOWED_ENDPOINT_ORIGINS.includes(url.origin)) return true;
+  return (
+    url.protocol === "https:" &&
+    url.port === "" &&
+    ALLOWED_ENDPOINT_HOST_SUFFIXES.some((suffix) => url.hostname.endsWith(suffix))
+  );
 }
 
 export async function handleSubscribe(request, env) {
@@ -110,9 +113,6 @@ export async function handleNotify(request, env) {
           expiredEndpoints.push(row.endpoint);
         }
       } catch (error) {
-        // 1件の不正な購読・到達不能ホストが原因で Promise.all 全体が
-        // reject すると、他の全購読者への配信と期限切れ購読の削除が
-        // 巻き添えで止まってしまうため、ここで個別に握りつぶす。
         console.error(`push send failed for ${row.endpoint}: ${error.message}`);
       }
     }),
