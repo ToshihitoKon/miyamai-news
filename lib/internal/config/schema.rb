@@ -10,7 +10,7 @@ module Internal
     end
 
     class Pipeline < Base
-      attribute :mode, Types::Strict::String.default("digest")
+      attribute :until, Types::Strict::String.default("digest")
     end
 
     class Cloudflare < Base

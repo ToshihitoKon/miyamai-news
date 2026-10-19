@@ -85,18 +85,18 @@ RSpec.describe Pipeline do
   end
 
   describe "Episode非依存の独立コマンド" do
-    it "--clean は Episode を作らず EpisodeLogger を configure しない" do
+    it "clean は Episode を作らず EpisodeLogger を configure しない" do
       allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
       allow(ScriptGenerator).to receive(:work_globs).and_return([])
       allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
       allow(Publisher).to receive(:new).and_return(instance_double(Publisher, prunable_from_dist: []))
 
-      build_pipeline(clean: true).run
+      build_pipeline(command: "clean").run
 
       expect(Internal::EpisodeLogger.instance_variable_get(:@path)).to be_nil
     end
 
-    it "--clean は work/ に取得した handoff の台本も消す" do
+    it "clean は work/ に取得した handoff の台本も消す" do
       allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
       allow(ScriptGenerator).to receive(:work_globs).and_return([])
       allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
@@ -104,12 +104,12 @@ RSpec.describe Pipeline do
       FileUtils.mkdir_p(work_dir)
       File.write(handoff_tts_path, "tts")
 
-      build_pipeline(clean: true).run
+      build_pipeline(command: "clean").run
 
       expect(File.exist?(handoff_tts_path)).to be false
     end
 
-    it "--clean は Publisher#prunable_from_dist が削除可と判定した mp3 とその兄弟ファイルだけを dist/ から消す" do
+    it "clean は Publisher#prunable_from_dist が削除可と判定した mp3 とその兄弟ファイルだけを dist/ から消す" do
       allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
       allow(ScriptGenerator).to receive(:work_globs).and_return([])
       allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
@@ -121,7 +121,7 @@ RSpec.describe Pipeline do
       end
       allow(Publisher).to receive(:new).and_return(instance_double(Publisher, prunable_from_dist: [pruned_mp3]))
 
-      build_pipeline(clean: true).run
+      build_pipeline(command: "clean").run
 
       expect(File.exist?(File.join(dist_dir, pruned_mp3))).to be false
       expect(File.exist?(File.join(dist_dir, pruned_mp3.sub(/\.mp3\z/, ".used.txt")))).to be false
@@ -129,26 +129,26 @@ RSpec.describe Pipeline do
       expect(File.exist?(File.join(dist_dir, kept_mp3.sub(/\.mp3\z/, ".used.txt")))).to be true
     end
 
-    it "--ui-only は republish_ui のみ呼ぶ" do
+    it "republish-ui は republish_ui のみ呼ぶ" do
       publisher = instance_double(Publisher, republish_ui: nil)
       allow(Publisher).to receive(:new).and_return(publisher)
 
-      build_pipeline(ui_only: true).run
+      build_pipeline(command: "republish-ui").run
 
       expect(publisher).to have_received(:republish_ui)
       expect(Internal::EpisodeLogger.instance_variable_get(:@path)).to be_nil
     end
 
-    it "--clean-archive は clean_archive のみ呼ぶ" do
+    it "clean --archive は clean_archive のみ呼ぶ" do
       publisher = instance_double(Publisher, clean_archive: nil)
       allow(Publisher).to receive(:new).and_return(publisher)
 
-      build_pipeline(clean_archive: true).run
+      build_pipeline(command: "clean", archive: true).run
 
       expect(publisher).to have_received(:clean_archive)
     end
 
-    it "--clean は未完了の作業コピーの取得元 revision も消す（次回は R2 から取り直す）" do
+    it "clean は未完了の作業コピーの取得元 revision も消す（次回は R2 から取り直す）" do
       allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
       allow(ScriptGenerator).to receive(:work_globs).and_return([])
       allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
@@ -157,34 +157,34 @@ RSpec.describe Pipeline do
       marker = File.join(work_dir, Internal::RemoteState::BASE_REVISION_FILE)
       File.write(marker, "rev")
 
-      build_pipeline(clean: true).run
+      build_pipeline(command: "clean").run
 
       expect(File.exist?(marker)).to be false
     end
   end
 
   describe "Episode依存の経路" do
-    it "--publish-only は run_publish の後に handoff を処理済みにし、収集 window には触らない" do
+    it "publish は run_publish の後に handoff を処理済みにし、収集 window には触らない" do
       File.write(mp3_path, "fake mp3")
 
-      build_pipeline(publish_only: true, date: now, slot: "afternoon").run
+      build_pipeline(command: "publish", date: now, slot: "afternoon").run
 
       expect(fake_publisher).to have_received(:run).with(mp3_path, nil, nil)
       expect(fake_handoff).to have_received(:mark_done!).with("20260714_afternoon")
       expect(LastFetchStore).not_to have_received(:commit!)
     end
 
-    it "--publish-only は新規収集をしないため ScriptGenerator も R2 の状態取得も行わない" do
+    it "publish は新規収集をしないため ScriptGenerator も R2 の状態取得も行わない" do
       File.write(mp3_path, "fake mp3")
 
-      build_pipeline(publish_only: true, date: now, slot: "afternoon").run
+      build_pipeline(command: "publish", date: now, slot: "afternoon").run
 
       expect(ScriptGenerator).not_to have_received(:new)
       expect(fake_remote_state).not_to have_received(:checkout!)
     end
 
-    it "--digest-only は R2 の状態を取得してから digest するが、状態は書き戻さない" do
-      build_pipeline(digest_only: true, date: now, slot: "afternoon").run
+    it "--until digest は R2 の状態を取得してから digest するが、状態は書き戻さない" do
+      build_pipeline(until: "digest", date: now, slot: "afternoon").run
 
       expect(fake_remote_state).to have_received(:checkout!).ordered
       expect(ScriptGenerator).to have_received(:new).ordered
@@ -193,8 +193,8 @@ RSpec.describe Pipeline do
       expect(fake_handoff).not_to have_received(:upload!)
     end
 
-    it "--script-only は digest してから generate(format: false) を呼び、digest/writerの2フェーズとして計測する" do
-      pipeline = build_pipeline(script_only: true, date: now, slot: "afternoon")
+    it "--until script は digest してから generate(format: false) を呼び、digest/writerの2フェーズとして計測する" do
+      pipeline = build_pipeline(until: "script", date: now, slot: "afternoon")
       messages = collect_warnings(pipeline)
 
       pipeline.run
@@ -210,7 +210,7 @@ RSpec.describe Pipeline do
     it "--date/--slot を省略した実行は、端末のタイムゾーンによらず JST で現在の回を決める" do
       allow(Time).to receive(:now).and_return(Time.new(2026, 7, 14, 3, 0, 0, "+00:00")) # JST 12:00
 
-      build_pipeline(digest_only: true).run
+      build_pipeline(until: "digest").run
 
       expect(fake_remote_state).to have_received(:checkout!).with(owner: "20260714_afternoon")
     end
@@ -218,20 +218,20 @@ RSpec.describe Pipeline do
     it "JST の深夜 0〜5 時は前日の midnight の回として扱う" do
       allow(Time).to receive(:now).and_return(Time.new(2026, 7, 14, 16, 0, 0, "+00:00")) # JST 7/15 01:00
 
-      build_pipeline(digest_only: true).run
+      build_pipeline(until: "digest").run
 
       expect(fake_remote_state).to have_received(:checkout!).with(owner: "20260714_midnight")
     end
 
     it "作業コピーを取り出すときは、この回の episode_key を owner として渡す" do
-      build_pipeline(digest_only: true, date: now, slot: "afternoon").run
+      build_pipeline(until: "digest", date: now, slot: "afternoon").run
 
       expect(fake_remote_state).to have_received(:checkout!).with(owner: "20260714_afternoon")
     end
 
     it "別の回が残した作業コピーを引き継ぐときは、その回を警告する" do
       allow(fake_remote_state).to receive_messages(checked_out_by: "20260714_morning", checkout!: :resumed)
-      pipeline = build_pipeline(digest_only: true, date: now, slot: "afternoon")
+      pipeline = build_pipeline(until: "digest", date: now, slot: "afternoon")
       messages = collect_warnings(pipeline)
 
       pipeline.run
@@ -239,8 +239,8 @@ RSpec.describe Pipeline do
       expect(messages).to include(a_string_including("left by 20260714_morning"))
     end
 
-    it "pipeline.mode: digest のフラグなし実行は digest までで止まり、状態も handoff も書き込まない" do
-      allow(Config).to receive(:mode).and_return("digest")
+    it "pipeline.until: digest の --until なし実行は digest までで止まり、状態も handoff も書き込まない" do
+      allow(Config).to receive(:until_stage).and_return("digest")
 
       build_pipeline(date: now, slot: "afternoon").run
 
@@ -258,7 +258,7 @@ RSpec.describe Pipeline do
       expect(ScriptGenerator).not_to have_received(:new)
     end
 
-    context "フラグなし実行で R2 にこの回の handoff が無い場合" do
+    context "--until なし実行で R2 にこの回の handoff が無い場合" do
       it "生成した台本一式を R2 に置いてから、R2 経由で合成して publish し、handoff を処理済みにする" do
         events = []
         allow(fake_remote_state).to receive(:checkout!) { events << :checkout }
@@ -318,7 +318,7 @@ RSpec.describe Pipeline do
       it "この回の収集時刻が分からなければ確定せずに abort する" do
         allow(fake_generator).to receive(:collected_at).and_return(nil)
 
-        expect { build_pipeline(handoff_only: true, date: now, slot: "afternoon").run }.to raise_error(SystemExit)
+        expect { build_pipeline(until: "handoff", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
         expect(LastFetchStore).not_to have_received(:commit!)
         expect(fake_handoff).not_to have_received(:upload!)
@@ -333,9 +333,9 @@ RSpec.describe Pipeline do
           handoff_state[:uploaded] = true
         end
 
-        expect { build_pipeline(handoff_only: true, date: now, slot: "afternoon").run }
+        expect { build_pipeline(until: "handoff", date: now, slot: "afternoon").run }
           .to raise_error(Aws::S3::Errors::ServiceError)
-        build_pipeline(handoff_only: true, date: now, slot: "afternoon").run
+        build_pipeline(until: "handoff", date: now, slot: "afternoon").run
 
         expect(handoff_state[:uploaded]).to be true
         expect(fake_remote_state).to have_received(:push!).twice
@@ -396,7 +396,7 @@ RSpec.describe Pipeline do
       expect(fake_handoff).to have_received(:mark_done!).with("20260714_afternoon")
     end
 
-    it "フラグなし実行で R2 にこの回の handoff があれば、生成も状態取得もせずに合成・publish する" do
+    it "--until なし実行で R2 にこの回の handoff があれば、生成も状態取得もせずに合成・publish する" do
       handoff_state[:uploaded] = true
 
       build_pipeline(date: now, slot: "afternoon").run
@@ -408,8 +408,8 @@ RSpec.describe Pipeline do
       expect(fake_handoff).to have_received(:mark_done!)
     end
 
-    it "--handoff-only は R2 へのアップロードと状態の書き戻しで止まる（合成も publish もしない）" do
-      build_pipeline(handoff_only: true, date: now, slot: "afternoon").run
+    it "--until handoff は R2 へのアップロードと状態の書き戻しで止まる（合成も publish もしない）" do
+      build_pipeline(until: "handoff", date: now, slot: "afternoon").run
 
       expect(fake_handoff).to have_received(:upload!)
       expect(fake_remote_state).to have_received(:push!)
@@ -427,24 +427,43 @@ RSpec.describe Pipeline do
       expect(File.exist?(transcript_path)).to be false
     end
 
-    it "--handoff-only は pipeline.mode が digest でも実行できる（音声合成の config を要求しない）" do
-      allow(Config).to receive(:mode).and_return("digest")
+    it "pipeline.until: handoff の --until なし実行は R2 へのアップロードで止まる" do
+      allow(Config).to receive(:until_stage).and_return("handoff")
 
-      build_pipeline(handoff_only: true, date: now, slot: "afternoon").run
+      build_pipeline(date: now, slot: "afternoon").run
 
       expect(fake_handoff).to have_received(:upload!)
+      expect(fake_handoff).not_to have_received(:download!)
+    end
+
+    it "pipeline.until を超える --until は何もせずに abort する" do
+      allow(Config).to receive(:until_stage).and_return("handoff")
+
+      expect { build_pipeline(until: "synthesize", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
+
+      expect(fake_remote_state).not_to have_received(:checkout!)
+      expect(ScriptGenerator).not_to have_received(:new)
+    end
+
+    it "publish は pipeline.until が publish 未満なら abort する" do
+      allow(Config).to receive(:until_stage).and_return("synthesize")
+      File.write(mp3_path, "fake mp3")
+
+      expect { build_pipeline(command: "publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
+
+      expect(fake_publisher).not_to have_received(:run)
     end
 
     it "アップロード時に修復した used_news を work/ にも書き戻し、紹介済み履歴はそれを元に記録される" do
       allow(UsedNewsFormatter).to receive(:ensure_valid!).and_return("repaired used")
 
-      build_pipeline(handoff_only: true, date: now, slot: "afternoon").run
+      build_pipeline(until: "handoff", date: now, slot: "afternoon").run
 
       expect(File.read(generated_used_path)).to eq("repaired used")
     end
 
-    it "--synthesize-only は R2 にこの回の handoff が無ければ、生成して置いてから R2 経由で合成する" do
-      build_pipeline(synthesize_only: true, date: now, slot: "afternoon").run
+    it "--until synthesize は R2 にこの回の handoff が無ければ、生成して置いてから R2 経由で合成する" do
+      build_pipeline(until: "synthesize", date: now, slot: "afternoon").run
 
       expect(fake_generator).to have_received(:generate).with(no_args)
       expect(fake_handoff).to have_received(:upload!)
@@ -452,10 +471,10 @@ RSpec.describe Pipeline do
       expect(fake_publisher).not_to have_received(:run)
     end
 
-    it "--synthesize-only は R2 経由で synthesize までで止まる（publish も handoff の処理済み化もしない）" do
+    it "--until synthesize は R2 経由で synthesize までで止まる（publish も handoff の処理済み化もしない）" do
       handoff_state[:uploaded] = true
 
-      build_pipeline(synthesize_only: true, date: now, slot: "afternoon").run
+      build_pipeline(until: "synthesize", date: now, slot: "afternoon").run
 
       expect(fake_handoff).to have_received(:download!)
       expect(fake_publisher).not_to have_received(:run)
@@ -493,13 +512,13 @@ RSpec.describe Pipeline do
       expect(duration_lines.last).to match(/\A  publish: [\d.]+s \(failed\)\z/)
     end
 
-    it "--clean のような独立コマンドではサマリが出力されない" do
+    it "clean のような独立コマンドではサマリが出力されない" do
       allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
       allow(ScriptGenerator).to receive(:work_globs).and_return([])
       allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
       allow(Publisher).to receive(:new).and_return(instance_double(Publisher, prunable_from_dist: []))
 
-      pipeline = build_pipeline(clean: true)
+      pipeline = build_pipeline(command: "clean")
       messages = collect_warnings(pipeline)
 
       pipeline.run
@@ -509,52 +528,55 @@ RSpec.describe Pipeline do
     end
   end
 
-  describe ".target_mode_for" do
+  describe ".target_stage_for" do
     after { Config.path = File.expand_path("fixtures/config.yaml", __dir__) }
 
     it "returns nil for the independent commands" do
-      [:clean, :clean_archive, :ui_only].each do |flag|
-        expect(Pipeline.target_mode_for(flag => true)).to be_nil
+      %w[clean republish-ui].each do |command|
+        expect(Pipeline.target_stage_for(command: command)).to be_nil
       end
     end
 
-    it "returns digest for --digest-only" do
-      expect(Pipeline.target_mode_for(digest_only: true)).to eq("digest")
+    it "returns --until when given" do
+      expect(Pipeline.target_stage_for(until: "handoff")).to eq("handoff")
     end
 
-    it "returns synthesize for --script-only, --synthesize-only and --handoff-only" do
-      expect(Pipeline.target_mode_for(script_only: true)).to eq("synthesize")
-      expect(Pipeline.target_mode_for(synthesize_only: true)).to eq("synthesize")
-      expect(Pipeline.target_mode_for(handoff_only: true)).to eq("synthesize")
+    it "returns publish for the publish command and Config.until_stage without --until" do
+      expect(Pipeline.target_stage_for(command: "publish")).to eq("publish")
+      expect(Pipeline.target_stage_for({})).to eq("publish")
     end
 
-    it "falls back to Config.mode for --publish-only and no flags" do
-      expect(Pipeline.target_mode_for(publish_only: true)).to eq("publish")
-      expect(Pipeline.target_mode_for({})).to eq("publish")
+    it "raises StageNotAllowed when the stage is beyond pipeline.until" do
+      Config.path = File.expand_path("fixtures/config_digest.yaml", __dir__)
+
+      expect { Pipeline.target_stage_for(until: "script") }.to raise_error(Pipeline::StageNotAllowed)
+      expect { Pipeline.target_stage_for(command: "publish") }.to raise_error(Pipeline::StageNotAllowed)
+    end
+  end
+
+  describe "未知のコマンド" do
+    it "run も target_stage_for も、パイプラインへ落とさずに ArgumentError にする" do
+      expect { build_pipeline(command: "status").run }.to raise_error(ArgumentError, /unknown command/)
+      expect { Pipeline.target_stage_for(command: "status") }.to raise_error(ArgumentError, /unknown command/)
+
+      expect(fake_remote_state).not_to have_received(:checkout!)
+      expect(fake_publisher).not_to have_received(:run)
     end
   end
 
   describe ".reaches?" do
-    after { Config.path = File.expand_path("fixtures/config.yaml", __dir__) }
-
-    it "returns false for the independent commands, which have no target mode" do
-      expect(Pipeline.reaches?("digest", clean: true)).to be false
+    it "returns false for the independent commands, which have no target stage" do
+      expect(Pipeline.reaches?("digest", command: "clean")).to be false
     end
 
-    it "compares against Config::MODE_ORDER" do
-      expect(Pipeline.reaches?("digest", digest_only: true)).to be true
-      expect(Pipeline.reaches?("publish", digest_only: true)).to be false
+    it "compares against Config::STAGE_ORDER" do
+      expect(Pipeline.reaches?("digest", until: "digest")).to be true
+      expect(Pipeline.reaches?("publish", until: "synthesize")).to be false
     end
 
-    it "returns true for --publish-only and no flags when pipeline.mode is publish" do
-      expect(Pipeline.reaches?("publish", publish_only: true)).to be true
+    it "returns true for the publish command and no --until when pipeline.until is publish" do
+      expect(Pipeline.reaches?("publish", command: "publish")).to be true
       expect(Pipeline.reaches?("publish", {})).to be true
-    end
-
-    it "returns false when pipeline.mode is below the requested mode" do
-      Config.path = File.expand_path("fixtures/config_digest.yaml", __dir__)
-
-      expect(Pipeline.reaches?("publish", {})).to be false
     end
   end
 end

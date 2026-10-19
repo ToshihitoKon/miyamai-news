@@ -95,7 +95,7 @@ module Internal
 
     def conflict_message
       "pipeline state in R2 was updated by another run after #{@work_dir} checked it out. " \
-        "Discard the unfinished local run with --clean and run again."
+        "Discard the unfinished local run with the clean command and run again."
     end
 
     def remote_revision

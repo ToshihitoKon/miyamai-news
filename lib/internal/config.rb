@@ -17,18 +17,23 @@ module Config
   # AppConfig 構築時の型不整合（Dry::Struct::Error）をラップする。
   class InvalidConfigError < StandardError; end
 
-  # pipeline.mode の3段階と、その到達順序。値が大きいほど後段まで進む。
+  # パイプラインの工程と、その到達順序。値が大きいほど後段まで進む。
   #   digest:     RSS収集 → AI選別 → facts抽出まで。
-  #   synthesize: digest の続きから台本の R2 への受け渡し・音声合成・BGM合成まで。
+  #   script:     digest の続きから、人間が読む台本（TTS 整形前）まで。
+  #   handoff:    script の続きから TTS 整形・収集 window の確定・台本一式の R2 への受け渡しまで。
+  #   synthesize: handoff の続きから音声合成・BGM合成まで。
   #   publish:    synthesize の続きから公開まで（フルパイプライン）。
-  MODE_ORDER = { "digest" => 0, "synthesize" => 1, "publish" => 2 }.freeze
+  STAGE_ORDER = { "digest" => 0, "script" => 1, "handoff" => 2, "synthesize" => 3, "publish" => 4 }.freeze
+  STAGES = STAGE_ORDER.keys.freeze
 
-  # どの mode でも必須のセクション。
+  # どの工程でも必須のセクション。
   REQUIRED_SECTIONS_BASE = %w[cloudflare].freeze
 
-  # 各 mode で新たに必須になる config のトップレベルセクション名の差分。
+  # 各工程で新たに必須になる config のトップレベルセクション名の差分。
   REQUIRED_SECTIONS_DELTA = {
     "digest" => %w[ai_agent program_details rss_feed_sources collect],
+    "script" => %w[],
+    "handoff" => %w[],
     "synthesize" => %w[voicepeak mixer assets],
     "publish" => %w[],
   }.freeze
@@ -45,7 +50,7 @@ module Config
       @app_config = load_app_config
     end
 
-    def mode = app_config.pipeline.mode
+    def until_stage = app_config.pipeline.until
 
     def cloudflare = app_config.cloudflare
     def assets = app_config.assets
@@ -57,11 +62,11 @@ module Config
     def mixer = app_config.mixer
     def web_push = app_config.web_push
 
-    # target_mode までに必須のトップレベルセクションが揃っているか一括検証する。
-    def validate_for!(target_mode)
-      raise ArgumentError, "unknown pipeline mode: #{target_mode}" unless MODE_ORDER.key?(target_mode)
+    # stage までに必須のトップレベルセクションが揃っているか一括検証する。
+    def validate_for!(stage)
+      raise ArgumentError, "unknown pipeline stage: #{stage} (must be one of: #{STAGES.join(', ')})" unless STAGE_ORDER.key?(stage)
 
-      validate_sections!(*required_sections_for(target_mode), context: "pipeline.mode=#{target_mode}")
+      validate_sections!(*required_sections_for(stage), context: "pipeline.until=#{stage}")
     end
 
     # 公開先の設定が揃っているか検証する。
@@ -82,10 +87,10 @@ module Config
 
     private
 
-    # 共通の必須セクションに、target_mode 自身とそれより手前の全 mode の差分を合算する（加算方式）。
-    def required_sections_for(target_mode)
-      modes = MODE_ORDER.keys.first(MODE_ORDER[target_mode] + 1)
-      REQUIRED_SECTIONS_BASE + modes.flat_map { |mode| REQUIRED_SECTIONS_DELTA.fetch(mode) }
+    # 共通の必須セクションに、stage 自身とそれより手前の全工程の差分を合算する（加算方式）。
+    def required_sections_for(stage)
+      stages = STAGES.first(STAGE_ORDER[stage] + 1)
+      REQUIRED_SECTIONS_BASE + stages.flat_map { |s| REQUIRED_SECTIONS_DELTA.fetch(s) }
     end
 
     def app_config
@@ -93,9 +98,24 @@ module Config
     end
 
     def load_app_config
-      Internal::Config::AppConfig.new(raw_data)
+      data = raw_data
+      ensure_no_legacy_keys!(data)
+      Internal::Config::AppConfig.new(data).tap { |cfg| ensure_known_stage!(cfg.pipeline.until) }
     rescue Dry::Struct::Error, Psych::Exception => e
       raise InvalidConfigError, "invalid config: #{e.message}"
+    end
+
+    def ensure_no_legacy_keys!(data)
+      pipeline = data.is_a?(Hash) ? data["pipeline"] : nil
+      return unless pipeline.is_a?(Hash) && pipeline.key?("mode")
+
+      raise InvalidConfigError, "invalid config: pipeline.mode was renamed to pipeline.until (#{STAGES.join('/')})"
+    end
+
+    def ensure_known_stage!(stage)
+      return if STAGE_ORDER.key?(stage)
+
+      raise InvalidConfigError, "invalid config: pipeline.until must be one of #{STAGES.join('/')}, got #{stage}"
     end
 
     def raw_data

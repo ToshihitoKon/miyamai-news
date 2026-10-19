@@ -10,34 +10,56 @@ require_relative "lib/internal/progress"
 require_relative "lib/pipeline"
 require_relative "lib/slot"
 
+COMMANDS = {
+  "run" => "run the pipeline up to --until (default: pipeline.until)",
+  "publish" => "publish the target episode from dist/",
+  "republish-ui" => "regenerate index.html / manifest.json without publishing a new episode",
+  "clean" => "clean work/ and delete published dist/ artifacts (--archive: delete archived/ instead)",
+}.freeze
+
+COMMAND_OPTIONS = {
+  "run" => [:until, :date, :slot],
+  "publish" => [:date, :slot],
+  "republish-ui" => [],
+  "clean" => [:archive],
+}.freeze
+
 def parse_args(argv)
   opts = {}
   parser = OptionParser.new do |o|
-    o.banner = "Usage: ruby miyamai_news.rb [options]"
+    o.banner = "Usage: ruby miyamai_news.rb [#{COMMANDS.keys.join('|')}] [options]"
+    o.separator ""
+    o.separator "Commands (default: run):"
+    COMMANDS.each { |name, desc| o.separator format("    %-14s %s", name, desc) }
+    o.separator ""
+    o.separator "Options:"
     o.on("--config PATH", "path to the config file (default: config.yaml)") { |v| opts[:config] = v }
-    o.on("--clean", "clean work/ and delete published dist/ artifacts") { opts[:clean] = true }
-    o.on("--clean-archive", "permanently delete archived artifacts under archived/") { opts[:clean_archive] = true }
-    o.on("--ui-only", "regenerate index.html / manifest.json only") { opts[:ui_only] = true }
     o.on("--ci", "non-interactive mode: plain progress lines instead of spinner animation") { opts[:ci] = true }
-    o.on("--digest-only", "generate news selection/summary only, then stop") { opts[:digest_only] = true }
-    o.on("--script-only", "generate the script only, then stop") { opts[:script_only] = true }
-    o.on("--handoff-only", "generate the script and upload it to R2 (handoff/), then stop") { opts[:handoff_only] = true }
-    o.on("--synthesize-only", "voice/BGM synthesis only (write to dist/ and exit)") { opts[:synthesize_only] = true }
-    o.on("--publish-only", "publish the target episode from dist/ only") { opts[:publish_only] = true }
-    o.on("--date DATE", "target date (e.g. 2026-07-10)") { |v| opts[:date] = Time.parse(v) }
-    o.on("--slot SLOT", "target slot (#{Slot::JA_LABELS.keys.join('/')})") do |v|
+    o.on("--until STAGE", "[run] stop after STAGE (#{Config::STAGES.join('/')})") do |v|
+      abort "invalid argument: --until #{v} (must be one of: #{Config::STAGES.join(', ')})" unless Config::STAGE_ORDER.key?(v)
+
+      opts[:until] = v
+    end
+    o.on("--date DATE", "[run/publish] target date (e.g. 2026-07-10)") { |v| opts[:date] = Time.parse(v) }
+    o.on("--slot SLOT", "[run/publish] target slot (#{Slot::JA_LABELS.keys.join('/')})") do |v|
       abort "invalid argument: --slot #{v} (must be one of: #{Slot::JA_LABELS.keys.join(', ')})" unless Slot::JA_LABELS.key?(v)
 
       opts[:slot] = v
     end
+    o.on("--archive", "[clean] permanently delete archived artifacts under archived/") { opts[:archive] = true }
   end
 
   begin
     leftover = parser.parse!(argv)
+    opts[:command] = leftover.shift || "run"
+    abort "unknown command: #{opts[:command]}\n\n#{parser}" unless COMMANDS.key?(opts[:command])
     abort "unknown argument: #{leftover.first}" unless leftover.empty?
   rescue OptionParser::ParseError, ArgumentError => e
     abort "#{e.message}\n\n#{parser}"
   end
+
+  unsupported = opts.keys - [:command, :config, :ci] - COMMAND_OPTIONS.fetch(opts[:command])
+  abort "--#{unsupported.first} is not available for #{opts[:command]}" unless unsupported.empty?
 
   opts
 end
@@ -48,17 +70,13 @@ Internal::Progress.ci = ARGS[:ci] || false
 begin
   Config.path = File.expand_path(ARGS[:config]) if ARGS[:config]
 
-  if ARGS[:ui_only]
-    Config.validate_sections!("cloudflare", "assets")
-  elsif ARGS[:clean] || ARGS[:clean_archive]
-    Config.validate_publish_target!
-  elsif ARGS[:handoff_only]
-    Config.validate_for!("digest")
-  else
-    Config.validate_for!(Config.mode)
+  case ARGS[:command]
+  when "republish-ui" then Config.validate_sections!("cloudflare", "assets")
+  when "clean" then Config.validate_publish_target!
+  else Config.validate_for!(Pipeline.target_stage_for(ARGS))
   end
 
-  Internal::NodeDeps.validate_wrangler_build!(root_dir: __dir__) if ARGS[:ui_only] || Pipeline.reaches?("publish", ARGS)
+  Internal::NodeDeps.validate_wrangler_build!(root_dir: __dir__) if ARGS[:command] == "republish-ui" || Pipeline.reaches?("publish", ARGS)
 rescue Config::MissingConfigError, Config::MissingKeyError, Config::InvalidConfigError, ArgumentError => e
   abort e.message
 rescue Internal::NodeDeps::MissingDependencyError => e

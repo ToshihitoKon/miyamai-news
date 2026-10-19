@@ -160,10 +160,10 @@ RSpec.describe Internal::Config do
       expect(cfg.mixer).to be_nil
     end
 
-    it "defaults pipeline.mode to digest when the pipeline section is absent" do
+    it "defaults pipeline.until to digest when the pipeline section is absent" do
       cfg = described_class.new({})
 
-      expect(cfg.pipeline.mode).to eq("digest")
+      expect(cfg.pipeline.until).to eq("digest")
     end
 
     it "raises Dry::Struct::Error when a section has the wrong type" do

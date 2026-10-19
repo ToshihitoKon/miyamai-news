@@ -227,7 +227,7 @@
   副産物）。そのままチャンクにすると空の合成呼び出しが発生するため、最後にこの
   組だけを取り除く。
 - `voice_{date}_{slot}.mp3` は合成結果のキャッシュとして機能する。存在すれば
-  VOICEPEAK を起動せず再利用する（`--synthesize-only` でブースト値だけ調整したい
+  VOICEPEAK を起動せず再利用する（`--until synthesize` でブースト値だけ調整したい
   場合など）。
 - `wav_{date}_{slot}/` ディレクトリが残っている場合、前回の合成が途中でクラッシュ
   した痕跡。完全成功時のみ削除されるので、残っているチャンクを再利用して続きから
@@ -270,9 +270,9 @@
 `retention_episodes` は「保持する話数」という公開ポリシーなので、ストレージの
 設定ではなく `Site` が持つ。
 
-`--ui-only`（`republish_ui` → `deploy_site`）は `assets` を参照するため、
+`republish-ui`（`republish_ui` → `deploy_site`）は `assets` を参照するため、
 `miyamai_news.rb` は `cloudflare` に加えて `assets` も起動時に検証する
-（`Config.validate_sections!("cloudflare", "assets")`）。`--clean`/`--clean-archive`
+（`Config.validate_sections!("cloudflare", "assets")`）。`clean`/`clean --archive`
 は `deploy_site` を呼ばないので `cloudflare` のみで足りる。
 
 `Internal` 名前空間の中では `Config` が `Internal::Config`（dry-struct のスキーマ）に
@@ -339,11 +339,11 @@ R2 のキー構成:
   feed.xml が消える）。Worker のコードだけ直したい場合も同じ。
   `directory` を書かないことで素の deploy はエラーで止まり、
   `--assets <ステージング>` を渡す publish 経路だけが通るようにしている。
-  Worker の変更を反映したいときも `--ui-only` を使う。
+  Worker の変更を反映したいときも `republish-ui` を使う。
 - **static assets のデプロイはバージョン単位で、ステージングに無いファイルは
   公開サイトから消える。** そのため `run` / `republish_ui` のどちらも、画像を
   含む全ファイルを毎回ステージングディレクトリへ書き出してから 1 回だけ
-  `wrangler deploy` する。画像だけ載せ忘れると初回の `--ui-only` でアートワークが
+  `wrangler deploy` する。画像だけ載せ忘れると初回の `republish-ui` でアートワークが
   消える。
 - `_headers` で `feed.xml` の `Content-Type` を `application/atom+xml; charset=utf-8`
   へ明示的に上書きする。拡張子ベースの既定推定だと `.xml` は `application/xml` 系に
@@ -441,7 +441,7 @@ R2 のキー構成:
   title / used_news を比較し、同一なら既存の `updated_at` を引き継ぐ。
   異なるとき（および新規エピソード）のみ現在時刻を入れる。
   `updated_at` は feed.xml の `<updated>` の源であり、ここが「実行時刻」だと
-  内容が同じ再 publish や `--ui-only` でも `<updated>` が動いて購読者全員に
+  内容が同じ再 publish や `republish-ui` でも `<updated>` が動いて購読者全員に
   誤った新着通知が飛ぶ。以前はこれを「既存 slot へ再 publish しない」という
   運用ルールで回避していたが、値のセマンティクス自体を修正して解消した。
 - 既存の `updated_at` が空文字の行（過去に空で記録されたもの）からは引き継がず
@@ -499,7 +499,7 @@ R2 のキー構成:
 - `templates/sw.js.erb`（Service Worker）は `Publisher#deploy_site`
   （`lib/publisher.rb`）の第4の生成物としてステージングディレクトリに書き出す。
   `Internal::Site#deploy` は渡されたディレクトリの中身でバージョン単位の全置換を
-  行うため、ここに含めないと次回の `--ui-only` 実行だけで `sw.js` が公開サイトから
+  行うため、ここに含めないと次回の `republish-ui` 実行だけで `sw.js` が公開サイトから
   消え、ブラウザに登録済みの Service Worker が更新されず購読が実質的に壊れる
   （気づきにくい形の障害になるため、この一文だけは明記しておく）。`Config.web_push`
   の有無で書き出しを分岐させず常に書き出しているのはこのためで、将来 `web_push`
@@ -513,7 +513,7 @@ R2 のキー構成:
   している（同じ条件を2箇所に別々に持つと、片方だけ変更したときに feed.xml の
   `<updated>` が動くタイミングと通知が飛ぶタイミングがずれるため）。
   `#republish_ui` は `build_archives` を呼ばず `fetch_existing_archives` のみを
-  使うため、`--ui-only` では判定自体が発生せず通知も発火しない。
+  使うため、`republish-ui` では判定自体が発生せず通知も発火しない。
 - `content_changed?` は `used_news_given`（`Publisher#run` の `used_txt_path` が
   渡されたかどうか）も見る。`used_txt_path` が nil または実体が既に無い場合、
   `load_and_validate_used_news` は空文字列を返すが、これは「used_news を意図的に
@@ -549,15 +549,14 @@ R2 のキー構成:
   `npx wrangler` にすると `node_modules/.bin` 経由の別バージョンを検証して
   しまい、実際の deploy が使うバイナリ（PATH 解決、環境によってはグローバル
   インストール版）と食い違う。
-- 上記の validation は `--ui-only` または `Pipeline.reaches?("publish", ARGS)`
-  が真の場合だけ呼ぶ。`Pipeline.target_mode_for(args)`（`--clean` 系・
-  `--ui-only` は pipeline.mode と無関係な
-  独立コマンドなので nil を返す）と、それを `Config::MODE_ORDER` で比較する
-  `Pipeline.reaches?(mode, args)` を `Pipeline` に持たせている。`Config` では
-  なく `Pipeline` に置くのは、CLI フラグ（`args`）と mode の対応づけが
-  `Pipeline#run` 自身の知識だから。`--digest-only` / `--script-only` /
-  `--synthesize-only` はこの判定で正しく対象外になる（`pipeline.mode:
-  publish` の環境でも deploy 前で止まるため）。`--ui-only` は mode の概念の
+- 上記の validation は `republish-ui` または `Pipeline.reaches?("publish", ARGS)`
+  が真の場合だけ呼ぶ。`Pipeline.target_stage_for(args)`（`clean`・
+  `republish-ui` は工程と無関係な独立コマンドなので nil を返す）と、それを
+  `Config::STAGE_ORDER` で比較する `Pipeline.reaches?(stage, args)` を `Pipeline` に
+  持たせている。`Config` ではなく `Pipeline` に置くのは、サブコマンド・`--until`
+  （`args`）と工程の対応づけが `Pipeline#run` 自身の知識だから。`--until` に
+  publish より手前の工程を指定した実行はこの判定で正しく対象外になる（`pipeline.until:
+  publish` の環境でも deploy 前で止まるため）。`republish-ui` は工程の概念の
   外側で deploy するため、呼び出し側で明示的に特別扱いする。
 
 ### 旧 GCS feed の凍結（移行告知）
@@ -615,7 +614,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   `Pipeline#commit_episode!` がそれを読む（`ScriptGenerator#collected_at`）。収集したプロセスが
   途中で落ちて別プロセスが中間ファイルを再利用する場合でも、収集した時点の時刻で確定
   できるようにするため（プロセスローカルなフラグに頼らない）。回ごとの中間ファイルなので
-  R2 には同期せず、`--clean` で消える。
+  R2 には同期せず、`clean` で消える。
 - 最新の確定より古い回は作り直せない（後の回と収集範囲が重なるため）。
 - 確定履歴導入前の `last_fetch.json`（`confirmed_at` だけを持つ形式）は、`confirmed_at` を
   最古扱いの確定（episode `legacy`）として読み替える。次の回の起点としてそのまま効き、
@@ -626,8 +625,8 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 - `read_data` は、last_fetch.json が valid JSON だが Hash でない壊れ方をしていた場合、
   デフォルト値で上書きせず abort する。上書きすると手動修復・AI による復旧の余地を
   失うため。
-- `--publish-only` は収集 window に一切触らない（確定は R2 に台本一式を置く時点で済んで
-  いる）。`--digest-only`/`--script-only` は状態を R2 へ書き戻さないので、収集 window を
+- `publish` コマンドは収集 window に一切触らない（確定は R2 に台本一式を置く時点で済んで
+  いる）。`--until digest`/`--until script` は状態を R2 へ書き戻さないので、収集 window を
   進めない。
 
 ### ScriptGenerator / AI パイプライン
@@ -651,7 +650,7 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
   `rss_feed_sources` 記載順（`fetched_items.flatten` 順）で先勝ち。
 - `load_or_collect_news` は `news_<key>.txt` があれば再利用し、無ければ収集する。`news_<key>.txt` があって収集時刻の
   `news_collected_at_<key>.txt` が無い場合（この仕組み導入前の中間ファイル）は、確定する
-  時刻が分からないので中断する（`--clean` で捨てる）。
+  時刻が分からないので中断する（`clean` で捨てる）。
 - writer ステップ（台本執筆）は、既に抽出済みの facts シートに基づいて執筆させる
   よう**プロンプト側**で指示している（Web への再アクセスによる手戻り・情報の
   食い違いを防ぐため）。`--allowedTools "Read Write WebFetch"` は `claude` 分岐
@@ -715,8 +714,8 @@ Atom に一度だけ差し替えて凍結した。生成コードは持たない
 
 ### Pipeline（フェーズ計測）
 
-- `Internal::PhaseTimer#measure` の `"digest"` ラベルは `run_digest`（`--digest-only`
-  の到達点、digest だけで終わる実行）と `run_script`（`--script-only`。digest の
+- `Internal::PhaseTimer#measure` の `"digest"` ラベルは `run_digest`（`--until digest`
+  の到達点、digest だけで終わる実行）と `run_script`（`--until script`。digest の
   直後に `"writer"` へ進む実行）の両方で使う。どちらも計測する処理の実体
   （collect→select→facts）は同じだが、実行文脈（この後 writer が続くか
   どうか）は異なる。ラベルは「どの処理を計測したか」を表す名前であり、
@@ -738,12 +737,12 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
   episode を知らない `HttpFetcher` など、経路の異なる全呼び出し元に個別に
   `log_path` を注入するとシグネチャ変更が広範囲に波及するため、Config と同じ
   「一度設定してどこからでも参照する」パターンを踏襲した。
-- `configure` されるまで（`--clean`/`--clean-archive`/`--ui-only`
+- `configure` されるまで（`clean`/`clean --archive`/`republish-ui`
   など episode 生成前に早期 return する経路）
   は `record` が no-op になる。これらの経路は AI CLI や VOICEPEAK を呼ばないため
   実害はない。
-- **常に追記（truncate しない）**。`--digest-only`→`--script-only`→
-  `--synthesize-only`→`--publish-only` を別プロセスで順に実行する運用がある
+- **常に追記（truncate しない）**。`--until digest`→`--until script`→
+  `--until synthesize`→`publish` コマンドを別プロセスで順に実行する運用がある
   ため、`configure` のたびに切り詰めると前段の実行ログが消えてしまう。
 - **`ScriptGenerator#fetch_sources_in_parallel` は複数スレッドから同時に
   `HttpFetcher#get` を呼ぶ**（既存の前提。前掲「FeedCache」節参照）ため、
@@ -779,7 +778,7 @@ stdout/stderr・所要時間・リトライ回数等は、従来 `warn` の文�
   超過リスク（Issue #90）を認識した上での制約であり、stdin/一時ファイルへの
   切り替えでは解決できない。
 - `work_globs(work_dir)` は `work/*.log` を返し、`Pipeline#clean_work_dir` が
-  他コンポーネントの `work_globs` と合算して `--clean` の対象にする
+  他コンポーネントの `work_globs` と合算して `clean` の対象にする
   （`ScriptGenerator`/`VoiceSynthesizer` と同じホワイトリスト方式）。
 
 ### used_news の表示フォーマット（Markdown サブセット）
@@ -999,13 +998,13 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   は先頭の `##` 起点なので、要約を `### タイトル` 配下に置く限り前置き除去には影響しない。
 - used_news を書く工程は 2 つある。extractor が facts と一緒に**暫定版**を
   `news_used_provisional_<episode_key>.txt`（`ScriptGenerator.provisional_used_news_path`）
-  に書き（`templates/extractor.prompt.erb`。digest mode の到達点でも履歴の元データを残す
+  に書き（`templates/extractor.prompt.erb`。`--until digest` の到達点でも履歴の元データを残す
   ため。候補として facts 化した全ニュースが対象）、writer 到達時に**別パス**
   `news_used_<episode_key>.txt`（`ScriptGenerator.used_news_path`。`templates/writer.prompt.erb`。
   台本で実際に紹介したもの）へ**確定版**を新規に書く。両パスとも `news_*.txt` グロブに
-  含まれ `--clean` 対象。`record_used_news_history!` は確定版があればそれを、無ければ
+  含まれ `clean` 対象。`record_used_news_history!` は確定版があればそれを、無ければ
   暫定版を使う（＝confirm 時にどちらが存在するかで履歴に入るものが決まる）。これにより
-  digest mode 運用でも履歴が溜まる（used_news が全く無い digest なら記録するものが無く、
+  `pipeline.until: digest` の運用でも履歴が溜まる（used_news が全く無い digest なら記録するものが無く、
   `record!` は `File.exist?` ガードでスキップする）。暫定 used は履歴用の副産物なので、
   extractor が書き損ねても digest は止めない（`finalize_optional_used_news` は無ければ
   何もしない）。確定 used を書く writer 側はファイル欠落なら従来どおり abort する
@@ -1039,20 +1038,20 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `ai_agent.effort` は現状 `bin == "claude"` のときだけ `Internal::AiCli.run` が
   参照する。実装上対応しているのは claude のみだが、将来 effort に対応する別の
   AI CLI が増えたときに使い回す想定でこのフィールドを用意している。
-- `Config.validate_publish_target!` は、mode 判定を通らずに公開先（R2）を触る CLI 操作
-  （`--clean` / `--clean-archive`）のために独立して存在する。これを通さないと、
-  生成物を作りきってからデプロイ段階で落ちる。`--ui-only` は `assets` も参照する
+- `Config.validate_publish_target!` は、工程の判定を通らずに公開先（R2）を触る CLI 操作
+  （`clean` / `clean --archive`）のために独立して存在する。これを通さないと、
+  生成物を作りきってからデプロイ段階で落ちる。`republish-ui` は `assets` も参照する
   ため `validate_publish_target!` ではなく `Config.validate_sections!` に
   `"cloudflare", "assets"` を直接渡す（後述「miyamai_news.rb」節参照）。
 - `Config.validate_sections!` は `validate_for!`/`validate_publish_target!` が
   共通で使う検証本体（欠けているセクション名を集めて `MissingKeyError` にする）を
-  公開したもの。mode の加算的な到達順序（`REQUIRED_SECTIONS_DELTA`）とは無関係に、
+  公開したもの。工程の加算的な到達順序（`REQUIRED_SECTIONS_DELTA`）とは無関係に、
   個別の CLI 操作が実際に参照するセクションだけをその場で指定できる。
-- `cloudflare` セクション（R2 のバケット名・アカウント ID）は、mode の差分
-  （`REQUIRED_SECTIONS_DELTA`）ではなく全 mode 共通の必須セクション
+- `cloudflare` セクション（R2 のバケット名・アカウント ID）は、工程ごとの差分
+  （`REQUIRED_SECTIONS_DELTA`）ではなく全工程共通の必須セクション
   （`REQUIRED_SECTIONS_BASE`）。台本生成と音声合成を別の環境で動かすようになり、digest は
-  内部状態の取り出し、synthesize は台本の取得、publish はデプロイと、どの mode も R2 に
-  触るため。mode の差分を加算していく形自体は残す（手元のフラグなし実行は、R2 に台本が
+  内部状態の取り出し、synthesize は台本の取得、publish はデプロイと、どの工程も R2 に
+  触るため。工程の差分を加算していく形自体は残す（手元の `--until` なし実行は、R2 に台本が
   無ければ synthesize/publish でもその場で生成するので、digest の必須セクションも要る）。
 - R2 の S3 互換 API 認証情報（`R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`）と
   wrangler の認証（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）は
@@ -1061,7 +1060,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   `Internal::R2Storage` はこの環境変数の読み取りを実際に S3 クライアントを使う
   最初のリクエストまで遅らせる（`client` の遅延初期化）。インスタンス生成だけで
   必須化すると、公開先の情報を組み立てるだけで R2 に触らない経路（`object_exists?`
-  を呼ばない `--clean` の対象外判定など）でも環境変数が無いと落ちてしまう。
+  を呼ばない `clean` の対象外判定など）でも環境変数が無いと落ちてしまう。
 - `cloudflare.episode_prefix` は `wrangler.jsonc` の `assets.run_worker_first` と
   揃える必要がある（片方だけ変えると mp3 が static assets 側にルーティングされ
   404 になる）。デフォルトは `episodes`。
@@ -1069,46 +1068,68 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   の CLI 起動時検証（後述「CLI 起動時の config 検証」節参照）は、`--config` 指定時の
   読み込みエラーもまとめて拾えるよう、`Config.path=` の代入と検証呼び出しを同じ
   begin ブロック内に置いている。
-- `AppConfig` は mode によってセクションの要否が変わるため、全セクションを任意属性
+- `AppConfig` は到達する工程によってセクションの要否が変わるため、全セクションを任意属性
   （`attribute?`）にしている。必須判定はセクションの型の責務ではなく運用ルールなので
   `Config.validate_for!` 側で別途行う。
 - `Voicepeak`/`Collect`/`Mixer` 等の `*_sec` 系属性が `Types::Coercible::Float` なのは、
   YAML に `1` のような整数表記のままでも通せるようにするため。
 - `Base` が `transform_keys(&:to_sym)` するのは、YAML 由来の文字列キー Hash をそのまま
   構造体に渡せるようにするため。
+- `pipeline.until` は CLI の `--until` と同じ工程名（digest/script/handoff/synthesize/
+  publish）をとり、その環境で進んでよい工程の上限を表す。旧キー `pipeline.mode` は
+  読み替えずにロード時にエラーにする（`Config.ensure_no_legacy_keys!`）。dry-struct は
+  未知のキーを黙って捨てるので、そのままだと `pipeline.until` 未設定扱いで既定の digest に
+  落ち、publish 環境が気づかないまま digest で止まり続けるため。
 
 ### miyamai_news.rb（CLIエントリポイント）
 
-- CLI 起動時の config 検証: `--ui-only`/`--clean`/`--clean-archive` は
-  `pipeline.mode` とは無関係だが公開先（R2・Workers）を触るため個別に検証する
-  （`--ui-only` は `assets` も参照するため `Config.validate_sections!("cloudflare",
-  "assets")`、`--clean`/`--clean-archive` は `deploy_site` を呼ばないため
+- CLI 起動時の config 検証: `republish-ui`/`clean`/`clean --archive` は
+  `pipeline.until` とは無関係だが公開先（R2・Workers）を触るため個別に検証する
+  （`republish-ui` は `assets` も参照するため `Config.validate_sections!("cloudflare",
+  "assets")`、`clean`/`clean --archive` は `deploy_site` を呼ばないため
   `cloudflare` のみで足りる `Config.validate_publish_target!`。詳細は前掲
   「Publisher / Internal::Site」節参照）。それ以外は各コンポーネントが実行中に MissingKeyError で
-  落ちて中途半端に失敗するのを避けるため、起動直後に必要な config が揃っているか
-  一括で検証する（`Config.validate_for!`）。
+  落ちて中途半端に失敗するのを避けるため、起動直後にこの起動が到達する工程
+  （`Pipeline.target_stage_for(ARGS)`）までに必要な config が揃っているか一括で検証する
+  （`Config.validate_for!`）。上限（`pipeline.until`）ではなく到達工程で検証するのは、
+  publish 環境の config でも `--until digest` なら voicepeak 等を外したまま動かせるように
+  するため。上限超過は `target_stage_for` 自身が `StageNotAllowed` にする。
+- `--until` の値は OptionParser の候補配列ではなく `Config::STAGE_ORDER` との完全一致で
+  検証する。候補配列を渡すと前方一致で補完され、`--until pub` のような打ち損じが
+  黙って publish として通り、本番公開まで進みうるため。`pipeline.until` の値もロード時に
+  同じ集合で検証する（`Config.ensure_known_stage!`）。
 - `--config` のパス解決は cwd 基準（一般的な CLI の期待動作。`__dir__` 基準だと
   スクリプト位置基準になり、リポジトリ外のディレクトリから相対パスを指定したときに
   意図と異なる場所を読んでしまう）。
 - Gemfile で rss/csv/rexml を明示しているのは、これらが bundled gem のため
   明示しないと後続の `require` で読めないため。
-- CLI フラグの解析（`parse_args`）と config 検証のみを担い、フラグに応じた工程の
-  呼び分け自体は `Pipeline`（`lib/pipeline.rb`）に委譲する薄い層。
+- CLI 引数の解析（`parse_args`）と config 検証のみを担い、サブコマンド・`--until` に
+  応じた工程の呼び分け自体は `Pipeline`（`lib/pipeline.rb`）に委譲する薄い層。
+- CLI はサブコマンド（`run`/`publish`/`republish-ui`/`clean`）と `--until STAGE` で
+  構成する。旧 `--*-only` フラグは「そこまで進んで止まる」（digest/script/handoff/
+  synthesize）・「その工程だけ」（publish）・「別コマンド」（ui）の 3 つの意味が同じ
+  接尾辞に混ざっていたため廃止した。止まる位置は `--until` に、それ以外は排他な
+  サブコマンドに分けている。サブコマンドが受け付けないオプション（`publish --until` 等）は
+  黙って無視せず `parse_args` で abort する。
+- `Pipeline#run`・`Pipeline.target_stage_for` は `run`（と未指定の nil）を明示的に
+  分岐させ、未知のコマンドは `ArgumentError` にする。else をパイプラインに落とすと、
+  `miyamai_news.rb` の `COMMANDS` にだけコマンドを足して `Pipeline` 側を直し忘れたとき、
+  その起動が `pipeline.until: publish` の環境で本番 publish まで走ってしまうため。
 
 ### Pipeline（工程オーケストレーション）
 
-- `miyamai_news.rb` の CLI フラグに応じた工程の呼び分けと、その間の副作用
+- `miyamai_news.rb` のサブコマンド・`--until` に応じた工程の呼び分けと、その間の副作用
   （work/dist の mkdir・`Internal::EpisodeLogger` の configure）を一元管理する。
   新しいドメインロジックは持たず、既存の `ScriptGenerator`/`Publisher`/
   `LastFetchStore`/`Internal::EpisodeLogger` の呼び出し順序を集約するだけに徹する。
-- `--clean`/`--clean-archive`/`--ui-only` は
+- `clean`/`clean --archive`/`republish-ui` は
   Episode を作らない（`EpisodeLogger.configure` されないまま no-op で動く）という
   既存の不変条件があるため、`#run` はこれらを Episode 構築（`#setup_episode!`）より
   前で早期 return して処理する。
-- `--publish-only` は新規収集を一切行わないため、`ScriptGenerator` を生成せず
-  `#run_publish_only` を直接呼ぶ（`#setup_generator!` を経由しない）。
-- `#run_script`（`--script-only`）は VOICEPEAK 向けの整形をしない、人間が読む
-  台本までで停止する。台本の中身を確認・手直ししたうえで、フラグなしで
+- `publish` コマンドは新規収集を一切行わないため、`ScriptGenerator` を生成せず
+  `#run_publish_command` から `#run_publish` を直接呼ぶ（`#setup_generator!` を経由しない）。
+- `#run_script`（`--until script`）は VOICEPEAK 向けの整形をしない、人間が読む
+  台本までで停止する。台本の中身を確認・手直ししたうえで、`--until` なしで
   再実行すれば既存の台本を再利用して整形〜音声合成〜publish まで続きから
   進められる（work_dir 内の中間ファイルの有無で再利用を判断する、前掲
   「ScriptGenerator / AI パイプライン」節の再利用機構に乗る）。
@@ -1131,15 +1152,15 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   publish できる（最新の確定より古い回でも、handoff があれば収集し直さないので作れる）。
   ただし公開中の retention 件数分より古い回は `Publisher#run` が publish 前に abort する
   （前掲「Publisher / Internal::Site」参照）。
-- `--handoff-only` は `pipeline.mode` を見ない（digest でも R2 に台本を置くところまで進む）。
-  VOICEPEAK の無いリモートでは voicepeak/mixer/assets を持たない digest 相当の config で
-  動かすため。台本の生成（TTS 整形まで）に必要なのは digest の必須セクションだけなので、
-  `miyamai_news.rb` の起動時検証も `pipeline.mode` ではなく `Config.validate_for!("digest")`
-  で行う。
-- `#ensure_mode_allows!` は、`--digest-only` は digest 相当、`--script-only`/
-  `--synthesize-only` は synthesize 相当、`--publish-only` は publish 相当以上の
-  config が検証されていないと実行できないようにする。満たさなければ、必要な config が
-  未検証のまま実行が進んで途中で失敗するのを防ぐためここで止める。
+- VOICEPEAK の無いリモートは `pipeline.until: handoff` の config で動かす。台本の生成
+  （TTS 整形まで）に必要なのは digest の必須セクションだけなので（`REQUIRED_SECTIONS_DELTA`
+  で script/handoff の差分は空）、voicepeak/mixer/assets を持たなくても起動時検証を通る。
+- `Pipeline.target_stage_for` は、`--until`（無ければ `pipeline.until`）や `publish`
+  コマンドが `pipeline.until` を超える工程を指すと `StageNotAllowed` にし、`#run` は
+  Episode 構築より前に abort する。起動時検証は `pipeline.until` までの config しか
+  見ていないので、それより先へ進むと必要な config が未検証のまま途中で失敗するのを
+  防ぐため。`StageNotAllowed` は `ArgumentError` の派生なので、`miyamai_news.rb` の
+  `Pipeline.reaches?` 呼び出しで起きても既存の rescue で abort される。
 - `#clean_published_dist` の判定（`Publisher#prunable_from_dist`）は、R2 の
   オブジェクト一覧列挙（`episodes/`/`archived/` の list）をせず、台帳
   （`archives.csv`）の内容と命名規則（`Slot.sort_key_from_filename`/
@@ -1207,7 +1228,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   として見つけられなくなるため。slot の区切り（`Slot::DAY_START_HOUR`）も挨拶文も JST 前提
   なので、設定にはせず固定している。瞬間としては同じ時刻なので、収集時刻（`seen_at`・
   確定の `at`）の比較には影響しない。
-- フラグなし実行（`Pipeline#run_full`）は、まず R2 に現在の回の `handoff/<episode_key>/`
+- handoff 以降まで進む実行（`Pipeline#run_through_handoff`）は、まず R2 に現在の回の `handoff/<episode_key>/`
   があるかを見る。あれば生成も状態の取り出しもせずに音声合成へ進む。これで、リモートが
   先に台本を置いていれば手元の実行は生成を飛ばす。
 - handoff が無い場合、公開済みかどうかは `handoff_done/` ではなく公開台帳
@@ -1233,7 +1254,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   dist/ に mp3 の無い used/transcript だけが残らないようにするため。
 - `Handoff#mark_done!` は `tts_script.txt` から先に `handoff_done/` へ移す。途中で落ちても
   `handoff/` 側は「揃っていない」扱いになり、再実行で同じ台本を合成し直さない。
-  `mark_done!` は R2 に残っているものだけを移すので、同じ回の `--publish-only` を
+  `mark_done!` は R2 に残っているものだけを移すので、同じ回の `publish` を
   再実行すれば残りも移る。再実行しなければ残りのファイルが `handoff/<episode_key>/` に
   残り続ける（揃っていないので誤って使われることはなく、自動では掃除しない）。
 - パイプラインの内部状態は `work/state/`（`StateDir`）にまとめ、R2 の `state/` と 1 対 1 に
@@ -1266,9 +1287,9 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
     まま次の回で再び新着になる。
   - 目印ファイルには、作業コピーを取り出した実行の owner（その回の episode_key）も残す。別の回の実行がそれを
     引き継ぐときは、落ちた回の確定・履歴記録が次の回の書き戻しに含まれることになるので、
-    その旨を警告する（`--clean` で破棄するかは人が選ぶ）。
+    その旨を警告する（`clean` で破棄するかは人が選ぶ）。
   - R2 の revision が変わっていれば（別の実行が先に書き戻した）衝突として中断する。
-    どちらかを黙って捨てると上と同じ欠落が起きるので、人が `--clean` で手元の作業
+    どちらかを黙って捨てると上と同じ欠落が起きるので、人が `clean` で手元の作業
     コピーを破棄してから実行し直す。
   - 生成後・アップロード前（`Pipeline#ensure_no_concurrent_run!`）と `push!` の直前に
     revision を再確認し、生成中に別の実行が同じ回の handoff を置いていた場合も中断する。
@@ -1280,7 +1301,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
     `last_fetch.json`・紹介済み履歴を黙って上書きし、先の側の収集 window の確定と履歴
     記録が失われる（エラーにはならない）。そうなると、その回の記事が次の回で再び候補に
     上がりうる。両方の実行が生成を終える時刻が書き戻しの所要時間以内に重なる必要がある
-    ので、定期実行のリモート（`--handoff-only`）と手動の手元という想定運用では起きにくいと
+    ので、定期実行のリモート（`pipeline.until: handoff`）と手動の手元という想定運用では起きにくいと
     判断して許容している。
   - `state/` があるのに `state_revision` が無い場合も `checkout!` は `Missing` で中断し、
     `ensure_current!` は `state_revision` が消えていれば衝突として扱う。revision が無いまま
@@ -1289,7 +1310,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   - R2 の `state/` が空なら `checkout!` は `Missing` で中断する。空の状態から収集すると
     フィードに載っている全記事が新着扱いになり、大量の二重紹介になるため。初回は
     `scripts/seed_remote_state.rb` で手元の状態を置く（R2 に既に状態があれば置かない）。
-- publish 側の実行は `state/` に触らない（`--publish-only`、handoff ありの経路）。
+- publish 側の実行は `state/` に触らない（`publish` コマンド、handoff ありの経路）。
   状態を書き換えるのは台本を生成する実行だけ。
 
 ### 再生ページの JS（templates/index.html.erb）
