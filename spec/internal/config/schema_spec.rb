@@ -90,6 +90,7 @@ RSpec.describe Internal::Config do
     end
 
     [
+      :fetch_threads,
       :fetch_retry_timeout_sec,
       :fetch_retry_base_sec,
       :fetch_retry_max_interval_sec,
