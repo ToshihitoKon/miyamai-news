@@ -40,6 +40,8 @@ class Publisher
     _mp3_object, used_object, transcript_object = self.class.episode_object_names(filename)
 
     used_news = load_and_validate_used_news(used_txt_path)
+    rows, newly_published, expired_rows, ledger_csv = build_archives(filename, used_news, used_news_given: !used_txt_path.nil?)
+    abort_if_outside_retention(filename, expired_rows)
 
     upload_mp3(mp3_path, filename)
     if used_txt_path
@@ -47,7 +49,6 @@ class Publisher
       upload_used_news_html(used_news, self.class.used_news_html_object(used_object))
     end
     upload_transcript(transcript_txt_path, transcript_object) if transcript_txt_path
-    rows, newly_published, expired_rows, ledger_csv = build_archives(filename, used_news, used_news_given: !used_txt_path.nil?)
     deploy_site(rows)
     @site.write_ledger(ledger_csv)
     expired_rows.each { |r| archive_episode_files(r[1]) }
@@ -161,7 +162,7 @@ class Publisher
     rows.reject! { |r| r[1] == filename }
     rows << [date_for(filename), filename, @title, used_news,
              updated_at_for(previous, changed:)]
-    rows.sort_by! { |r| [r[0], r[4].to_s] }
+    rows.sort_by! { |r| [ledger_sort_key(r), r[4].to_s] }
     rows.reverse!
 
     expired_rows = rows.drop(retention_episodes)
@@ -170,6 +171,16 @@ class Publisher
     csv = CSV.generate { |out| rows.each { |r| out << r } }
 
     [rows, changed, expired_rows, csv]
+  end
+
+  def ledger_sort_key(row)
+    Slot.lenient_sort_key_from_filename(row[1].to_s) || [row[0].to_s.delete("-"), -1]
+  end
+
+  def abort_if_outside_retention(filename, expired_rows)
+    return unless expired_rows.any? { |r| r[1] == filename }
+
+    abort("#{filename} is older than the #{retention_episodes} newest episodes kept on the site (nothing was published)")
   end
 
   def content_changed?(previous, used_news, used_news_given:)

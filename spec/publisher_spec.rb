@@ -375,6 +375,51 @@ RSpec.describe Publisher do
     end
   end
 
+  describe "#run with an episode older than the retention window" do
+    let(:existing_rows) do
+      (1..5).map do |n|
+        date = Date.new(2026, 7, 1) + n
+        fname = "miyamai_news_#{date.strftime('%Y%m%d')}_morning.mp3"
+        [date.to_s, fname, "宮舞モカの技術ニュース #{date}", "", "#{date}T00:00:00Z"]
+      end
+    end
+    let(:old_mp3_path) { File.join(work_dir, "miyamai_news_20260701_evening.mp3") }
+
+    before { File.write(old_mp3_path, "fake mp3") }
+
+    it "aborts before uploading, deploying or notifying" do
+      publisher = build_publisher(ledger: ledger_csv(existing_rows))
+      puts_keys = []
+      s3.stub_responses(:put_object, ->(ctx) {
+        puts_keys << ctx.params[:key]
+        {}
+      })
+
+      expect { publisher.run(old_mp3_path) }.to raise_error(SystemExit)
+      expect(puts_keys).to be_empty
+      expect(deployed).to be_empty
+      expect(notified).to be_empty
+    end
+  end
+
+  describe "#build_archives ordering" do
+    let(:evening) { "miyamai_news_20260714_evening.mp3" }
+    let(:morning) { "miyamai_news_20260714_morning.mp3" }
+    let(:legacy) { "miyamai_news_20260714.mp3" }
+
+    it "orders episodes of the same day by slot, not by publish time" do
+      ledger = ledger_csv([
+        ["2026-07-14", evening, "宮舞モカの技術ニュース 2026-07-14", "", "2026-07-14T10:00:00Z"],
+        ["2026-07-14", legacy, "宮舞モカの技術ニュース 2026-07-14", "", "2026-07-14T11:00:00Z"]
+      ])
+      publisher = build_publisher(ledger: ledger)
+
+      rows, = publisher.send(:build_archives, morning)
+
+      expect(rows.map { |r| r[1] }).to eq([evening, morning, legacy])
+    end
+  end
+
   describe "#clean_archive" do
     it "deletes everything under the archived prefix" do
       publisher = build_publisher

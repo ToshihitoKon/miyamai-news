@@ -438,8 +438,17 @@ R2 のキー構成:
   運用ルールで回避していたが、値のセマンティクス自体を修正して解消した。
 - 既存の `updated_at` が空文字の行（過去に空で記録されたもの）からは引き継がず
   現在時刻を入れる。空のまま引き継ぐと `<updated>` が空になり Atom として壊れる。
-- `updated_at` は `build_archives` の並び替えキー（`[date, updated_at]`）でもある
-  ため、引き継ぎは表示順の安定にも効く。
+- `build_archives` の並び替えキーは `[[date_tag, 日内順], updated_at]`
+  （`Slot.lenient_sort_key_from_filename`）。日付だけで並べて同日内を `updated_at`
+  に任せると、同じ日の早い slot を後から publish したときにその回が先頭（index.html の
+  現在の回・feed の `<updated>` の源）に来てしまう。`updated_at` は slot を持たない
+  旧ファイル名同士など、キーが並んだときの決め手として残しており、引き継ぎは表示順の
+  安定にも効く。
+- `Publisher#run` は R2 へ書き込む前に `build_archives` を済ませ、publish しようと
+  している回が retention 件数の外（`expired_rows`）に落ちるなら abort する。そのまま
+  進めると、アップロード直後の mp3 が同じ実行のうちに `archived/` へ退避され、
+  index.html にも feed にも載らないのに新着通知だけが飛ぶ。台帳にも残らないので
+  `published?` が false のままになり、何度でも再 publish できてしまう。
 
 #### Web Push 通知（購読者管理・送信は Worker 側に同居）
 
@@ -1104,6 +1113,8 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   slot に進むと、その回は公開されず、記事は確定済み・紹介済みとして扱われたまま残る。
   残った handoff は `--date`/`--slot` でその回を指定すれば「handoff あり」の経路で合成・
   publish できる（最新の確定より古い回でも、handoff があれば収集し直さないので作れる）。
+  ただし公開中の retention 件数分より古い回は `Publisher#run` が publish 前に abort する
+  （前掲「Publisher / Internal::Site」参照）。
 - `--handoff-only` は `pipeline.mode` を見ない（digest でも R2 に台本を置くところまで進む）。
   VOICEPEAK の無いリモートでは voicepeak/mixer/assets を持たない digest 相当の config で
   動かすため。台本の生成（TTS 整形まで）に必要なのは digest の必須セクションだけなので、
