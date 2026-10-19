@@ -32,8 +32,6 @@ module Internal
     attr_reader :bucket, :episode_prefix
 
     # エピソード関連ファイル（mp3 / used / transcript）の R2 キー。
-    # 再生ページの JS が mp3 URL の拡張子だけを差し替えて兄弟ファイルを引くため、
-    # 同一プレフィックス配下に揃える。
     def episode_key(object) = "#{@episode_prefix}/#{object}"
 
     def archive_key(object) = "#{ARCHIVE_PREFIX}/#{object}"

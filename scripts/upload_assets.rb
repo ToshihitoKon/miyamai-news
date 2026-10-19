@@ -1,15 +1,12 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# 画像などの恒久素材を R2 の assets/ プレフィックスへ置く。
-# 版権素材をリポジトリに置かずに済ませるため、実体は R2 だけにある。
+# 画像などの恒久素材を R2 の assets/ プレフィックスへ置く。--apply を付けると、
+# 既に同名の素材があっても毎回上書きする。
 #
 #   bundle exec ruby scripts/upload_assets.rb --file miyamai_news.webp            # 計画のみ
 #   envchain cloudflare bundle exec ruby scripts/upload_assets.rb --file a.webp --apply
-#
-# 既に同じ内容が置かれていれば転送しない。
 
-require "digest"
 require_relative "../lib/internal/config"
 require_relative "../lib/internal/site"
 
