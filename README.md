@@ -9,11 +9,11 @@ RSS feed から最新のニュースを AI で要約し、宮舞モカによる�
 - BGM 合成
 - Google Cloud Storage の再生ページへアップロード、Atom フィードの更新
 
-以下の3パターンの利用方法を想定している。
+以下の3パターンの利用方法を想定している（`pipeline.until` でその環境が進んでよい工程の上限を決める）。
 
-- ニュースの要約のみ (`pipeline.until: digest`)
-- ニュースの合成音声の生成 (`pipeline.until: synthesize`)
-- 音声ニュースを公開 (`pipeline.until: publish`)
+- ニュースの要約・台本のみ (`draft`、`pipeline.until: handoff`)
+- ニュースの合成音声の生成 (`synthesize`、`pipeline.until: synthesize`)
+- 音声ニュースを公開 (`publish`、`pipeline.until: publish`)
 
 ## Prerequisites
 
@@ -24,12 +24,12 @@ Antigravity を使う場合に追加で必要
 
 - Node.js 18 以降（ニュース抽出処理が `npx` 経由で MCP サーバーを起動するため）
 
-`pipeline.until` が synthesize, publish の場合に追加で必要
+`synthesize` / `publish` を使う場合に追加で必要
 
 - ffmpeg
 - [VOICEPEAK 宮舞モカ](https://www.ah-soft.com/voice/moca/)
 
-`pipeline.until` が publish の場合に追加で必要
+`publish` を使う場合に追加で必要
 
 - [wrangler](https://developers.cloudflare.com/workers/wrangler/) v4 以降
 - Cloudflare アカウント（Workers + R2）
@@ -126,18 +126,25 @@ synthesize には BGM 素材を用意し `assets.bgm_path` にパスをセット
 ## Usage
 
 ```sh
-bundle exec ruby miyamai_news.rb [run|publish|republish-ui|clean] [options]
+bundle exec ruby miyamai_news.rb COMMAND [options]
 
-# run（省略時）: パイプラインを pipeline.until まで進める。--until で手前の工程で止められる
-bundle exec ruby miyamai_news.rb                      # pipeline.until まで自動的に進む
-bundle exec ruby miyamai_news.rb --until digest       # ニュース選別・facts抽出まで（R2 の状態は書き戻さない）
-bundle exec ruby miyamai_news.rb --until script       # 台本（TTS 整形前）まで。work/ に書き出す（R2 の状態は書き戻さない）
-bundle exec ruby miyamai_news.rb --until handoff      # 台本一式を R2 の handoff/ に置くまで
-bundle exec ruby miyamai_news.rb --until synthesize   # R2 の台本（無ければ生成して置く）から音声合成・BGM合成まで（dist/ に書き出す）
-bundle exec ruby miyamai_news.rb --date 2026-07-10 --slot morning  # 対象回を明示
+# draft（AI 環境）: ニュース収集〜台本生成〜台本一式を R2 の handoff/ に置く
+bundle exec ruby miyamai_news.rb draft                   # handoff/ に置くまで
+bundle exec ruby miyamai_news.rb draft --until digest    # ニュース選別・facts抽出まで（R2 の状態は書き戻さない）
+bundle exec ruby miyamai_news.rb draft --until script    # 台本（TTS 整形前）まで。work/ に書き出す（R2 の状態は書き戻さない）
 
-# publish: dist/ の該当回を公開のみ（pipeline.until: publish が必要）
+# synthesize（VOICEPEAK 環境）: R2 の台本一式から音声合成・BGM合成（dist/ に書き出す）。台本が無ければ生成せず止まる
+bundle exec ruby miyamai_news.rb synthesize
+
+# publish: dist/ の該当回を公開
 bundle exec ruby miyamai_news.rb publish
+
+# 続けて実行する
+bundle exec ruby miyamai_news.rb synthesize-and-publish  # synthesize → publish
+bundle exec ruby miyamai_news.rb draft-and-publish       # draft → synthesize → publish（R2 に台本があれば生成は飛ばす）
+
+# 対象回を明示（draft / synthesize / publish 系の全コマンドで使える）
+bundle exec ruby miyamai_news.rb synthesize-and-publish --date 2026-07-10 --slot morning
 
 # republish-ui: 新しい回を公開せず index.html / manifest.json だけ再生成
 bundle exec ruby miyamai_news.rb republish-ui
@@ -158,20 +165,20 @@ bundle exec ruby miyamai_news.rb --help
 ### R2 を経由した台本の受け渡し
 
 台本の生成（収集〜TTS 整形）と音声合成は、同じ端末で続けて実行する場合も含めて、必ず
-R2 の `handoff/<date_tag>_<slot>/` を経由する。フラグなしで実行すると次の順に進む。
+R2 の `handoff/<date_tag>_<slot>/` を経由する。`draft-and-publish` は次の順に進む。
 
 1. R2 に現在の回（`--date`/`--slot` で指定も可）の台本一式があれば、それを使って 4 へ進む
 2. 無ければ、公開台帳（`archives.csv`）に既にこの回があれば中断する
 3. 台本を生成し、収集windowを確定して内部状態を R2 へ書き戻してから、台本一式を R2 に置く
-   （`--until handoff` はここで停止する）
-4. R2 から台本一式を取得して音声合成・BGM 合成（`--until synthesize` はここで停止する）
-5. publish し、台本一式を `handoff_done/` へ移す
+   （`draft` はここで停止する）
+4. R2 から台本一式を取得して音声合成・BGM 合成（`synthesize` はここから始まり、ここで停止する）
+5. publish し、台本一式を `handoff_done/` へ移す（`synthesize-and-publish` は 4 から始まる）
 
 現在の回以外に未公開の台本一式が R2 に残っていれば、1 の時点で警告が出る。`--date`/`--slot` で
 その回を指定して実行すれば、残っている台本から合成・publish できる。
 
-リモート（CI 等）で `pipeline.until: handoff` の config を使って `--ci` 付きで回しておけば、手元の実行は 1 で R2 の台本を見つけ、
-生成を飛ばして音声合成から始まる。「現在の回」は端末のタイムゾーンによらず JST で決める。
+リモート（CI 等）で `draft --ci` を回しておけば、手元では `synthesize-and-publish` で
+音声合成から始められる。「現在の回」は端末のタイムゾーンによらず JST で決める。
 
 ### パイプラインの内部状態（R2 の state/）
 
@@ -192,7 +199,7 @@ envchain cloudflare bundle exec ruby scripts/seed_remote_state.rb --apply  # R2 
 
 収集windowは、台本一式を R2 に置く直前に、その回（`<date_tag>_<slot>`）の確定として進む
 （音声合成・publish を待たない）。`last_fetch.json` には直近3回分の確定（回と収集時刻）を残し、
-次の回は直前の確定の収集時刻から収集する。`--until digest`/`--until script` は状態を
+次の回は直前の確定の収集時刻から収集する。`draft --until digest`/`draft --until script` は状態を
 R2 へ書き戻さないので、収集windowは進まない。
 
 確定済みの回を作り直す場合（台本の受け渡しが揃わなかった等）は、1つ前の確定の収集時刻から

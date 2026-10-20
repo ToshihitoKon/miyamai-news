@@ -11,37 +11,45 @@ require_relative "lib/pipeline"
 require_relative "lib/slot"
 
 COMMANDS = {
-  "run" => "run the pipeline up to --until (default: pipeline.until)",
+  "draft" => "collect news, write the script and hand it off to R2 (--until to stop earlier)",
+  "synthesize" => "synthesize voice/BGM from the R2 handoff into dist/",
   "publish" => "publish the target episode from dist/",
+  "synthesize-and-publish" => "synthesize, then publish",
+  "draft-and-publish" => "draft, synthesize, then publish",
   "republish-ui" => "regenerate index.html / manifest.json without publishing a new episode",
   "clean" => "clean work/ and delete published dist/ artifacts (--archive: delete archived/ instead)",
 }.freeze
 
 COMMAND_OPTIONS = {
-  "run" => [:until, :date, :slot],
+  "draft" => [:until, :date, :slot],
+  "synthesize" => [:date, :slot],
   "publish" => [:date, :slot],
+  "synthesize-and-publish" => [:date, :slot],
+  "draft-and-publish" => [:date, :slot],
   "republish-ui" => [],
   "clean" => [:archive],
 }.freeze
 
+DRAFT_STAGES = Pipeline.stages_of("draft")
+
 def parse_args(argv)
   opts = {}
   parser = OptionParser.new do |o|
-    o.banner = "Usage: ruby miyamai_news.rb [#{COMMANDS.keys.join('|')}] [options]"
+    o.banner = "Usage: ruby miyamai_news.rb COMMAND [options]"
     o.separator ""
-    o.separator "Commands (default: run):"
-    COMMANDS.each { |name, desc| o.separator format("    %-14s %s", name, desc) }
+    o.separator "Commands:"
+    COMMANDS.each { |name, desc| o.separator format("    %-24s %s", name, desc) }
     o.separator ""
     o.separator "Options:"
     o.on("--config PATH", "path to the config file (default: config.yaml)") { |v| opts[:config] = v }
     o.on("--ci", "non-interactive mode: plain progress lines instead of spinner animation") { opts[:ci] = true }
-    o.on("--until STAGE", "[run] stop after STAGE (#{Config::STAGES.join('/')})") do |v|
-      abort "invalid argument: --until #{v} (must be one of: #{Config::STAGES.join(', ')})" unless Config::STAGE_ORDER.key?(v)
+    o.on("--until STAGE", "[draft] stop after STAGE (#{DRAFT_STAGES.join('/')}, default: handoff)") do |v|
+      abort "invalid argument: --until #{v} (must be one of: #{DRAFT_STAGES.join(', ')})" unless DRAFT_STAGES.include?(v)
 
       opts[:until] = v
     end
-    o.on("--date DATE", "[run/publish] target date (e.g. 2026-07-10)") { |v| opts[:date] = Time.parse(v) }
-    o.on("--slot SLOT", "[run/publish] target slot (#{Slot::JA_LABELS.keys.join('/')})") do |v|
+    o.on("--date DATE", "[episode commands] target date (e.g. 2026-07-10)") { |v| opts[:date] = Time.parse(v) }
+    o.on("--slot SLOT", "[episode commands] target slot (#{Slot::JA_LABELS.keys.join('/')})") do |v|
       abort "invalid argument: --slot #{v} (must be one of: #{Slot::JA_LABELS.keys.join(', ')})" unless Slot::JA_LABELS.key?(v)
 
       opts[:slot] = v
@@ -51,7 +59,7 @@ def parse_args(argv)
 
   begin
     leftover = parser.parse!(argv)
-    opts[:command] = leftover.shift || "run"
+    opts[:command] = leftover.shift or abort "missing command\n\n#{parser}"
     abort "unknown command: #{opts[:command]}\n\n#{parser}" unless COMMANDS.key?(opts[:command])
     abort "unknown argument: #{leftover.first}" unless leftover.empty?
   rescue OptionParser::ParseError, ArgumentError => e
@@ -73,7 +81,9 @@ begin
   case ARGS[:command]
   when "republish-ui" then Config.validate_sections!("cloudflare", "assets")
   when "clean" then Config.validate_publish_target!
-  else Config.validate_for!(Pipeline.target_stage_for(ARGS))
+  else
+    from, to = Pipeline.stage_range_for(ARGS)
+    Config.validate_for!(to, from:)
   end
 
   Internal::NodeDeps.validate_wrangler_build!(root_dir: __dir__) if ARGS[:command] == "republish-ui" || Pipeline.reaches?("publish", ARGS)

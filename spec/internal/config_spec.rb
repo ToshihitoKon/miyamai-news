@@ -56,6 +56,30 @@ RSpec.describe Config do
       expect { Config.validate_for!("publish") }.not_to raise_error
     end
 
+    context "with a voice-only config (no AI / news sections)" do
+      around do |example|
+        Dir.mktmpdir do |dir|
+          data = YAML.safe_load_file(default_path).except("ai_agent", "program_details", "rss_feed_sources", "collect")
+          path = File.join(dir, "config.yaml")
+          File.write(path, data.to_yaml)
+          Config.path = path
+          example.run
+        end
+      end
+
+      it "passes for synthesize when validating only the synthesize stage" do
+        expect { Config.validate_for!("synthesize", from: "synthesize") }.not_to raise_error
+      end
+
+      it "still requires ai_agent for publish, which may repair used_news with the AI CLI" do
+        expect { Config.validate_for!("publish", from: "synthesize") }.to raise_error(Config::MissingKeyError, /ai_agent/)
+      end
+
+      it "requires the news sections when the range starts from digest" do
+        expect { Config.validate_for!("handoff") }.to raise_error(Config::MissingKeyError, /rss_feed_sources/)
+      end
+    end
+
     context "with the digest-only fixture" do
       before { Config.path = File.expand_path("../fixtures/config_digest.yaml", __dir__) }
 

@@ -20,6 +20,17 @@ require_relative "publisher"
 class Pipeline
   HANDOFF_WORK_GLOB = "handoff_*.txt"
 
+  # Episode に依存しない独立コマンド。
+  INDEPENDENT_COMMANDS = %w[clean republish-ui].freeze
+  # 工程をたどるコマンドごとの [開始工程, --until なしでの到達工程]。
+  STAGE_RANGES = {
+    "draft" => %w[digest handoff],
+    "synthesize" => %w[synthesize synthesize],
+    "publish" => %w[publish publish],
+    "synthesize-and-publish" => %w[synthesize publish],
+    "draft-and-publish" => %w[digest publish],
+  }.freeze
+
   class StageNotAllowed < ArgumentError; end
 
   def initialize(args:, base_dir:, work_dir:, dist_dir:, phase_timer: Internal::PhaseTimer.new)
@@ -30,35 +41,35 @@ class Pipeline
     @phase_timer = phase_timer
   end
 
-  # この起動が最後に到達する工程。Episode に依存しない独立コマンドは nil。
-  def self.target_stage_for(args)
-    stage =
-      case args[:command]
-      when "clean", "republish-ui" then nil
-      when "publish" then "publish"
-      when "run", nil then args[:until] || Config.until_stage
-      else raise ArgumentError, "unknown command: #{args[:command]}"
-      end
-    return nil unless stage
+  def self.stages_of(command)
+    from, to = STAGE_RANGES.fetch(command)
+    Config::STAGES[Config::STAGE_ORDER[from]..Config::STAGE_ORDER[to]]
+  end
+
+  # この起動がたどる工程の範囲 [開始工程, 到達工程]。Episode に依存しない独立コマンドは nil。
+  def self.stage_range_for(args)
+    return nil if INDEPENDENT_COMMANDS.include?(args[:command])
+
+    from, default_to = STAGE_RANGES.fetch(args[:command]) { raise ArgumentError, "unknown command: #{args[:command]}" }
+    to = args[:until] || default_to
+    raise ArgumentError, "--until #{to} is outside #{args[:command]} (#{from}..#{default_to})" unless stages_of(args[:command]).include?(to)
 
     limit = Config.until_stage
-    return stage if Config::STAGE_ORDER.fetch(stage) <= Config::STAGE_ORDER.fetch(limit)
+    return [from, to] if Config::STAGE_ORDER.fetch(to) <= Config::STAGE_ORDER.fetch(limit)
 
-    raise StageNotAllowed, "cannot run up to #{stage}: pipeline.until is #{limit} (raise it in config to allow)"
+    raise StageNotAllowed, "cannot run up to #{to}: pipeline.until is #{limit} (raise it in config to allow)"
   end
 
   def self.reaches?(stage, args)
-    target = target_stage_for(args)
-    !target.nil? && Config::STAGE_ORDER[target] >= Config::STAGE_ORDER[stage]
+    range = stage_range_for(args)
+    !range.nil? && Config::STAGE_ORDER[range.last] >= Config::STAGE_ORDER[stage]
   end
 
   def run
     case @args[:command]
     when "clean" then @args[:archive] ? run_clean_archive_command : run_clean_command
     when "republish-ui" then run_republish_ui_command
-    when "publish" then run_publish_command
-    when "run", nil then run_pipeline_command
-    else raise ArgumentError, "unknown command: #{@args[:command]}"
+    else run_stages_command
     end
   ensure
     @phase_timer.report
@@ -153,18 +164,25 @@ class Pipeline
     abort e.message
   end
 
-  def run_publish_command
-    target_stage!
+  def run_stages_command
+    from, to = stage_range!
     setup_episode!
-    run_publish
-    mark_handoff_done
+
+    case from
+    when "digest" then run_from_draft(to)
+    when "synthesize" then run_from_synthesize(to)
+    when "publish" then publish_episode
+    end
   end
 
-  def run_pipeline_command
-    stage = target_stage!
-    setup_episode!
+  def stage_range!
+    self.class.stage_range_for(@args)
+  rescue StageNotAllowed => e
+    abort e.message
+  end
 
-    case stage
+  def run_from_draft(to)
+    case to
     when "digest"
       setup_generator!
       run_digest
@@ -172,25 +190,31 @@ class Pipeline
       setup_generator!
       run_script
     else
-      run_through_handoff(stage)
+      prepare_handoff
+      run_after_handoff(to)
     end
   end
 
-  def run_through_handoff(stage)
-    prepare_handoff
-    return if stage == "handoff"
+  # R2 にこの回の台本一式が無ければ、生成せずに止める。
+  def run_from_synthesize(to)
+    warn_other_pending_handoffs
+    abort "handoff not found in R2: #{episode_key} (run draft first, or target another episode with --date/--slot)" unless handoff.exist?(episode_key)
 
-    run_synthesize
-    return if stage == "synthesize"
-
-    run_publish
-    mark_handoff_done
+    run_after_handoff(to)
   end
 
-  def target_stage!
-    self.class.target_stage_for(@args)
-  rescue StageNotAllowed => e
-    abort e.message
+  def run_after_handoff(to)
+    return if to == "handoff"
+
+    run_synthesize
+    return if to == "synthesize"
+
+    publish_episode
+  end
+
+  def publish_episode
+    run_publish
+    mark_handoff_done
   end
 
   # この回の台本一式を R2 に用意する。既に置かれていればそれを使い、生成しない。
@@ -220,7 +244,7 @@ class Pipeline
     others = handoff.pending_episode_keys - [episode_key]
     return if others.empty?
 
-    warn "unpublished handoffs remain in R2: #{others.join(', ')} (publish one with --date/--slot)"
+    warn "unpublished handoffs remain in R2: #{others.join(', ')} (target one with --date/--slot)"
   end
 
   def ensure_no_concurrent_run!
@@ -245,7 +269,7 @@ class Pipeline
     warn "handoff done: #{episode_key}" if moved.positive?
   end
 
-  # ニュース収集・AI選別・facts抽出までを実行する。--until digest の到達点。
+  # ニュース収集・AI選別・facts抽出までを実行する。draft --until digest の到達点。
   def run_digest
     facts_path = @phase_timer.measure("digest") { @generator.digest }
 
@@ -260,7 +284,7 @@ class Pipeline
     warn "script: #{relative(script_path)}"
   end
 
-  # R2 の台本一式から音声合成・BGM合成までを実行する。--until synthesize の到達点。
+  # R2 の台本一式から音声合成・BGM合成までを実行する。synthesize の到達点。
   def run_synthesize
     bgm_path = File.expand_path(Config.assets.bgm_path, @base_dir)
     output_path = episode_mp3_path
@@ -284,7 +308,7 @@ class Pipeline
   def run_publish
     @phase_timer.measure("publish") do
       mp3_path = episode_mp3_path
-      abort "mp3 not found: #{relative(mp3_path)} (run with --until synthesize first)" unless File.exist?(mp3_path)
+      abort "mp3 not found: #{relative(mp3_path)} (run synthesize first)" unless File.exist?(mp3_path)
 
       used_path = episode_used_path
       used_path = nil unless used_path && File.exist?(used_path)

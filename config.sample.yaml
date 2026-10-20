@@ -1,8 +1,8 @@
-# パイプラインをどの工程まで進めてよいかの上限。CLI の --until もこれを超えられない。
+# この環境で進めてよい工程の上限。これを超える工程に進むコマンドは abort する。
 pipeline:
   until: digest # RSS収集, AIによるカテゴリ別選別, facts抽出(ニュース要約)
   # until: script     # digest + 台本生成（TTS 整形前）
-  # until: handoff    # script + TTS 整形・台本一式を R2 の handoff/ に置く（VOICEPEAK の無いリモート向け）
+  # until: handoff    # script + TTS 整形・台本一式を R2 の handoff/ に置く（draft。VOICEPEAK の無いリモート向け）
   # until: synthesize # handoff + 音声合成・BGM合成。dist/ に mp3 を書き出す。
   # until: publish    # synthesize + Cloudflare への publish
 

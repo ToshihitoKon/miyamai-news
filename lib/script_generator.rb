@@ -58,7 +58,7 @@ class ScriptGenerator
     news_facts_path
   end
 
-  # format: false なら script/used まで作って止める（--until script 用）。
+  # format: false なら script/used まで作って止める（draft --until script 用）。
   def generate(format: true)
     selected_news = digest_news
 

@@ -22,20 +22,20 @@ module Config
   #   script:     digest の続きから、人間が読む台本（TTS 整形前）まで。
   #   handoff:    script の続きから TTS 整形・収集 window の確定・台本一式の R2 への受け渡しまで。
   #   synthesize: handoff の続きから音声合成・BGM合成まで。
-  #   publish:    synthesize の続きから公開まで（フルパイプライン）。
+  #   publish:    dist/ の音声を公開する。
   STAGE_ORDER = { "digest" => 0, "script" => 1, "handoff" => 2, "synthesize" => 3, "publish" => 4 }.freeze
   STAGES = STAGE_ORDER.keys.freeze
 
   # どの工程でも必須のセクション。
   REQUIRED_SECTIONS_BASE = %w[cloudflare].freeze
 
-  # 各工程で新たに必須になる config のトップレベルセクション名の差分。
-  REQUIRED_SECTIONS_DELTA = {
+  # 各工程が使う config のトップレベルセクション名。
+  REQUIRED_SECTIONS = {
     "digest" => %w[ai_agent program_details rss_feed_sources collect],
     "script" => %w[],
     "handoff" => %w[],
     "synthesize" => %w[voicepeak mixer assets],
-    "publish" => %w[],
+    "publish" => %w[assets ai_agent],
   }.freeze
 
   class << self
@@ -62,11 +62,13 @@ module Config
     def mixer = app_config.mixer
     def web_push = app_config.web_push
 
-    # stage までに必須のトップレベルセクションが揃っているか一括検証する。
-    def validate_for!(stage)
-      raise ArgumentError, "unknown pipeline stage: #{stage} (must be one of: #{STAGES.join(', ')})" unless STAGE_ORDER.key?(stage)
+    # from から stage までの工程に必須のトップレベルセクションが揃っているか一括検証する。
+    def validate_for!(stage, from: STAGES.first)
+      [from, stage].each do |s|
+        raise ArgumentError, "unknown pipeline stage: #{s} (must be one of: #{STAGES.join(', ')})" unless STAGE_ORDER.key?(s)
+      end
 
-      validate_sections!(*required_sections_for(stage), context: "pipeline.until=#{stage}")
+      validate_sections!(*required_sections_for(from, stage), context: "stages #{from}..#{stage}")
     end
 
     # 公開先の設定が揃っているか検証する。
@@ -87,10 +89,9 @@ module Config
 
     private
 
-    # 共通の必須セクションに、stage 自身とそれより手前の全工程の差分を合算する（加算方式）。
-    def required_sections_for(stage)
-      stages = STAGES.first(STAGE_ORDER[stage] + 1)
-      REQUIRED_SECTIONS_BASE + stages.flat_map { |s| REQUIRED_SECTIONS_DELTA.fetch(s) }
+    def required_sections_for(from, stage)
+      stages = STAGES[STAGE_ORDER[from]..STAGE_ORDER[stage]]
+      (REQUIRED_SECTIONS_BASE + stages.flat_map { |s| REQUIRED_SECTIONS.fetch(s) }).uniq
     end
 
     def app_config
