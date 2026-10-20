@@ -140,8 +140,8 @@ bundle exec ruby miyamai_news.rb synthesize
 bundle exec ruby miyamai_news.rb publish
 
 # 続けて実行する
-bundle exec ruby miyamai_news.rb synthesize-and-publish  # synthesize → publish
-bundle exec ruby miyamai_news.rb draft-and-publish       # draft → synthesize → publish（R2 に台本があれば生成は飛ばす）
+bundle exec ruby miyamai_news.rb synthesize-and-publish    # synthesize → publish
+bundle exec ruby miyamai_news.rb draft-synthesize-publish  # draft → synthesize → publish（R2 に台本があれば生成は飛ばす）
 
 # 対象回を明示（draft / synthesize / publish 系の全コマンドで使える）
 bundle exec ruby miyamai_news.rb synthesize-and-publish --date 2026-07-10 --slot morning
@@ -165,7 +165,7 @@ bundle exec ruby miyamai_news.rb --help
 ### R2 を経由した台本の受け渡し
 
 台本の生成（収集〜TTS 整形）と音声合成は、同じ端末で続けて実行する場合も含めて、必ず
-R2 の `handoff/<date_tag>_<slot>/` を経由する。`draft-and-publish` は次の順に進む。
+R2 の `handoff/<date_tag>_<slot>/` を経由する。`draft-synthesize-publish` は次の順に進む。
 
 1. R2 に現在の回（`--date`/`--slot` で指定も可）の台本一式があれば、それを使って 4 へ進む
 2. 無ければ、公開台帳（`archives.csv`）に既にこの回があれば中断する

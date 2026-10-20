@@ -28,7 +28,7 @@ class Pipeline
     "synthesize" => %w[synthesize synthesize],
     "publish" => %w[publish publish],
     "synthesize-and-publish" => %w[synthesize publish],
-    "draft-and-publish" => %w[digest publish],
+    "draft-synthesize-publish" => %w[digest publish],
   }.freeze
 
   class StageNotAllowed < ArgumentError; end

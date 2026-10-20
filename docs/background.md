@@ -1115,10 +1115,13 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - CLI は handoff を境にした実行環境の違いに合わせてサブコマンドを分ける。`draft`
   （AI 環境: 収集〜台本〜R2 handoff。`--until digest|script` で手前で止める）・
   `synthesize`（VOICEPEAK 環境: R2 handoff から音声化）・`publish`（dist/ から公開）と、
-  続けて実行する `synthesize-and-publish`・`draft-and-publish`。旧 `--*-only` フラグは
+  続けて実行する `synthesize-and-publish`・`draft-synthesize-publish`。旧 `--*-only` フラグは
   「そこまで進んで止まる」「その工程だけ」「別コマンド」の 3 つの意味が同じ接尾辞に
   混ざっていて、どこからどこまでが同じ環境で動くのかも読み取れなかったため廃止した。
   将来テキストだけ先に公開する構成にすると公開の意味が変わるので、名前はそのとき見直す前提。
+  全工程を続けて実行するコマンドを `draft-and-publish` にしないのは、今は publish に音声が
+  必須で synthesize を暗黙に含むことになり、テキスト先行公開を入れたときに同じ名前の意味が
+  「draft してテキストで公開」に変わってしまうため。たどる工程をすべて名前に出している。
 - サブコマンドの省略（デフォルト実行）は認めない。引数なしで生成〜公開まで走ると、
   意図しない本番 publish が起きうるため。
 - サブコマンドが受け付けないオプション（`publish --until` 等）は黙って無視せず
@@ -1142,9 +1145,9 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
 - `synthesize` で始まるコマンドは、R2 にこの回の handoff が無ければ生成せずに abort する
   （`#run_from_synthesize`）。音声側の環境は AI CLI やニュースソースの設定を持たない前提で、
   そこで収集・生成を始めると R2 の内部状態まで書き換えてしまうため。生成から続けたいときは
-  `draft-and-publish` を使う。
+  `draft-synthesize-publish` を使う。
 - `#run_script`（`draft --until script`）は VOICEPEAK 向けの整形をしない、人間が読む
-  台本までで停止する。台本の中身を確認・手直ししたうえで、`draft` や `draft-and-publish` で
+  台本までで停止する。台本の中身を確認・手直ししたうえで、`draft` や `draft-synthesize-publish` で
   再実行すれば既存の台本を再利用して整形〜音声合成〜publish まで続きから
   進められる（work_dir 内の中間ファイルの有無で再利用を判断する、前掲
   「ScriptGenerator / AI パイプライン」節の再利用機構に乗る）。
@@ -1243,7 +1246,7 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   として見つけられなくなるため。slot の区切り（`Slot::DAY_START_HOUR`）も挨拶文も JST 前提
   なので、設定にはせず固定している。瞬間としては同じ時刻なので、収集時刻（`seen_at`・
   確定の `at`）の比較には影響しない。
-- `draft`/`draft-and-publish` で handoff まで進む実行（`Pipeline#prepare_handoff`）は、まず R2 に
+- `draft`/`draft-synthesize-publish` で handoff まで進む実行（`Pipeline#prepare_handoff`）は、まず R2 に
   現在の回の `handoff/<episode_key>/` があるかを見る。あれば生成も状態の取り出しもせずに次へ進む。これで、リモートが
   先に台本を置いていれば手元の実行は生成を飛ばす。
 - handoff が無い場合、公開済みかどうかは `handoff_done/` ではなく公開台帳

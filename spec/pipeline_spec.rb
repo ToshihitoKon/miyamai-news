@@ -239,10 +239,10 @@ RSpec.describe Pipeline do
       expect(messages).to include(a_string_including("left by 20260714_morning"))
     end
 
-    it "draft-and-publish は pipeline.until が digest なら何もせずに abort する" do
+    it "draft-synthesize-publish は pipeline.until が digest なら何もせずに abort する" do
       allow(Config).to receive(:until_stage).and_return("digest")
 
-      expect { build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
+      expect { build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
       expect(fake_remote_state).not_to have_received(:checkout!)
       expect(fake_handoff).not_to have_received(:upload!)
@@ -251,12 +251,12 @@ RSpec.describe Pipeline do
     it "R2 の状態が空なら ScriptGenerator を作らずに abort する" do
       allow(fake_remote_state).to receive(:checkout!).and_raise(Internal::RemoteState::Missing, "no pipeline state")
 
-      expect { build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
+      expect { build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
       expect(ScriptGenerator).not_to have_received(:new)
     end
 
-    context "draft-and-publish で R2 にこの回の handoff が無い場合" do
+    context "draft-synthesize-publish で R2 にこの回の handoff が無い場合" do
       it "生成した台本一式を R2 に置いてから、R2 経由で合成して publish し、handoff を処理済みにする" do
         events = []
         allow(fake_remote_state).to receive(:checkout!) { events << :checkout }
@@ -277,7 +277,7 @@ RSpec.describe Pipeline do
           3
         end
 
-        build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run
+        build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run
 
         expect(events).to eq([:checkout, :ensure_current, :commit, :push, :upload, :download, :publish, :done])
         expect(fake_generator).to have_received(:generate).with(no_args)
@@ -296,13 +296,13 @@ RSpec.describe Pipeline do
       it "アップロードする used_news は UsedNewsFormatter で検証・修復した内容にする" do
         allow(UsedNewsFormatter).to receive(:ensure_valid!).with("used").and_return("repaired used")
 
-        build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run
+        build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run
 
         expect(fake_handoff).to have_received(:upload!).with(anything, hash_including(used_news: "repaired used"))
       end
 
       it "この回の収集時刻で確定し、履歴に記録して、状態を書き戻してから upload する" do
-        build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run
+        build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run
 
         expect(LastFetchStore).to have_received(:commit!).with(
           work_dir: work_dir, episode_key: "20260714_afternoon", at: now
@@ -343,7 +343,7 @@ RSpec.describe Pipeline do
       it "公開台帳に既にこの回があれば、生成も合成もせずに abort する" do
         allow(fake_publisher).to receive(:published?).with("miyamai_news_20260714_afternoon.mp3").and_return(true)
 
-        expect { build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
+        expect { build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
         expect(ScriptGenerator).not_to have_received(:new)
         expect(fake_handoff).not_to have_received(:upload!)
@@ -356,7 +356,7 @@ RSpec.describe Pipeline do
           generated_tts_path
         end
 
-        expect { build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
+        expect { build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
         expect(fake_handoff).not_to have_received(:upload!)
         expect(fake_remote_state).not_to have_received(:push!)
@@ -365,7 +365,7 @@ RSpec.describe Pipeline do
       it "生成中に別の実行が R2 の状態を更新していたら、アップロードせずに abort する" do
         allow(fake_remote_state).to receive(:ensure_current!).and_raise(Internal::RemoteState::Conflict, "conflict")
 
-        expect { build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
+        expect { build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
         expect(fake_handoff).not_to have_received(:upload!)
         expect(fake_remote_state).not_to have_received(:push!)
@@ -375,7 +375,7 @@ RSpec.describe Pipeline do
     it "現在の回以外の未公開の handoff が R2 に残っていれば、その回を警告する" do
       handoff_state[:uploaded] = true
       allow(fake_handoff).to receive(:pending_episode_keys).and_return(%w[20260714_morning 20260714_afternoon])
-      pipeline = build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon")
+      pipeline = build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon")
       messages = collect_warnings(pipeline)
 
       pipeline.run
@@ -387,17 +387,17 @@ RSpec.describe Pipeline do
       handoff_state[:uploaded] = true
       allow(LastFetchStore).to receive(:commits).and_return([{ "episode" => "20260714_evening", "at" => now.iso8601 }])
 
-      build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run
+      build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run
 
       expect(ScriptGenerator).not_to have_received(:new)
       expect(fake_publisher).to have_received(:run)
       expect(fake_handoff).to have_received(:mark_done!).with("20260714_afternoon")
     end
 
-    it "draft-and-publish で R2 にこの回の handoff があれば、生成も状態取得もせずに合成・publish する" do
+    it "draft-synthesize-publish で R2 にこの回の handoff があれば、生成も状態取得もせずに合成・publish する" do
       handoff_state[:uploaded] = true
 
-      build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run
+      build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run
 
       expect(ScriptGenerator).not_to have_received(:new)
       expect(fake_remote_state).not_to have_received(:checkout!)
@@ -419,7 +419,7 @@ RSpec.describe Pipeline do
       handoff_state[:uploaded] = true
       allow(fake_voice_synthesizer).to receive(:synthesize).and_raise(SystemExit)
 
-      expect { build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
+      expect { build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon").run }.to raise_error(SystemExit)
 
       expect(File.exist?(used_path)).to be false
       expect(File.exist?(transcript_path)).to be false
@@ -494,7 +494,7 @@ RSpec.describe Pipeline do
 
   describe "フェーズ所要時間のサマリ出力" do
     it "正常終了時は digest/writer/voice/publish の4行が出力され、いずれも(failed)が付かない" do
-      pipeline = build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon")
+      pipeline = build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon")
       messages = collect_warnings(pipeline)
 
       pipeline.run
@@ -510,7 +510,7 @@ RSpec.describe Pipeline do
       # run_publish 冒頭の mp3 未検出チェックで abort させるため、mix によるファイル作成を止める。
       allow(fake_audio_mixer).to receive(:mix)
 
-      pipeline = build_pipeline(command: "draft-and-publish", date: now, slot: "afternoon")
+      pipeline = build_pipeline(command: "draft-synthesize-publish", date: now, slot: "afternoon")
       messages = collect_warnings(pipeline)
 
       expect { pipeline.run }.to raise_error(SystemExit)
@@ -552,7 +552,7 @@ RSpec.describe Pipeline do
       expect(Pipeline.stage_range_for(command: "synthesize")).to eq(%w[synthesize synthesize])
       expect(Pipeline.stage_range_for(command: "publish")).to eq(%w[publish publish])
       expect(Pipeline.stage_range_for(command: "synthesize-and-publish")).to eq(%w[synthesize publish])
-      expect(Pipeline.stage_range_for(command: "draft-and-publish")).to eq(%w[digest publish])
+      expect(Pipeline.stage_range_for(command: "draft-synthesize-publish")).to eq(%w[digest publish])
     end
 
     it "narrows the end of the range with --until" do
@@ -604,7 +604,7 @@ RSpec.describe Pipeline do
     end
 
     it "returns true for the commands that end with publish" do
-      %w[publish synthesize-and-publish draft-and-publish].each do |command|
+      %w[publish synthesize-and-publish draft-synthesize-publish].each do |command|
         expect(Pipeline.reaches?("publish", command: command)).to be true
       end
     end

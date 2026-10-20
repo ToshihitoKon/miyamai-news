@@ -12,8 +12,8 @@ ruby miyamai_news.rb draft --until digest    # ニュース選別・facts抽出�
 ruby miyamai_news.rb draft --until script    # 台本（TTS整形前）まで（work/に書き出す、確認・手直し用）
 ruby miyamai_news.rb synthesize              # R2の台本から音声合成・BGM合成（dist/に書き出して終了）
 ruby miyamai_news.rb publish                 # dist/の該当回を公開
-ruby miyamai_news.rb synthesize-and-publish  # synthesize → publish
-ruby miyamai_news.rb draft-and-publish       # draft → synthesize → publish
+ruby miyamai_news.rb synthesize-and-publish    # synthesize → publish
+ruby miyamai_news.rb draft-synthesize-publish  # draft → synthesize → publish
 ruby miyamai_news.rb clean                # work/を掃除し、公開済みのdist/成果物を削除
 ruby miyamai_news.rb clean --archive      # archived/配下の退避済み成果物を完全削除
 ruby miyamai_news.rb republish-ui         # 新しい回を公開せずindex.html/manifest.jsonだけ再生成

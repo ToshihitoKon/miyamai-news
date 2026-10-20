@@ -15,7 +15,7 @@ COMMANDS = {
   "synthesize" => "synthesize voice/BGM from the R2 handoff into dist/",
   "publish" => "publish the target episode from dist/",
   "synthesize-and-publish" => "synthesize, then publish",
-  "draft-and-publish" => "draft, synthesize, then publish",
+  "draft-synthesize-publish" => "draft, synthesize, then publish",
   "republish-ui" => "regenerate index.html / manifest.json without publishing a new episode",
   "clean" => "clean work/ and delete published dist/ artifacts (--archive: delete archived/ instead)",
 }.freeze
@@ -25,7 +25,7 @@ COMMAND_OPTIONS = {
   "synthesize" => [:date, :slot],
   "publish" => [:date, :slot],
   "synthesize-and-publish" => [:date, :slot],
-  "draft-and-publish" => [:date, :slot],
+  "draft-synthesize-publish" => [:date, :slot],
   "republish-ui" => [],
   "clean" => [:archive],
 }.freeze
@@ -38,7 +38,7 @@ def parse_args(argv)
     o.banner = "Usage: ruby miyamai_news.rb COMMAND [options]"
     o.separator ""
     o.separator "Commands:"
-    COMMANDS.each { |name, desc| o.separator format("    %-24s %s", name, desc) }
+    COMMANDS.each { |name, desc| o.separator format("    %-26s %s", name, desc) }
     o.separator ""
     o.separator "Options:"
     o.on("--config PATH", "path to the config file (default: config.yaml)") { |v| opts[:config] = v }
