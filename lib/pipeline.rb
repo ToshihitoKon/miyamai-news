@@ -16,9 +16,22 @@ require_relative "voice_synthesizer"
 require_relative "audio_mixer"
 require_relative "publisher"
 
-# miyamai_news.rb の CLI フラグに応じた工程の呼び分けを担うオーケストレーター。
+# miyamai_news.rb のサブコマンドと --until に応じた工程の呼び分けを担うオーケストレーター。
 class Pipeline
   HANDOFF_WORK_GLOB = "handoff_*.txt"
+
+  # Episode に依存しない独立コマンド。
+  INDEPENDENT_COMMANDS = %w[clean republish-ui].freeze
+  # 工程をたどるコマンドごとの [開始工程, --until なしでの到達工程]。
+  STAGE_RANGES = {
+    "draft" => %w[digest handoff],
+    "synthesize" => %w[synthesize synthesize],
+    "publish" => %w[publish publish],
+    "synthesize-and-publish" => %w[synthesize publish],
+    "draft-synthesize-publish" => %w[digest publish],
+  }.freeze
+
+  class StageNotAllowed < ArgumentError; end
 
   def initialize(args:, base_dir:, work_dir:, dist_dir:, phase_timer: Internal::PhaseTimer.new)
     @args = args
@@ -28,35 +41,35 @@ class Pipeline
     @phase_timer = phase_timer
   end
 
-  def self.target_mode_for(args)
-    return nil if args[:clean] || args[:clean_archive] || args[:ui_only]
-    return "digest" if args[:digest_only]
-    return "synthesize" if args[:script_only] || args[:synthesize_only] || args[:handoff_only]
-
-    Config.mode
+  def self.stages_of(command)
+    from, to = STAGE_RANGES.fetch(command)
+    Config::STAGES[Config::STAGE_ORDER[from]..Config::STAGE_ORDER[to]]
   end
 
-  # args と現在の Config.mode の組み合わせで、この起動が mode まで到達するか。
-  def self.reaches?(mode, args)
-    target = target_mode_for(args)
-    !target.nil? && Config::MODE_ORDER[target] >= Config::MODE_ORDER[mode]
+  # この起動がたどる工程の範囲 [開始工程, 到達工程]。Episode に依存しない独立コマンドは nil。
+  def self.stage_range_for(args)
+    return nil if INDEPENDENT_COMMANDS.include?(args[:command])
+
+    from, default_to = STAGE_RANGES.fetch(args[:command]) { raise ArgumentError, "unknown command: #{args[:command]}" }
+    to = args[:until] || default_to
+    raise ArgumentError, "--until #{to} is outside #{args[:command]} (#{from}..#{default_to})" unless stages_of(args[:command]).include?(to)
+
+    limit = Config.until_stage
+    return [from, to] if Config::STAGE_ORDER.fetch(to) <= Config::STAGE_ORDER.fetch(limit)
+
+    raise StageNotAllowed, "cannot run up to #{to}: pipeline.until is #{limit} (raise it in config to allow)"
+  end
+
+  def self.reaches?(stage, args)
+    range = stage_range_for(args)
+    !range.nil? && Config::STAGE_ORDER[range.last] >= Config::STAGE_ORDER[stage]
   end
 
   def run
-    return run_clean_command if @args[:clean]
-    return run_clean_archive_command if @args[:clean_archive]
-    return run_republish_ui_command if @args[:ui_only]
-
-    setup_episode!
-
-    if @args[:publish_only]
-      run_publish_only
-    elsif @args[:digest_only]
-      run_digest_only
-    elsif @args[:script_only]
-      run_script_only
-    else
-      run_full
+    case @args[:command]
+    when "clean" then @args[:archive] ? run_clean_archive_command : run_clean_command
+    when "republish-ui" then run_republish_ui_command
+    else run_stages_command
     end
   ensure
     @phase_timer.report
@@ -137,7 +150,7 @@ class Pipeline
     elsif previous_owner == episode_key
       warn "resumed unfinished local pipeline state"
     else
-      warn "resumed unfinished local pipeline state left by #{previous_owner} (run --clean to discard it instead)"
+      warn "resumed unfinished local pipeline state left by #{previous_owner} (discard it with the clean command instead)"
     end
     result
   rescue Internal::RemoteState::Missing, Internal::RemoteState::Conflict => e
@@ -151,48 +164,57 @@ class Pipeline
     abort e.message
   end
 
-  def run_publish_only
-    ensure_mode_allows!("publish")
-    run_publish
-    mark_handoff_done
-  end
+  def run_stages_command
+    from, to = stage_range!
+    setup_episode!
 
-  def run_digest_only
-    ensure_mode_allows!("digest")
-    setup_generator!
-    run_digest
-  end
-
-  def run_script_only
-    ensure_mode_allows!("synthesize")
-    setup_generator!
-    run_script
-  end
-
-  def run_full
-    target_mode = full_run_target_mode
-
-    unless Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["synthesize"]
-      setup_generator!
-      return run_digest
+    case from
+    when "digest" then run_from_draft(to)
+    when "synthesize" then run_from_synthesize(to)
+    when "publish" then publish_episode
     end
+  end
 
-    prepare_handoff
-    return if @args[:handoff_only]
+  def stage_range!
+    self.class.stage_range_for(@args)
+  rescue StageNotAllowed => e
+    abort e.message
+  end
+
+  def run_from_draft(to)
+    case to
+    when "digest"
+      setup_generator!
+      run_digest
+    when "script"
+      setup_generator!
+      run_script
+    else
+      prepare_handoff
+      run_after_handoff(to)
+    end
+  end
+
+  # R2 にこの回の台本一式が無ければ、生成せずに止める。
+  def run_from_synthesize(to)
+    warn_other_pending_handoffs
+    abort "handoff not found in R2: #{episode_key} (run draft first, or target another episode with --date/--slot)" unless handoff.exist?(episode_key)
+
+    run_after_handoff(to)
+  end
+
+  def run_after_handoff(to)
+    return if to == "handoff"
 
     run_synthesize
-    return unless Config::MODE_ORDER[target_mode] >= Config::MODE_ORDER["publish"]
+    return if to == "synthesize"
 
-    run_publish
-    mark_handoff_done
+    publish_episode
   end
 
-  def full_run_target_mode
-    return "synthesize" if @args[:handoff_only]
-    return Config.mode unless @args[:synthesize_only]
-
-    ensure_mode_allows!("synthesize")
-    "synthesize"
+  def publish_episode
+    run_publish
+    mark_handoff_done
   end
 
   # この回の台本一式を R2 に用意する。既に置かれていればそれを使い、生成しない。
@@ -222,11 +244,11 @@ class Pipeline
     others = handoff.pending_episode_keys - [episode_key]
     return if others.empty?
 
-    warn "unpublished handoffs remain in R2: #{others.join(', ')} (publish one with --date/--slot)"
+    warn "unpublished handoffs remain in R2: #{others.join(', ')} (target one with --date/--slot)"
   end
 
   def ensure_no_concurrent_run!
-    abort "handoff #{episode_key} was uploaded by another run meanwhile; discard this run with --clean" if handoff.exist?(episode_key)
+    abort "handoff #{episode_key} was uploaded by another run meanwhile; discard this run with the clean command" if handoff.exist?(episode_key)
 
     remote_state.ensure_current!
   rescue Internal::RemoteState::Conflict => e
@@ -247,13 +269,7 @@ class Pipeline
     warn "handoff done: #{episode_key}" if moved.positive?
   end
 
-  def ensure_mode_allows!(required_mode)
-    return if Config::MODE_ORDER.fetch(Config.mode) >= Config::MODE_ORDER.fetch(required_mode)
-
-    abort "this flag requires pipeline.mode >= #{required_mode}, but pipeline.mode=#{Config.mode}"
-  end
-
-  # ニュース収集・AI選別・facts抽出までを実行する。pipeline.mode: digest の到達点。
+  # ニュース収集・AI選別・facts抽出までを実行する。draft --until digest の到達点。
   def run_digest
     facts_path = @phase_timer.measure("digest") { @generator.digest }
 
@@ -268,7 +284,7 @@ class Pipeline
     warn "script: #{relative(script_path)}"
   end
 
-  # R2 の台本一式から音声合成・BGM合成までを実行する。pipeline.mode: synthesize の到達点。
+  # R2 の台本一式から音声合成・BGM合成までを実行する。synthesize の到達点。
   def run_synthesize
     bgm_path = File.expand_path(Config.assets.bgm_path, @base_dir)
     output_path = episode_mp3_path
@@ -292,7 +308,7 @@ class Pipeline
   def run_publish
     @phase_timer.measure("publish") do
       mp3_path = episode_mp3_path
-      abort "mp3 not found: #{relative(mp3_path)} (run --synthesize-only first)" unless File.exist?(mp3_path)
+      abort "mp3 not found: #{relative(mp3_path)} (run synthesize first)" unless File.exist?(mp3_path)
 
       used_path = episode_used_path
       used_path = nil unless used_path && File.exist?(used_path)

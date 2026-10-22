@@ -1,5 +1,5 @@
 pipeline:
-  mode: publish
+  until: publish
 
 gcs:
   bucket: nidodm-miyamai-news-no

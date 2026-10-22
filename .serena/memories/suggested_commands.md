@@ -1,19 +1,23 @@
 # 実行コマンド
 
 ## CLI本体（bundler/inlineで依存自動取得、bundle install不要）
-フラグの実行可否は`config.yaml`の`pipeline.mode`（digest/synthesize/publish、既定digest）が
-上限を決める。フラグなし実行はこの上限まで自動的に進む。
+サブコマンド必須（省略時はhelpを出して終了）。handoffを境に実行環境が分かれる:
+draft（AI環境: 収集〜台本〜R2 handoff）/ synthesize（VOICEPEAK環境）/ publish。
+工程はdigest/script/handoff/synthesize/publishで、`config.yaml`の`pipeline.until`（既定digest。
+旧キー`pipeline.mode`はエラー）がその環境で進んでよい上限を決める。
 
 ```sh
-ruby miyamai_news.rb                    # pipeline.modeの上限まで自動的に進む
-ruby miyamai_news.rb --digest-only      # ニュース選別・facts抽出のみ生成して停止（digest以上）
-ruby miyamai_news.rb --script-only      # 台本のみ生成して停止（work/に書き出す、確認・手直し用。synthesize以上）
-ruby miyamai_news.rb --synthesize-only  # 音声合成・BGM合成のみ（dist/に書き出して終了。synthesize以上）
-ruby miyamai_news.rb --publish-only     # dist/の該当回を公開のみ（publish のみ）
-ruby miyamai_news.rb --clean            # work/を掃除し、公開済みのdist/成果物を削除
-ruby miyamai_news.rb --clean-archive    # archived/配下の退避済み成果物を完全削除
-ruby miyamai_news.rb --ui-only          # 新しい回を公開せずindex.html/manifest.jsonだけ再生成
-ruby miyamai_news.rb --date 2026-07-10 --slot morning  # 対象回を明示
+ruby miyamai_news.rb draft                   # 台本一式をR2のhandoff/に置くまで
+ruby miyamai_news.rb draft --until digest    # ニュース選別・facts抽出まで
+ruby miyamai_news.rb draft --until script    # 台本（TTS整形前）まで（work/に書き出す、確認・手直し用）
+ruby miyamai_news.rb synthesize              # R2の台本から音声合成・BGM合成（dist/に書き出して終了）
+ruby miyamai_news.rb publish                 # dist/の該当回を公開
+ruby miyamai_news.rb synthesize-and-publish    # synthesize → publish
+ruby miyamai_news.rb draft-synthesize-publish  # draft → synthesize → publish
+ruby miyamai_news.rb clean                # work/を掃除し、公開済みのdist/成果物を削除
+ruby miyamai_news.rb clean --archive      # archived/配下の退避済み成果物を完全削除
+ruby miyamai_news.rb republish-ui         # 新しい回を公開せずindex.html/manifest.jsonだけ再生成
+ruby miyamai_news.rb synthesize-and-publish --date 2026-07-10 --slot morning  # 対象回を明示
 ruby miyamai_news.rb --help             # オプション一覧を表示
 ```
 

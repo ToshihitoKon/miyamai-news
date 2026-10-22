@@ -1,11 +1,13 @@
-# パイプラインの実行段階。どこまで自動的に進めるかの上限を決める。
+# この環境で進めてよい工程の上限。これを超える工程に進むコマンドは abort する。
 pipeline:
-  mode: digest # RSS収集, AIによるカテゴリ別選別, facts抽出(ニュース要約)
-  # mode: synthesize # digest + 音声合成・BGM合成。dist/ に mp3 を書き出す。
-  # mode: publish    # synthesize + Cloudflare への publish
+  until: digest # RSS収集, AIによるカテゴリ別選別, facts抽出(ニュース要約)
+  # until: script     # digest + 台本生成（TTS 整形前）
+  # until: handoff    # script + TTS 整形・台本一式を R2 の handoff/ に置く（draft。VOICEPEAK の無いリモート向け）
+  # until: synthesize # handoff + 音声合成・BGM合成。dist/ に mp3 を書き出す。
+  # until: publish    # synthesize + Cloudflare への publish
 
 # Cloudflare への公開まわり（Workers static assets + R2）。
-# パイプラインの内部状態（state/）と台本の受け渡し（handoff/）にも R2 を使うため、どの mode でも必須。
+# パイプラインの内部状態（state/）と台本の受け渡し（handoff/）にも R2 を使うため、どの工程でも必須。
 # R2 の S3 互換 API 認証情報は config には書かず、環境変数で渡す。
 #   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
 # wrangler の認証も環境変数（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）。

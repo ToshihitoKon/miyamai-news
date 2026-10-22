@@ -58,7 +58,7 @@ class ScriptGenerator
     news_facts_path
   end
 
-  # format: false なら script/used まで作って止める（--script-only 用）。
+  # format: false なら script/used まで作って止める（draft --until script 用）。
   def generate(format: true)
     selected_news = digest_news
 
@@ -212,7 +212,7 @@ class ScriptGenerator
   # 残し、あれば再利用する。収集時刻は news_collected_at_*.txt に残す。
   def load_or_collect_news
     if File.exist?(news_collected_path)
-      abort "#{relative(news_collected_path)} has no collection time; discard it with --clean and run again" unless collected_at
+      abort "#{relative(news_collected_path)} has no collection time; discard it with the clean command and run again" unless collected_at
       warn "reuse: #{relative(news_collected_path)}"
       return File.read(news_collected_path)
     end

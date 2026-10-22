@@ -20,7 +20,7 @@ GCS 上の再生ページ（`index.html`）と Atom フィード（`feed.xml`）
 - **新規 episode の publish 以外のタイミングで `feed.xml` を更新することはしない。**
   `feed.xml` の `<updated>` が動くと購読者に「新着」として通知される。
   UI 文言の修正や動作確認など、新しい回の公開を伴わない作業では
-  `--ui-only`（`Publisher#republish_ui`）を使い、`feed.xml`・`archives.csv`・
+  `republish-ui` コマンド（`Publisher#republish_ui`）を使い、`feed.xml`・`archives.csv`・
   mp3 等の実ファイルには一切触れないこと。
 - 新しく実装した「本番データに対して自動的に副作用を及ぼす機能」（保持件数超過分の
   自動隔離など）は、マージ・有効化した時点で次回の通常 publish 実行時に本番へ

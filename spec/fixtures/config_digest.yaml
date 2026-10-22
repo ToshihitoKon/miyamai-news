@@ -1,7 +1,7 @@
-# pipeline.mode: digest の最小構成。voicepeak/mixer/assets を持たない
+# pipeline.until: digest の最小構成。voicepeak/mixer/assets を持たない
 # fixture で、Config.validate_for!("digest") が通ることを検証する。
 pipeline:
-  mode: digest
+  until: digest
 
 cloudflare:
   account_id: test-account-id

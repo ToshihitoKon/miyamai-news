@@ -10,25 +10,74 @@ RSpec.describe Config do
 
   after { Config.path = default_path }
 
-  describe ".mode" do
-    it "returns digest when pipeline.mode is absent" do
-      Config.path = File.expand_path("../fixtures/config_digest.yaml", __dir__)
-
-      expect(Config.mode).to eq("digest")
+  describe ".until_stage" do
+    def load_pipeline(dir, pipeline)
+      data = YAML.safe_load_file(File.expand_path("../fixtures/config.yaml", __dir__))
+      data.delete("pipeline")
+      data["pipeline"] = pipeline if pipeline
+      path = File.join(dir, "config.yaml")
+      File.write(path, data.to_yaml)
+      Config.path = path
     end
 
-    it "returns the configured mode" do
-      expect(Config.mode).to eq("publish")
+    it "returns digest when the pipeline section is absent" do
+      Dir.mktmpdir do |dir|
+        load_pipeline(dir, nil)
+
+        expect(Config.until_stage).to eq("digest")
+      end
+    end
+
+    it "returns the configured pipeline.until" do
+      expect(Config.until_stage).to eq("publish")
+    end
+
+    it "rejects an unknown pipeline.until stage at load time" do
+      Dir.mktmpdir do |dir|
+        expect { load_pipeline(dir, { "until" => "pub" }) }
+          .to raise_error(Config::InvalidConfigError, /pipeline\.until must be one of/)
+      end
+    end
+
+    it "rejects the legacy pipeline.mode key instead of silently falling back to digest" do
+      Dir.mktmpdir do |dir|
+        expect { load_pipeline(dir, { "mode" => "publish" }) }
+          .to raise_error(Config::InvalidConfigError, /renamed to pipeline\.until/)
+      end
     end
   end
 
   describe ".validate_for!" do
-    it "raises ArgumentError for an unknown mode" do
-      expect { Config.validate_for!("bogus") }.to raise_error(ArgumentError, /unknown pipeline mode/)
+    it "raises ArgumentError for an unknown stage" do
+      expect { Config.validate_for!("bogus") }.to raise_error(ArgumentError, /unknown pipeline stage/)
     end
 
     it "passes for the fully configured publish fixture" do
       expect { Config.validate_for!("publish") }.not_to raise_error
+    end
+
+    context "with a voice-only config (no AI / news sections)" do
+      around do |example|
+        Dir.mktmpdir do |dir|
+          data = YAML.safe_load_file(default_path).except("ai_agent", "program_details", "rss_feed_sources", "collect")
+          path = File.join(dir, "config.yaml")
+          File.write(path, data.to_yaml)
+          Config.path = path
+          example.run
+        end
+      end
+
+      it "passes for synthesize when validating only the synthesize stage" do
+        expect { Config.validate_for!("synthesize", from: "synthesize") }.not_to raise_error
+      end
+
+      it "still requires ai_agent for publish, which may repair used_news with the AI CLI" do
+        expect { Config.validate_for!("publish", from: "synthesize") }.to raise_error(Config::MissingKeyError, /ai_agent/)
+      end
+
+      it "requires the news sections when the range starts from digest" do
+        expect { Config.validate_for!("handoff") }.to raise_error(Config::MissingKeyError, /rss_feed_sources/)
+      end
     end
 
     context "with the digest-only fixture" do
@@ -114,7 +163,7 @@ RSpec.describe Config do
     end
   end
 
-  # --ui-only / --clean 系は mode 判定を通らないので、公開先の欠落をここで
+  # republish-ui / clean は工程の判定を通らないので、公開先の欠落をここで
   # 捕まえないと、生成しきってからデプロイ段階で落ちる。
   describe ".validate_publish_target!" do
     it "passes when cloudflare is configured" do

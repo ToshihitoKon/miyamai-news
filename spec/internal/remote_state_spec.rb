@@ -69,7 +69,7 @@ RSpec.describe Internal::RemoteState do
       storage.put("state_revision", "rev-2", content_type: "text/plain")
 
       expect { described_class.new(storage: storage, work_dir: work_dir).checkout!(owner: "20260714_evening") }
-        .to raise_error(described_class::Conflict, /--clean/)
+        .to raise_error(described_class::Conflict, /clean command/)
       expect(File.read(local("last_fetch.json"))).to eq("local unfinished")
     end
 

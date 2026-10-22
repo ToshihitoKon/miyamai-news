@@ -3,7 +3,7 @@
 
 # このfixtureはフルパイプライン相当の値を全て持つため、明示的に publish にする。
 pipeline:
-  mode: publish
+  until: publish
 
 
 # Cloudflare への公開まわり（Workers static assets + R2）。
