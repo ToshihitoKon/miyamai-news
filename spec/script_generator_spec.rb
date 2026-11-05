@@ -39,6 +39,24 @@ RSpec.describe ScriptGenerator do
           expect(fake_feed_cache).to have_received(:fetch).exactly(generator.send(:sources).size).times
           expect(body).to include("Title A")
         end
+
+        it "keeps releases of different repositories that share a version-only title" do
+          releases_by_url = {
+            "https://github.com/foo/alpha/releases.atom" =>
+              [{ link: "https://github.com/foo/alpha/releases/tag/1.5.0", title: "1.5.0", date: nil, seen_at: now.iso8601, extra: nil }],
+            "https://github.com/bar/beta/releases.atom" =>
+              [{ link: "https://github.com/bar/beta/releases/tag/1.5.0", title: "1.5.0", date: nil, seen_at: now.iso8601, extra: nil }]
+          }
+          allow(fake_feed_cache).to receive(:fetch) { |url, **| releases_by_url.fetch(url) }
+          generator = described_class.new(work_dir: work_dir, episode: episode)
+          allow(generator).to receive(:sources).and_return(
+            releases_by_url.keys.map { |url| Internal::Config::RssFeedSource.new(name: url, url: url) }
+          )
+
+          body = generator.send(:collect_news, now - 3600)
+
+          expect(body).to include("alpha 1.5.0", "beta 1.5.0")
+        end
       end
 
       context "failure" do
@@ -274,6 +292,20 @@ RSpec.describe ScriptGenerator do
       result = generator.send(:collect_source, fake_feed_cache, src, now - 3600)
 
       expect(result.map { |i| i[:link] }).to contain_exactly(old_arxiv_link, fresh_arxiv_link)
+    end
+
+    it "prefixes the repository name to GitHub release titles" do
+      release = { link: "https://github.com/anthropics/claude-code/releases/tag/v2.1.318", title: "v2.1.318",
+                  date: nil, seen_at: now.iso8601, extra: nil }
+      allow(fake_feed_cache).to receive(:fetch).and_return([release])
+      generator = described_class.new(work_dir: work_dir, episode: episode)
+      release_src = Internal::Config::RssFeedSource.new(
+        name: "Claude Code Releases", url: "https://github.com/anthropics/claude-code/releases.atom"
+      )
+
+      result = generator.send(:collect_source, fake_feed_cache, release_src, now - 3600)
+
+      expect(result.map { |i| i[:title] }).to eq(["claude-code v2.1.318"])
     end
   end
 
