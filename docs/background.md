@@ -116,6 +116,21 @@
   未設定なら `collect_source` は判定関数自体を呼ばないため、他フィードの収集には
   一切影響しない。
 
+### GithubReleases（GitHub Releases フィード固有の知識）
+
+- GitHub Releases の Atom フィード（`https://github.com/<owner>/<repo>/releases.atom`）は、
+  entry のタイトルがリリース名だけで、多くのリポジトリではバージョン番号しか入らない
+  （2026-11-05 に feed cache で確認。claude-code は `v2.1.318`、antigravity-cli は `1.5.0`、
+  codex は `0.162.0-alpha.8`）。このままでは再生ページの「紹介したニュース」欄にどの
+  ツールの更新か分からないタイトルが出る。また、タイトル基準の `dedup_by_title` が、
+  同じ番号を出した別リポジトリのリリースを重複とみなして片方を落とす。そのため
+  `ScriptGenerator#collect_source` で、リンクがリリースページ（`/releases/tag/`）の entry
+  に限り、タイトルの先頭にリポジトリ名を付ける。
+- 付ける名前は config の `name`（フィードの表示名）ではなく、リンクから取れるリポジトリ名に
+  する。config の書き方に左右されず、リンクだけで機械的に決まるため。
+- 変換は FeedParser・FeedCache ではなく収集後の `collect_source` で行い、キャッシュには
+  フィードの元のタイトルを残す。FeedParser はフィード提供元固有の知識を持たない方針のため。
+
 ### HttpFetcher（単一 URL の取得）
 
 - `MAX_REDIRECTS` はリダイレクト追従の上限ホップ数。無限リダイレクトループによる
@@ -995,6 +1010,10 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   構造化パースする（文法は上の「used_news の表示フォーマット」節参照。要約行は
   「見出し・メタ・空行のいずれでもない行」として拾う）。`UsedNewsFormatter.strip_preamble`
   は先頭の `##` 起点なので、要約を `### タイトル` 配下に置く限り前置き除去には影響しない。
+- 要約の文末は writer のプロンプトで「〜しました。」（能動・過去形）にそろえる。指定が無いと
+  「〜されました」「〜解説されています」「〜を構築します」が項目ごとに混ざり、再生ページで
+  語調がばらつくため。extractor の暫定版は履歴にしか使わず再生ページに出ないので、
+  そろえる指定をしていない。
 - used_news を書く工程は 2 つある。extractor が facts と一緒に**暫定版**を
   `news_used_provisional_<episode_key>.txt`（`ScriptGenerator.provisional_used_news_path`）
   に書き（`templates/extractor.prompt.erb`。`draft --until digest` の到達点でも履歴の元データを残す

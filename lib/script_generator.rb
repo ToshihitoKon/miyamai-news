@@ -6,6 +6,7 @@ require_relative "internal/config"
 require_relative "internal/template_renderer"
 require_relative "internal/hatena_bookmarks"
 require_relative "internal/arxiv"
+require_relative "internal/github_releases"
 require_relative "feed_cache"
 require_relative "internal/last_fetch_store"
 require_relative "internal/used_news_history"
@@ -341,7 +342,8 @@ class ScriptGenerator
     items = items.reject { |item| Internal::Arxiv.old?(item[:link], max_age_days: src.max_age_days, now: @episode.now) } if src.max_age_days
 
     items.map do |item|
-      picked = { title: item[:title], link: item[:link], date: item[:date],
+      picked = { title: Internal::GithubReleases.title_with_repo(item[:title], item[:link]),
+                 link: item[:link], date: item[:date],
                  source: src.name, seen_at: item[:seen_at] }
       picked[:bookmarks] = Internal::HatenaBookmarks.count_of(item[:extra]) if item[:extra]
       picked[:priority] = src.priority if src.priority
