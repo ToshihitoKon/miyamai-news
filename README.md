@@ -160,6 +160,42 @@ bundle exec ruby miyamai_news.rb --ci             # スピナーを出さず進�
 bundle exec ruby miyamai_news.rb --help
 ```
 
+### VOICEPEAK の読み間違いチェック
+
+work/ にある最新の台本（`handoff_tts_script_*.txt`）を VOICEPEAK で合成し直し、
+agy に音声をひらがなへ書き起こさせて、読み間違いの疑いを正誤表にまとめる。
+
+```sh
+bundle exec ruby scripts/check_tts_reading.rb                         # work/ の最新の台本を使う
+bundle exec ruby scripts/check_tts_reading.rb path/to/tts_script.txt  # 台本を指定する
+bundle exec ruby scripts/check_tts_reading.rb --retranscribe          # 保存済みの書き起こしを使わず取り直す
+bundle exec ruby scripts/check_tts_reading.rb --resynthesize          # 保存済みの wav を捨てて合成し直す
+```
+
+- VOICEPEAK があり、agy にログイン済みの Mac で実行する。R2 の認証情報は要らない。
+  config.yaml の `ai_agent.bin` は agy にしておく（`ai_agent.model` を agy のモデル名として使う）。
+  リポジトリのパスに英数字と `_` `.` `/` `-` 以外の文字（空白・括弧・日本語など）があると、agy の
+  読み取り許可を書けないので実行できない
+- 55 チャンク前後の回で、書き起こしに入力が最大で約 110 万トークンかかる見込み（10 チャンクずつに
+  分けて呼ぶようにした後の実測はまだない）。wav は本文と位置が前回と同じチャンクのものを使い回し、
+  変わったチャンクだけ合成する。書き起こしは 10 チャンクずつのまとまりごとに agy を呼んで保存し、
+  まとまりの wav の中身と並び、モデル、書き起こしのプロンプトが前回と同じまとまりだけ使い回す。
+  途中のまとまりで失敗しても、再実行では済んだまとまりを取り直さない。判定だけ失敗した場合の再実行では
+  書き起こしをやり直さない
+- VOICEPEAK のユーザー辞書や設定を変えた後に確かめるときは `--resynthesize` を付ける。
+  付けないと、合成済みの古い wav をそのまま使う。音声が変わったチャンクがあれば、そのまとまりの
+  書き起こしも取り直す
+- agy の出力が読み取れない（Gemini の安全フィルタに止められたなど）ときは、そのまとまりを 1 回だけ
+  自動で取り直す。それでも読み取れなければ止まるので、エラーに出る
+  `work/tts_check_<key>.transcribe.<n>.txt`（`<n>` はまとまりの番号）を手で直して `--retranscribe` なしで
+  再実行するか、そのまま再実行してそのまとまりだけ取り直す。取り直す前の使える書き起こしは
+  `work/tts_check_<key>.transcribe.<n>.previous.txt`（と `.previous.inputs.txt`）に残る。モデル・
+  書き起こしのプロンプト・wav が変わっていなければ、元の名前に戻すと再び使える（変わっていると取り直しになる）
+- 結果は `tts_report.md`（git 管理外）に出る。読み間違いではなく書き起こしの揺れの可能性が高いと
+  判定した疑いには、理由を添えて「書き起こしの揺れの可能性が高い」と書く。消してはいないので、wav を
+  聞いて確かめる。作業ファイルと実行ログ（`work/tts_check_<key>.log`）は
+  `work/tts_check_*` に置かれ、`clean` で消える
+
 ## Tips
 
 ### R2 を経由した台本の受け渡し

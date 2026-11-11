@@ -19,6 +19,7 @@ require_relative "publisher"
 # miyamai_news.rb のサブコマンドと --until に応じた工程の呼び分けを担うオーケストレーター。
 class Pipeline
   HANDOFF_WORK_GLOB = "handoff_*.txt"
+  TTS_CHECK_WORK_GLOB = "tts_check_*"
 
   # Episode に依存しない独立コマンド。
   INDEPENDENT_COMMANDS = %w[clean republish-ui].freeze
@@ -96,7 +97,7 @@ class Pipeline
 
   def clean_work_dir
     patterns = ScriptGenerator.work_globs(@work_dir) + VoiceSynthesizer.work_globs(@work_dir) +
-               Internal::EpisodeLogger.work_globs(@work_dir) +
+               Internal::EpisodeLogger.work_globs(@work_dir) + [File.join(@work_dir, TTS_CHECK_WORK_GLOB)] +
                [File.join(@work_dir, HANDOFF_WORK_GLOB), File.join(@work_dir, Internal::RemoteState::BASE_REVISION_FILE)]
     FileUtils.rm_rf(patterns.flat_map { |pat| Dir.glob(pat) })
     warn "reset work dir: #{relative(@work_dir)}"

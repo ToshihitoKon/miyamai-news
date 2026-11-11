@@ -161,6 +161,18 @@ RSpec.describe Pipeline do
 
       expect(File.exist?(marker)).to be false
     end
+
+    it "clean は読み間違いチェックの作業ファイルも消す" do
+      allow(Internal::EpisodeLogger).to receive(:work_globs).and_return([])
+      allow(ScriptGenerator).to receive(:work_globs).and_return([])
+      allow(VoiceSynthesizer).to receive(:work_globs).and_return([])
+      FileUtils.mkdir_p(File.join(work_dir, "tts_check_20261111_morning"))
+      File.write(File.join(work_dir, "tts_check_20261111_morning.transcribe.txt"), "1: あ")
+
+      build_pipeline(command: "clean").run
+
+      expect(Dir.glob(File.join(work_dir, "tts_check_*"))).to be_empty
+    end
   end
 
   describe "Episode依存の経路" do
