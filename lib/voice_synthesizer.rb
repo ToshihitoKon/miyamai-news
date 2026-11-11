@@ -47,9 +47,19 @@ class VoiceSynthesizer
     warn "narrator: #{NARRATOR} / chunks: #{chunks.size}"
 
     wav_dir = File.join(@work_dir, "wav_#{@date_tag}_#{@slot}")
+    wav_paths = synthesize_wavs(chunks, wav_dir)
+
+    concat_to_mp3(wav_paths, chunks.map { |c| c[:pause] }, voice_path)
+    FileUtils.rm_rf(wav_dir)
+
+    warn "voice: #{voice_path}"
+    voice_path
+  end
+
+  def synthesize_wavs(chunks, wav_dir)
     FileUtils.mkdir_p(wav_dir)
 
-    wav_paths = chunks.each_with_index.map do |chunk, i|
+    chunks.each_with_index.map do |chunk, i|
       path = wav_chunk_path(wav_dir, i, chunk[:text])
       if File.exist?(path)
         warn "  [#{i + 1}/#{chunks.size}] skip (already synthesized)"
@@ -61,12 +71,33 @@ class VoiceSynthesizer
       sleep interval_sec unless i == chunks.size - 1
       path
     end
+  end
 
-    concat_to_mp3(wav_paths, chunks.map { |c| c[:pause] }, voice_path)
-    FileUtils.rm_rf(wav_dir)
+  # 台本を合成単位のチャンクに分割する。戻り値は { text:, pause: } の配列。
+  # INTERVAL_TAG は「。」分割・MAX_CHARS 分割より先に抜き出す。
+  def split_chunks(script)
+    normalized = script.gsub(/\r\n?/, "\n")
 
-    warn "voice: #{voice_path}"
-    voice_path
+    # 末尾に空文字列＋タグなしの組が必ず1つ余分に付くため取り除く。
+    text_and_pause = normalized.scan(TEXT_WITH_FOLLOWING_TAG)
+      .map { |text, tag| [text, tag&.to_sym] }
+    text_and_pause.pop if text_and_pause.last == ["", nil]
+
+    chunks = []
+    text_and_pause.each do |text, pause|
+      sentences = text.split(/(?<=。)/) # 「。」の直後で分割（句点は各文に残す）
+        .map(&:strip)
+        .reject(&:empty?)
+        .flat_map { |sentence| split_long_sentence(sentence) }
+      # タグ直後に文が続かない場合、この pause はどのチャンクにも乗らず捨てられる。
+      next if sentences.empty?
+
+      sentences.each_with_index do |sentence, i|
+        is_last = i == sentences.size - 1
+        chunks << { text: sentence, pause: is_last ? (pause || :short) : :short }
+      end
+    end
+    chunks
   end
 
   private
@@ -160,33 +191,6 @@ class VoiceSynthesizer
     Process.kill("KILL", -pgid)
   rescue Errno::ESRCH
     # 既に終了済み。何もしない。
-  end
-
-  # 台本を合成単位のチャンクに分割する。戻り値は { text:, pause: } の配列。
-  # INTERVAL_TAG は「。」分割・MAX_CHARS 分割より先に抜き出す。
-  def split_chunks(script)
-    normalized = script.gsub(/\r\n?/, "\n")
-
-    # 末尾に空文字列＋タグなしの組が必ず1つ余分に付くため取り除く。
-    text_and_pause = normalized.scan(TEXT_WITH_FOLLOWING_TAG)
-      .map { |text, tag| [text, tag&.to_sym] }
-    text_and_pause.pop if text_and_pause.last == ["", nil]
-
-    chunks = []
-    text_and_pause.each do |text, pause|
-      sentences = text.split(/(?<=。)/) # 「。」の直後で分割（句点は各文に残す）
-        .map(&:strip)
-        .reject(&:empty?)
-        .flat_map { |sentence| split_long_sentence(sentence) }
-      # タグ直後に文が続かない場合、この pause はどのチャンクにも乗らず捨てられる。
-      next if sentences.empty?
-
-      sentences.each_with_index do |sentence, i|
-        is_last = i == sentences.size - 1
-        chunks << { text: sentence, pause: is_last ? (pause || :short) : :short }
-      end
-    end
-    chunks
   end
 
   # MAX_CHARS を超える1文を、読点（、）優先で MAX_CHARS 以内の断片に分ける。

@@ -313,6 +313,35 @@ RSpec.describe VoiceSynthesizer do
     end
   end
 
+  describe "#synthesize_wavs" do
+    it "writes one wav per chunk into the given dir and returns their paths in chunk order" do
+      allow(Open3).to receive(:popen3) do |*cmd|
+        File.write(cmd[cmd.index("--out") + 1], "fake wav")
+        [StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)]
+      end
+      synth = described_class.new(work_dir: work_dir, episode: episode)
+      chunks = [{ text: "一つ目。", pause: :short }, { text: "二つ目。", pause: :short }]
+      wav_dir = File.join(work_dir, "check")
+
+      paths = synth.synthesize_wavs(chunks, wav_dir)
+
+      expect(paths.map { |p| File.basename(p) }).to match([/\A0000_\h{8}\.wav\z/, /\A0001_\h{8}\.wav\z/])
+      expect(paths).to all(satisfy { |p| File.dirname(p) == wav_dir && File.exist?(p) })
+    end
+
+    it "reuses an existing wav and does not launch VOICEPEAK for it" do
+      synth = described_class.new(work_dir: work_dir, episode: episode)
+      wav_dir = File.join(work_dir, "check")
+      FileUtils.mkdir_p(wav_dir)
+      File.write(synth.send(:wav_chunk_path, wav_dir, 0, "一つ目。"), "cached")
+      allow(Open3).to receive(:popen3)
+
+      synth.synthesize_wavs([{ text: "一つ目。", pause: :short }], wav_dir)
+
+      expect(Open3).not_to have_received(:popen3)
+    end
+  end
+
   describe "#concat_to_mp3" do
     let(:synth) { described_class.new(work_dir: work_dir, episode: episode) }
     let(:wav_paths) { %w[0000.wav 0001.wav 0002.wav] }
