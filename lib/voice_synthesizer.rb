@@ -9,6 +9,8 @@ require_relative "internal/command_error"
 require_relative "internal/episode_logger"
 
 class VoiceSynthesizer
+  class SynthesisError < RuntimeError; end
+
   NARRATOR = "Miyamai Moca"
 
   # VOICEPEAK の 1 回あたり合成できる文字数の上限。
@@ -47,11 +49,21 @@ class VoiceSynthesizer
     warn "narrator: #{NARRATOR} / chunks: #{chunks.size}"
 
     wav_dir = File.join(@work_dir, "wav_#{@date_tag}_#{@slot}")
+    wav_paths = synthesize_wavs(chunks, wav_dir)
+
+    concat_to_mp3(wav_paths, chunks.map { |c| c[:pause] }, voice_path)
+    FileUtils.rm_rf(wav_dir)
+
+    warn "voice: #{voice_path}"
+    voice_path
+  end
+
+  def synthesize_wavs(chunks, wav_dir)
     FileUtils.mkdir_p(wav_dir)
 
-    wav_paths = chunks.each_with_index.map do |chunk, i|
+    chunks.each_with_index.map do |chunk, i|
       path = wav_chunk_path(wav_dir, i, chunk[:text])
-      if File.exist?(path)
+      if File.size?(path)
         warn "  [#{i + 1}/#{chunks.size}] skip (already synthesized)"
         next path
       end
@@ -61,12 +73,30 @@ class VoiceSynthesizer
       sleep interval_sec unless i == chunks.size - 1
       path
     end
+  end
 
-    concat_to_mp3(wav_paths, chunks.map { |c| c[:pause] }, voice_path)
-    FileUtils.rm_rf(wav_dir)
+  # 台本を合成単位のチャンクに分割する。戻り値は { text:, pause: } の配列。
+  def split_chunks(script)
+    normalized = script.gsub(/\r\n?/, "\n")
 
-    warn "voice: #{voice_path}"
-    voice_path
+    text_and_pause = normalized.scan(TEXT_WITH_FOLLOWING_TAG)
+      .map { |text, tag| [text, tag&.to_sym] }
+    text_and_pause.pop if text_and_pause.last == ["", nil]
+
+    chunks = []
+    text_and_pause.each do |text, pause|
+      sentences = text.split(/(?<=。)/) # 「。」の直後で分割（句点は各文に残す）
+        .map(&:strip)
+        .reject(&:empty?)
+        .flat_map { |sentence| split_long_sentence(sentence) }
+      next if sentences.empty?
+
+      sentences.each_with_index do |sentence, i|
+        is_last = i == sentences.size - 1
+        chunks << { text: sentence, pause: is_last ? (pause || :short) : :short }
+      end
+    end
+    chunks
   end
 
   private
@@ -101,7 +131,7 @@ class VoiceSynthesizer
     attempt = 0
     begin
       run_voicepeak(text, out_path)
-    rescue RuntimeError => e
+    rescue SynthesisError => e
       attempt += 1
       raise if attempt > max_retries
 
@@ -115,6 +145,7 @@ class VoiceSynthesizer
 
   # VOICEPEAK を1回起動してWAVを生成する。
   def run_voicepeak(text, out_path)
+    succeeded = false
     start = Internal::EpisodeLogger.start_timer
 
     stdin, stdout, stderr, wait_thr = Open3.popen3(
@@ -125,17 +156,16 @@ class VoiceSynthesizer
     pgid = begin
       Process.getpgid(wait_thr.pid)
     rescue Errno::ESRCH
-      raise "VOICEPEAK exited immediately after launch (process already reaped)"
+      raise SynthesisError, "VOICEPEAK exited immediately after launch (process already reaped)"
     end
 
     stdout_reader = Thread.new { stdout.read }
     stderr_reader = Thread.new { stderr.read }
 
     unless wait_thr.join(timeout_sec)
-      kill_process_group(pgid)
       Internal::EpisodeLogger.record("voicepeak_chunk",
         duration_sec: Internal::EpisodeLogger.elapsed_since(start), timed_out: true)
-      raise "VOICEPEAK did not respond within #{timeout_sec}s (treated as hang, killed)"
+      raise SynthesisError, "VOICEPEAK did not respond within #{timeout_sec}s (treated as hang, killed)"
     end
 
     status = wait_thr.value
@@ -144,13 +174,20 @@ class VoiceSynthesizer
     Internal::EpisodeLogger.record("voicepeak_chunk", duration_sec: Internal::EpisodeLogger.elapsed_since(start),
       exit_code: status.exitstatus, stdout: out, stderr: err)
 
-    raise "VOICEPEAK synthesis failed: #{Internal::CommandError.tail(err)}" unless status.success?
-    raise "VOICEPEAK did not produce an audio file: #{out_path}" unless File.exist?(out_path)
+    raise SynthesisError, "VOICEPEAK synthesis failed: #{Internal::CommandError.tail(err)}" unless status.success?
+    raise SynthesisError, "VOICEPEAK did not produce an audio file: #{out_path}" unless File.size?(out_path)
+
+    succeeded = true
   ensure
-    stdout_reader&.kill
-    stderr_reader&.kill
-    stdout&.close
-    stderr&.close
+    Thread.handle_interrupt(Object => :never) do
+      kill_process_group(pgid) if pgid && wait_thr.alive?
+    ensure
+      stdout_reader&.kill
+      stderr_reader&.kill
+      stdout&.close
+      stderr&.close
+      FileUtils.rm_f(out_path) unless succeeded
+    end
   end
 
   # プロセスグループを TERM → （残っていれば）KILL の順で終了させる。
@@ -158,35 +195,8 @@ class VoiceSynthesizer
     Process.kill("TERM", -pgid)
     sleep 0.5
     Process.kill("KILL", -pgid)
-  rescue Errno::ESRCH
+  rescue Errno::ESRCH, Errno::EPERM
     # 既に終了済み。何もしない。
-  end
-
-  # 台本を合成単位のチャンクに分割する。戻り値は { text:, pause: } の配列。
-  # INTERVAL_TAG は「。」分割・MAX_CHARS 分割より先に抜き出す。
-  def split_chunks(script)
-    normalized = script.gsub(/\r\n?/, "\n")
-
-    # 末尾に空文字列＋タグなしの組が必ず1つ余分に付くため取り除く。
-    text_and_pause = normalized.scan(TEXT_WITH_FOLLOWING_TAG)
-      .map { |text, tag| [text, tag&.to_sym] }
-    text_and_pause.pop if text_and_pause.last == ["", nil]
-
-    chunks = []
-    text_and_pause.each do |text, pause|
-      sentences = text.split(/(?<=。)/) # 「。」の直後で分割（句点は各文に残す）
-        .map(&:strip)
-        .reject(&:empty?)
-        .flat_map { |sentence| split_long_sentence(sentence) }
-      # タグ直後に文が続かない場合、この pause はどのチャンクにも乗らず捨てられる。
-      next if sentences.empty?
-
-      sentences.each_with_index do |sentence, i|
-        is_last = i == sentences.size - 1
-        chunks << { text: sentence, pause: is_last ? (pause || :short) : :short }
-      end
-    end
-    chunks
   end
 
   # MAX_CHARS を超える1文を、読点（、）優先で MAX_CHARS 以内の断片に分ける。

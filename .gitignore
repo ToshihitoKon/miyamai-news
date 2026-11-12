@@ -13,6 +13,7 @@
 !/work/.gitkeep
 /dist/*
 !/dist/.gitkeep
+/tts_report.md
 
 # ツール類
 /.ruby-lsp/

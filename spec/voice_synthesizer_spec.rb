@@ -13,19 +13,21 @@ RSpec.describe VoiceSynthesizer do
   let(:episode) { Episode.new(now: now) }
   let(:script_path) { File.join(work_dir, "script.txt") }
   let(:success_status) { instance_double(Process::Status, success?: true, exitstatus: 0) }
+  let(:failure_status) { instance_double(Process::Status, success?: false, exitstatus: 1) }
 
   before do
     File.write(script_path, "こんにちは。今日のニュースです。")
     # VOICEPEAK は実機に存在しないため、実行可否チェックとプロセスグループ解決をstubする。
     allow(File).to receive(:executable?).and_return(true)
     allow(Process).to receive(:getpgid).and_return(99_999)
+    allow(Process).to receive(:kill)
     allow_any_instance_of(described_class).to receive(:sleep)
   end
 
   after { FileUtils.remove_entry(work_dir) }
 
   def fake_wait_thr(status)
-    double("wait_thr", pid: 4242, join: true, value: status)
+    double("wait_thr", pid: 4242, join: true, value: status, alive?: false)
   end
 
   describe "#synthesize" do
@@ -62,7 +64,9 @@ RSpec.describe VoiceSynthesizer do
 
         expect(voice_path).to eq(File.join(work_dir, "voice_20260714_afternoon.mp3"))
         expect(written_wavs).not_to be_empty
+        expect(written_wavs).to all(match(%r{/\d{4}_\h{8}\.wav\z}))
         expect(Open3).to have_received(:popen3).at_least(:once)
+        expect(Process).not_to have_received(:kill)
         expect(Open3).to have_received(:capture3).at_least(:once) # ffmpeg concat (+ silence)
       end
 
@@ -104,6 +108,23 @@ RSpec.describe VoiceSynthesizer do
         expect(Open3).to have_received(:popen3).twice # 2チャンクとも再合成される
       end
 
+      it "synthesizes a chunk again when its wav is empty" do
+        wav_dir = File.join(work_dir, "wav_20260714_afternoon")
+        FileUtils.mkdir_p(wav_dir)
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+        File.write(synth.send(:wav_chunk_path, wav_dir, 0, "こんにちは。"), "")
+
+        allow(Open3).to receive(:popen3) do |*cmd|
+          File.write(cmd[cmd.index("--out") + 1], "fake wav")
+          [StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)]
+        end
+        allow(Open3).to receive(:capture3).and_return(["", "", success_status])
+
+        synth.synthesize(script_path)
+
+        expect(Open3).to have_received(:popen3).twice
+      end
+
       it "reuses a chunk whose wav filename already carries the current text's digest" do
         wav_dir = File.join(work_dir, "wav_20260714_afternoon")
         FileUtils.mkdir_p(wav_dir)
@@ -138,7 +159,6 @@ RSpec.describe VoiceSynthesizer do
 
     context "failure" do
       it "retries a failed chunk with backoff and eventually raises with the short stderr reason intact" do
-        failure_status = instance_double(Process::Status, success?: false, exitstatus: 1)
         allow(Open3).to receive(:popen3) do |*_cmd|
           [StringIO.new, StringIO.new, StringIO.new("synthesis error"), fake_wait_thr(failure_status)]
         end
@@ -147,6 +167,137 @@ RSpec.describe VoiceSynthesizer do
 
         expect { synth.synthesize(script_path) }.to raise_error(/VOICEPEAK synthesis failed: synthesis error/)
         expect(Open3).to have_received(:popen3).exactly(synth.send(:max_retries) + 1).times
+      end
+
+      it "leaves no wav that a failed synthesis wrote partway, so a rerun synthesizes the chunk again" do
+        allow(Open3).to receive(:popen3) do |*cmd|
+          File.write(cmd[cmd.index("--out") + 1], "truncated wav")
+          [StringIO.new, StringIO.new, StringIO.new("synthesis error"), fake_wait_thr(failure_status)]
+        end
+        wav_dir = File.join(work_dir, "wav_20260714_afternoon")
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+
+        expect { synth.synthesize(script_path) }.to raise_error(/VOICEPEAK synthesis failed/)
+        expect(Dir.children(wav_dir)).to be_empty
+      end
+
+      it "treats an empty output file as a failed synthesis" do
+        allow(Open3).to receive(:popen3) do |*cmd|
+          File.write(cmd[cmd.index("--out") + 1], "")
+          [StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)]
+        end
+        wav_dir = File.join(work_dir, "wav_20260714_afternoon")
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+
+        expect { synth.synthesize(script_path) }.to raise_error(described_class::SynthesisError, /did not produce/)
+        expect(Dir.children(wav_dir)).to be_empty
+      end
+
+      it "does not keep a wav left by an earlier attempt when a retry writes nothing" do
+        attempts = 0
+        allow(Open3).to receive(:popen3) do |*cmd|
+          attempts += 1
+          File.write(cmd[cmd.index("--out") + 1], "truncated wav") if attempts == 1
+          status = attempts == 1 ? failure_status : success_status
+          [StringIO.new, StringIO.new, StringIO.new("synthesis error"), fake_wait_thr(status)]
+        end
+        wav_dir = File.join(work_dir, "wav_20260714_afternoon")
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+
+        expect { synth.synthesize(script_path) }.to raise_error(/did not produce an audio file/)
+        expect(Dir.children(wav_dir)).to be_empty
+      end
+
+      it "stops VOICEPEAK and removes its output when interrupted while waiting for it" do
+        running = double("wait_thr", pid: 4242, alive?: true)
+        allow(running).to receive(:join).and_raise(Interrupt)
+        allow(Open3).to receive(:popen3) do |*cmd|
+          File.write(cmd[cmd.index("--out") + 1], "half written wav")
+          [StringIO.new, StringIO.new, StringIO.new, running]
+        end
+        allow(Process).to receive(:kill)
+        wav_dir = File.join(work_dir, "wav_20260714_afternoon")
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+
+        expect { synth.synthesize(script_path) }.to raise_error(Interrupt)
+        expect(Process).to have_received(:kill).with("TERM", -99_999)
+        expect(Dir.children(wav_dir)).to be_empty
+      end
+
+      it "kills a hung VOICEPEAK once per attempt and retries" do
+        hung = double("wait_thr", pid: 4242, join: nil, alive?: true)
+        allow(Open3).to receive(:popen3).and_return([StringIO.new, StringIO.new, StringIO.new, hung])
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+
+        expect { synth.synthesize(script_path) }.to raise_error(described_class::SynthesisError, /did not respond/)
+        attempts = synth.send(:max_retries) + 1
+        expect(Process).to have_received(:kill).with("TERM", -99_999).exactly(attempts).times
+      end
+
+      it "keeps retrying when killing a hung VOICEPEAK hits a group of zombies (EPERM on macOS)" do
+        hung = double("wait_thr", pid: 4242, join: nil, alive?: true)
+        allow(Open3).to receive(:popen3).and_return([StringIO.new, StringIO.new, StringIO.new, hung])
+        allow(Process).to receive(:kill).and_raise(Errno::EPERM)
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+
+        expect { synth.synthesize(script_path) }.to raise_error(described_class::SynthesisError, /did not respond/)
+        expect(Open3).to have_received(:popen3).exactly(synth.send(:max_retries) + 1).times
+      end
+
+      it "removes the output even when a second interruption hits while stopping VOICEPEAK" do
+        running = double("wait_thr", pid: 4242, alive?: true)
+        allow(running).to receive(:join).and_raise(Interrupt)
+        allow(Open3).to receive(:popen3) do |*cmd|
+          File.write(cmd[cmd.index("--out") + 1], "half written wav")
+          [StringIO.new, StringIO.new, StringIO.new, running]
+        end
+        allow(Process).to receive(:kill).and_raise(Interrupt)
+        wav_dir = File.join(work_dir, "wav_20260714_afternoon")
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+
+        expect { synth.synthesize(script_path) }.to raise_error(Interrupt)
+        expect(Dir.children(wav_dir)).to be_empty
+      end
+
+      it "still sends KILL and removes the output when another interruption arrives while waiting after TERM" do
+        running = double("wait_thr", pid: 4242, alive?: true)
+        allow(running).to receive(:join).and_raise(Interrupt)
+        allow(Open3).to receive(:popen3) do |*cmd|
+          File.write(cmd[cmd.index("--out") + 1], "half written wav")
+          [StringIO.new, StringIO.new, StringIO.new, running]
+        end
+        term_sent = Queue.new
+        release = Queue.new
+        allow(Process).to receive(:kill) { |signal, _pgid| term_sent << true if signal == "TERM" }
+        allow_any_instance_of(described_class).to receive(:sleep) { |_synth, _sec| release.pop }
+        wav_dir = File.join(work_dir, "wav_20260714_afternoon")
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+        worker = Thread.new { synth.synthesize(script_path) }
+        worker.report_on_exception = false
+        term_sent.pop
+        worker.raise(Interrupt)
+        release << true
+
+        expect { worker.join }.to raise_error(Interrupt)
+        expect(Process).to have_received(:kill).with("KILL", -99_999)
+        expect(Dir.children(wav_dir)).to be_empty
+      end
+
+      it "does not retry an error that is not a VOICEPEAK failure" do
+        allow(Open3).to receive(:popen3).and_raise(FrozenError, "can't modify")
+
+        synth = described_class.new(work_dir: work_dir, episode: episode)
+
+        expect { synth.synthesize(script_path) }.to raise_error(FrozenError)
+        expect(Open3).to have_received(:popen3).once
       end
 
       it "aborts when VOICEPEAK is not executable" do
@@ -310,6 +461,35 @@ RSpec.describe VoiceSynthesizer do
         # タグ自体はどのテキストにも残らない。
         expect(result.map { |c| c[:text] }.join).not_to include("[interval:")
       end
+    end
+  end
+
+  describe "#synthesize_wavs" do
+    it "writes one wav per chunk into the given dir and returns their paths in chunk order" do
+      allow(Open3).to receive(:popen3) do |*cmd|
+        File.write(cmd[cmd.index("--out") + 1], "fake wav")
+        [StringIO.new, StringIO.new, StringIO.new, fake_wait_thr(success_status)]
+      end
+      synth = described_class.new(work_dir: work_dir, episode: episode)
+      chunks = [{ text: "一つ目。", pause: :short }, { text: "二つ目。", pause: :short }]
+      wav_dir = File.join(work_dir, "check")
+
+      paths = synth.synthesize_wavs(chunks, wav_dir)
+
+      expect(paths.map { |p| File.basename(p) }).to match([/\A0000_\h{8}\.wav\z/, /\A0001_\h{8}\.wav\z/])
+      expect(paths).to all(satisfy { |p| File.dirname(p) == wav_dir && File.exist?(p) })
+    end
+
+    it "reuses an existing wav and does not launch VOICEPEAK for it" do
+      synth = described_class.new(work_dir: work_dir, episode: episode)
+      wav_dir = File.join(work_dir, "check")
+      FileUtils.mkdir_p(wav_dir)
+      File.write(synth.send(:wav_chunk_path, wav_dir, 0, "一つ目。"), "cached")
+      allow(Open3).to receive(:popen3)
+
+      synth.synthesize_wavs([{ text: "一つ目。", pause: :short }], wav_dir)
+
+      expect(Open3).not_to have_received(:popen3)
     end
   end
 
