@@ -31,8 +31,8 @@ voicepeak:
 
 ai_agent:
   bin: agy
-  model: 'gemini-3.8-flash-high'
-  used_fix_model: 'gemini-3.8-flash-low'
+  model: 'gemini-3.8-flash-medium'
+  used_fix_model: 'gemini-3.8-flash-medium'
   used_fix_max_retries: 2
   print_timeout: '15m'
 
