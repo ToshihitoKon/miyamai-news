@@ -16,6 +16,22 @@ module Internal
 
         TTY::Spinner.new("[:spinner] #{message}", format: :dots).tap(&:auto_spin)
       end
+
+      # 並列に進む処理の進捗を 1 行ずつ並べて表示する。戻り値は start(message) を受け付け、
+      # 複数スレッドから呼んでよいオブジェクト。
+      def group
+        return self if ci?
+
+        SpinnerGroup.new
+      end
+    end
+
+    class SpinnerGroup
+      def initialize
+        @multi = TTY::Spinner::Multi.new(format: :dots)
+      end
+
+      def start(message) = @multi.register("[:spinner] #{message}").tap(&:auto_spin)
     end
 
     class PlainLine

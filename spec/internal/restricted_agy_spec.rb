@@ -38,6 +38,17 @@ RSpec.describe Internal::RestrictedAgy do
     end
   end
 
+  it "shows its progress on the given progress group" do
+    allow(Open3).to receive(:capture3).and_return(["out", "", ok])
+    spinner = double("spinner", success: nil)
+    group = double("progress group", start: spinner)
+
+    described_class.run("msg", "prompt", model: "m", workdir: "/w", progress: group)
+
+    expect(group).to have_received(:start).with("msg [agy]")
+    expect(spinner).to have_received(:success)
+  end
+
   it "passes only a read_file allow rule for readable_dir and runs inside workdir" do
     allow(Open3).to receive(:capture3).and_return(["out", "", ok])
 

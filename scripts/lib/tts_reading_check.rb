@@ -92,17 +92,36 @@ class TtsReadingCheck
     abort "synthesis failed: #{e.message} (#{rerun} to continue from the wavs synthesized so far)"
   end
 
+  class BatchFailure < StandardError; end
+  private_constant :BatchFailure
+
   # 戻り値は [全チャンクの書き起こし, 保存済みの書き起こしを使い回したまとまりの数, まとまりの数]。
   def transcribe(wav_paths)
     batches = wav_paths.each_slice(TRANSCRIBE_BATCH_SIZE).to_a
-    results = batches.each_with_index.map do |batch_wav_paths, i|
-      transcribe_batch(i + 1, batch_wav_paths, batches.size)
+    progress = Internal::Progress.group
+    threads = batches.each_with_index.map do |batch_wav_paths, i|
+      Thread.new do
+        Thread.current.report_on_exception = false
+        transcribe_batch(i + 1, batch_wav_paths, batches.size, progress)
+      rescue BatchFailure => e
+        e
+      end
     end
+    results = threads.map(&:value)
 
+    failures = results.grep(BatchFailure)
+    abort_transcription(failures, batches.size) unless failures.empty?
     [results.flat_map(&:first), results.count(&:last), batches.size]
   end
 
-  def transcribe_batch(batch, wav_paths, batch_count)
+  def abort_transcription(failures, batch_count)
+    rerun = @retranscribe ? "rerun without --retranscribe" : "rerun"
+    saved_count = batch_count - failures.size
+    saved = saved_count.positive? ? "\n(the other #{saved_count} batches are saved; #{rerun} to reuse them)" : ""
+    abort "#{failures.map(&:message).join("\n")}#{saved}"
+  end
+
+  def transcribe_batch(batch, wav_paths, batch_count, progress)
     inputs = transcription_inputs(wav_paths)
     saved_output = Transcript.load_raw_matching(transcribe_output_path(batch), transcribe_inputs_path(batch), inputs) unless @retranscribe
     if saved_output
@@ -111,8 +130,8 @@ class TtsReadingCheck
       return [transcripts, true] if transcripts
     end
 
-    output, kept_previous = transcribe_with_agy(batch, wav_paths, inputs, batch_count)
-    [parse_transcription(output, batch, wav_paths.size, kept_previous:), false]
+    output, kept_previous = transcribe_with_agy(batch, wav_paths, inputs, batch_count, progress)
+    [parse_transcription(output, batch, batch_count, wav_paths.size, kept_previous:), false]
   end
 
   def parse_or_warn(output, expected_count, consequence)
@@ -129,24 +148,23 @@ class TtsReadingCheck
   end
 
   # 戻り値は [agy の出力, 前回の書き起こしを previous に移したか]。
-  def transcribe_with_agy(batch, wav_paths, inputs, batch_count)
+  def transcribe_with_agy(batch, wav_paths, inputs, batch_count, progress)
     prompt = Prompt.render(Prompt::TRANSCRIBE, wav_paths: wav_paths)
     message = "transcribing #{wav_paths.size} chunks (#{batch}/#{batch_count})"
-    output = run_transcription(message, prompt)
+    output = run_transcription(message, prompt, progress)
     retry_note = "transcribing batch #{batch}/#{batch_count} once more"
-    output = run_transcription("#{message}, once more", prompt) unless parse_or_warn(output, wav_paths.size, retry_note)
+    output = run_transcription("#{message}, once more", prompt, progress) unless parse_or_warn(output, wav_paths.size, retry_note)
     kept_previous = usable_saved_transcription?(batch)
     keep_previous_transcription(batch) if kept_previous
     Transcript.save_raw(transcribe_output_path(batch), transcribe_inputs_path(batch), output: output, inputs: inputs)
     [output, kept_previous]
   rescue Internal::RestrictedAgy::Error => e
-    rerun = @retranscribe ? "rerun without --retranscribe" : "rerun"
-    saved = batch > 1 ? " (the first #{batch - 1} batches are saved; #{rerun} to reuse them)" : ""
-    abort "transcription failed: #{e.message}#{saved}"
+    raise BatchFailure, "batch #{batch}/#{batch_count}: transcription failed: #{e.message}"
   end
 
-  def run_transcription(message, prompt)
-    Internal::RestrictedAgy.run(message, prompt, model: Config.ai_agent.model, workdir: wav_dir, readable_dir: wav_dir)
+  def run_transcription(message, prompt, progress)
+    Internal::RestrictedAgy.run(message, prompt,
+      model: Config.ai_agent.model, workdir: wav_dir, readable_dir: wav_dir, progress: progress)
   end
 
   def usable_saved_transcription?(batch)
@@ -164,14 +182,14 @@ class TtsReadingCheck
     FileUtils.mv(transcribe_inputs_path(batch), previous_inputs_path(batch))
   end
 
-  def parse_transcription(output, batch, expected_count, kept_previous:)
+  def parse_transcription(output, batch, batch_count, expected_count, kept_previous:)
     Transcript.parse(output, expected_count)
   rescue Transcript::Error => e
     rerun = @retranscribe ? "rerun without --retranscribe" : "rerun"
     previous = kept_previous ? "; the transcription before it is kept in #{previous_output_path(batch)}" : ""
-    abort "transcription output is unusable: #{e.message} " \
-          "(fix #{transcribe_output_path(batch)} by hand and #{rerun}, " \
-          "or just #{rerun} to transcribe this batch again#{previous})"
+    raise BatchFailure, "batch #{batch}/#{batch_count}: transcription output is unusable: #{e.message} " \
+                        "(fix #{transcribe_output_path(batch)} by hand and #{rerun}, " \
+                        "or just #{rerun} to transcribe this batch again#{previous})"
   end
 
   def judge(chunk_texts, transcripts)
