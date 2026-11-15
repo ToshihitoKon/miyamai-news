@@ -92,7 +92,8 @@
   切れた gzip 本文など）は指数バックオフでリトライする。429 以外の 4xx とリダイレクト異常は、
   再送しても結果が変わらないため即座に失敗させる。
 - 通信層の例外は、一時的なものと恒久的なもの（ドメイン失効、証明書の検証失敗等）を
-  例外クラスで区別できないため、まとめてリトライ対象にする。
+  例外クラスで区別できないため、まとめてリトライ対象にする。代償として、恒久的に失敗する
+  フィードは締め切りまで 1 スレッドを占有する。
 - `StandardError` 全般をリトライ対象にすると、プログラムの不具合でも締め切りまで
   待ち続けるため、リトライ対象は `RETRYABLE_ERRORS` に列挙したものに絞る。
 - リトライは回数ではなく締め切り時刻（`retry_deadline`）で打ち切り、締め切りは収集開始時に
@@ -116,6 +117,8 @@
 - `render` は渡された context オブジェクトの binding で ERB を評価する。テンプレート
   側から context のインスタンス変数や private メソッド（`h` 等）をそのまま呼べるのは
   このため。テンプレート固有の値は `locals` ハッシュで明示的に渡す。
+- `trim_mode: "-"` は `<%- -%>` を書いたときだけ前後の空白を削る。通常の `<%= %>` には
+  影響しないため、プロンプト用と HTML/XML 用のテンプレートを同じ設定で扱える。
 
 ### CommandError（外部コマンドのエラーメッセージ整形）
 
@@ -176,6 +179,8 @@
     TERM と KILL の間に割り込まれると、消したはずの出力先を VOICEPEAK が書き直すため。
   - 空のファイルは失敗として扱い、合成済みとして使い回すのも中身のあるファイルだけにする
     （Ruby ごと SIGKILL されて後始末が走らなかった場合に備える）。
+  - 一時ファイル名に書かせて成功時に rename する方法は採らない。VOICEPEAK に渡す出力名を
+    変えると、VOICEPEAK がその名前をどう扱うかを実機で確かめ直す必要があるため。
 - VOICEPEAK の失敗は `VoiceSynthesizer::SynthesisError` で表し、リトライと呼び出し側の中断はこの型だけを
   拾う。`RuntimeError` 全体を拾うと、コードの不具合まで「合成の失敗」としてリトライや再実行の案内に
   回ってしまうため。
@@ -200,7 +205,8 @@ tts_script を VOICEPEAK で合成し直し、agy に wav をひらがなへ書�
   使われなくなった古い wav も `.DS_Store` などの wav 以外のファイルも消す。
 - agy には `--dangerously-skip-permissions` を付けず、`--settings` で `read_file(<wav ディレクトリ>/*)`
   だけを許可する。全ツールを自動承認すると、agy は書き起こしではなく正解の文探し（ホーム全体の
-  検索など）に向かい、出力なしで終わるため。
+  検索など）に向かい、出力なしで終わるため。`--settings` の許可リストはグローバル設定と
+  マージされず置き換わる前提で、判定の呼び出しで許可リストを空にする設計もこれに依存する。
 - `<key>` は台本のファイル名から作るが、英数字と `_` `.` `-` 以外は `_` に置き換え、置き換えが起きた
   ときは元の名前の SHA256 の先頭 8 桁を付ける。wav ディレクトリのパスは許可規則にそのまま入るため、
   括弧や空白が入ると規則が壊れ、wav の読み込みがすべて拒否されて原因の分からない失敗になる。
@@ -208,6 +214,9 @@ tts_script を VOICEPEAK で合成し直し、agy に wav をひらがなへ書�
 - wav ディレクトリのパス全体（リポジトリの場所を含む）が英数字と `_` `.` `/` `-` だけでできていなければ、
   合成の前に止める。`Internal::RestrictedAgy` も、規則に入れられないパスでは agy を起動せずにエラーにする。
 - agy は出力なしでも成功終了しうるため、`Internal::RestrictedAgy` は stdout が空なら失敗とみなす。
+  空かどうかは不正なバイトを置き換えた写しで判定する（そのまま `strip` すると例外で落ちるため）。
+- 実行ログ（`work/tts_check_<key>.log`）には agy と VOICEPEAK の stdout・stderr を残し、
+  プロンプトは含めない。
 - 書き起こしと判定は agy の `--settings` でツールを絞るため、agy でしか動かない。`ai_agent.bin` が
   agy（パスならファイル名が agy）でなければ合成の前に止める。起動するのも `ai_agent.bin` に書いた
   バイナリにして、確かめたものと動かすものをそろえる。
@@ -217,7 +226,8 @@ tts_script を VOICEPEAK で合成し直し、agy に wav をひらがなへ書�
 #### 書き起こしの分割と使い回し
 
 - 書き起こしは `TRANSCRIBE_BATCH_SIZE` 個ずつのまとまりに分け、まとまりごとに agy を呼ぶ。
-  1 回に多く読ませると、agy が途中で文脈を要約して wav の数を誤り、失敗するため。
+  1 回に多く読ませると、agy が途中で文脈を要約して wav の数を誤り、失敗するため。値は、
+  要約が起きた個数より十分小さくなるように選んでいる。
 - 書き起こしは高いので、まとまりごとに agy の出力をそのまま `work/tts_check_<key>.transcribe.<n>.txt` に
   保存し、書き起こしの入力（`ai_agent.model`、テンプレート原文の SHA256、各 wav の中身の SHA256）を
   書いた `.transcribe.<n>.inputs.txt` と組にする。入力がすべて一致する間は再実行でも使い回し、
@@ -247,8 +257,11 @@ tts_script を VOICEPEAK で合成し直し、agy に wav をひらがなへ書�
 
 #### 出力の読み取り
 
-- 番号付きの行が 1 つもない出力は、出力の先頭部分をエラーに載せる。断り文のような、書き起こしで
-  ない出力だとすぐ分かるようにするため。
+- 番号付きの行が 1 つもない出力は、出力の先頭部分（`EXCERPT_LENGTH` 文字）をエラーに載せる。
+  断り文のような、書き起こしでない出力だとすぐ分かるようにするため。長さは、断り文の主旨が
+  収まり、ターミナルで数行に収まる程度にしている。
+- チャンクの本文に残る改行は、レポートの箇条書きと判定プロンプトでは空白に置き換えて 1 行に
+  する（1 行 1 チャンクの形が崩れないように）。
 - 読み取りは全角の数字・コロン、`1.`、箇条書きの印、番号の太字を許し、形式の揺れで取り直しの
   トークンを払わないようにする。同じ番号の行が 2 回以上出たときは、どちらが書き起こしか決められない
   ため、エラーにして生の出力を手で直させる。
@@ -295,9 +308,6 @@ tts_script を VOICEPEAK で合成し直し、agy に wav をひらがなへ書�
 `Internal::Site.from_config` が `cloudflare` セクションからまとめて読む。
 `retention_episodes` は「保持する話数」という公開ポリシーなので、ストレージの
 設定ではなく `Site` が持つ。
-
-`republish-ui` は `assets` を参照するため、`miyamai_news.rb` は `cloudflare` に加えて
-`assets` も起動時に検証する。`clean`/`clean --archive` は `cloudflare` のみで足りる。
 
 `Internal` 名前空間の中では `Config` が `Internal::Config` に解決されるため、
 設定ローダーを参照するときは `::Config` と書く。
@@ -348,23 +358,23 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
   だけが通るようにしている。Worker の変更を反映したいときも `republish-ui` を使う。
 - **static assets のデプロイはバージョン単位で、ステージングに無いファイルは
   公開サイトから消える。** そのため `Publisher#run` / `republish_ui` のどちらも、
-  生成物（index.html / feed.xml / manifest.json / sw.js / `_headers`）を毎回すべて
-  ステージングに書き出してから 1 回だけ deploy する。sw.js も `web_push` の有無に
+  生成物（index.html / feed.xml / manifest.json / sw.js）を毎回すべてステージングに
+  書き出し、`Site#deploy` が `_headers` を足してから 1 回だけ deploy する。sw.js も `web_push` の有無に
   関係なく毎回書き出す（消えると登録済みの Service Worker が更新されず購読が壊れる）。
 - `_headers` で `feed.xml` の `Content-Type` を `application/atom+xml; charset=utf-8`
   へ明示的に上書きする。拡張子ベースの既定推定だと `.xml` は `application/xml` 系に
   なるため。
 - **`_headers` は `run_worker_first` のパスに適用されない。** mp3 と兄弟ファイルの
   `Content-Type` は、Ruby 側が R2 の put 時に設定した値を Worker が `writeHttpMetadata` で
-  反映することで初めて正しくなる。どちらかが欠けると `.used.html` が
-  `application/octet-stream` で返るが、再生ページの JS は fetch 失敗を握り潰して
-  「ニュース一覧はありません」と表示するため、**エラーにならず静かに壊れる**。
+  反映することで初めて正しくなる。どちらかが欠けると兄弟ファイルが
+  `application/octet-stream` で返る。
 - static assets は **`/index.html` を `/` へリダイレクトする**ため、公開 URL としては
   正規形の `/` を使う（`Site#page_url`）。
 - Worker（`src/index.js`, `src/web_push.js`）のテストは Vitest（`npm test`）。CI では
   走らせていない。配布されるファイルなのでコメントは書かず、以下に意図を記録する。
-- Worker は `episodes/*`・`assets/*`（R2 の配信）と `/subscribe`・`/notify` だけを処理する。
-  それ以外は static assets 側が返すので Worker には到達しない。
+- Worker が R2 から返すのは `SERVABLE_PREFIXES`（`episodes/`・`assets/`）の下だけで、ほかに
+  `/subscribe`・`/notify` を処理する。static assets に無いパスはすべて Worker に届くため、
+  それ以外のパスは Worker 側で 404 にする（前掲の `archives.csv` の項）。
 - `get` に `onlyIf: request.headers` と `range: request.headers` をそのまま渡し、
   条件付きリクエストと Range を R2 側に解釈させる。音声のシークが Range に依存する。
 - `writeHttpMetadata` は R2 オブジェクトのメタデータでヘッダーを上書きするため、
@@ -387,8 +397,6 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
   実行し、それが成功してから `archives.csv` を書く（`write_ledger`）。逆順にすると、
   deploy だけが失敗したときに次回の実行で `newly_published` が false と判定され、
   退避も通知も二度と行われなくなる。
-- `Publisher#run` はストレージへの書き込みを始める前に `UsedNewsFormatter.ensure_valid!` で
-  used_news のフォーマットを確定させる。失敗すればここで abort し、何もアップロードしない。
 - retention 超過分の退避（`archive_episode_files`）は、台帳・サイトの反映が終わった**後**に
   行う。逆順にすると、反映が失敗したときに「ファイルは退避済みなのに公開中のページは
   移動前の場所を参照したまま」というリンク切れが残る。この順序なら退避が失敗して
@@ -510,16 +518,15 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
   `strip_preamble` が AI 出力の前置き除去に使う目印（アンカー）でもある。
 - `feed_cache/`・`last_fetch.json`・`used_news_history/` は実行をまたいで保持する内部状態で、
   `clean` は対象にしない（`work_globs` が列挙する回ごとの中間ファイルのみが削除対象。
-  ホワイトリスト方式なので状態ファイルは自動的に残る）。正は R2 の `state/` で、`work/` の
-  これらは作業コピー（「RemoteState / Handoff」節）。
+  ホワイトリスト方式なので状態ファイルは自動的に残る）。消すと過去に見た記事を新着として
+  拾い直し、重複紹介が起きるため。正は R2 の `state/` で、`work/` のこれらは作業コピー
+  （「RemoteState / Handoff」節）。
 - 収集 window の起点として記録する時刻は、実行完了時刻ではなく収集開始時刻
   （`@now`）。開始〜完了の間に seen_at が刻まれた記事を次回取りこぼさないため。
 - ニュースの重複除去はタイトル基準（大文字小文字・空白を無視）。同一タイトルが
   複数ソースにまたがる場合、`priority: high` のソース由来の entry を代表として
   残す（一次情報源の priority ラベル・URL が選定 AI に渡るようにするため）。
   同順位なら config の記載順で先勝ち。
-- `news_<key>.txt` があって収集時刻の `news_collected_at_<key>.txt` が無い場合は、確定する
-  時刻が分からないので中断し、`clean` で捨てさせる。
 - writer は抽出済みの facts シートだけに基づいて書かせ、Web への再アクセスをプロンプトで
   禁止する（手戻りと情報の食い違いを防ぐため）。
 - AI CLI のツール制限は呼び出し元ごとに絞らない。claude 分岐は `--allowedTools` で固定の
@@ -541,6 +548,7 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
 - 1 つのフィードの障害で回全体を作れなくなるのを避けるため、取得に失敗したソースは
   その回だけ飛ばし、残りで収集を続ける。飛ばしたソースは収集直後の件数表示に
   `skipped (fetch failed)` として出し、実行ログにも `feed_skipped` として残す。
+  同じ回を `news_*.txt` の再利用で作り直す場合、飛ばしたソースは取り直さない。
   飛ばしたソースの記事は次に取得できたときに初めて seen_at が付き、次の回の収集範囲に
   入るため、その回で取りこぼしても失われない（次の取得までにフィードから押し出された
   記事は拾えない）。
@@ -600,7 +608,8 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
   Shift_JIS で配信しているサイトの記事は番組から恒常的に落ちる**（agy のクラッシュを止める
   ために受け入れたトレードオフで、別のバグではない）。
 - `Internal::AiCli.run` は `ai_agent.print_timeout` を `--print-timeout` として渡す。extractor は
-  agy の既定の時間では足りないことがあるため。打ち切りを検知したら `cleanup_paths_on_timeout` の
+  agy の既定の時間では足りないことがあるため。打ち切りは終了コードに表れないことがあるので、
+  終了コードに加えて stderr の目印でも検知する。打ち切りを検知したら `cleanup_paths_on_timeout` の
   ファイルを消してから abort する（Write の直後に打ち切られた途中出力を、次回の再利用判定で
   拾わないため）。修復（`used_fix`）も同じ時間まで待つ。
 
@@ -671,6 +680,9 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
 - 修復 AI の出力は stdout ではなく一時ファイル（Write→Read）で受け渡す（stdout は前置き・
   コードフェンス等のノイズが混入しやすいため）。修復 AI が記事を捏造/欠落させないよう、
   整形後の URL 集合が入力と一致することを Ruby 側で強制する（`preserves_urls?`）。
+- 修復プロンプトの描画に渡す `UsedNewsFormatter::PROMPT_CONTEXT` は空のオブジェクトで、
+  `fix_format.prompt.erb` はローカル変数だけを参照する前提。テンプレートでヘルパーを
+  使い始めたら、context も用意すること。
 - `ai_agent.used_fix_max_retries` に `0` を指定すると、AI を一切呼ばずに修復失敗として扱う
   （修復機能そのものを無効化できる）。
 
@@ -690,14 +702,15 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
 - used_news を書く工程は 2 つある。extractor が facts と一緒に**暫定版**
   （`news_used_provisional_<episode_key>.txt`。facts 化した全ニュース）を書き、writer が
   **確定版**（`news_used_<episode_key>.txt`。台本で実際に紹介したもの）を別パスに書く。
-  履歴には確定版があればそれを、無ければ暫定版を記録するので、`draft --until digest` だけの
-  運用でも履歴が溜まる。暫定版は副産物なので書き損ねても止めないが、確定版の欠落は abort する。
+  暫定版は副産物なので書き損ねても止めないが、確定版の欠落は abort する。
   **別パスにするのは、writer が書き損ねたときに暫定版が確定版として素通りしないため。**
+- 履歴に記録するのは handoff まで進む実行の確定時だけで、`draft --until digest`/`script` は
+  記録しない。`record_used_news_history!` は確定版が無ければ暫定版を使うが、handoff 経路では
+  確定版の欠落で先に abort するため、暫定版が履歴に入ることは通常ない。
 - 履歴は機械パースせず、used_news のテキストをそのまま selector プロンプトに埋め込む。
   ただし URL はノイズになるので履歴に写すときに落とす（`strip_links`）。公開用
   `dist/*.used.txt` には link を残す。
-- 履歴は `work/state/` の内部状態で `clean` で消えない。中間ファイル `news_used_*.txt` は
-  `clean` で消えるため、履歴は必ず別ディレクトリへコピーする。
+- 中間ファイル `news_used_*.txt` は `clean` で消えるため、履歴は必ず `work/state/` 側へコピーする。
 - 1 回の単位は episode_key（`<date_tag>_<slot>`）。同一 key への再記録は上書き（冪等）。
   古い回の削除は `(date_tag, Slot.sort_key(slot))` で判定する（mtime 非依存）。`midnight` は
   前日回に寄るため、同一 date_tag 内では日内の最後になる。未知形式の key は最古扱いに寄せ、
@@ -753,6 +766,10 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
   `publish`（dist/ から公開）と、続けて実行する `synthesize-and-publish`・
   `draft-synthesize-publish`。続けて実行するコマンドは、たどる工程をすべて名前に出す
   （将来テキストだけ先に公開する構成にしても、名前の意味が変わらないように）。
+- `--config` のパスは cwd 基準で解決する。`__dir__` 基準だと、リポジトリ外から相対パスを
+  指定したときに意図と異なる場所を読むため。
+- Gemfile で rss/csv/rexml を明示しているのは、これらが bundled gem で、明示しないと
+  `require` できないため。
 - サブコマンドの省略（デフォルト実行）は認めない。引数なしで生成〜公開まで走ると、
   意図しない本番 publish が起きうるため。
 - サブコマンドが受け付けないオプション（`publish --until` 等）は黙って無視せず abort する。
@@ -774,9 +791,8 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
   R2 の内部状態まで書き換えてしまうため。生成から続けたいときは `draft-synthesize-publish` を使う。
 - `draft --until script` は VOICEPEAK 向けの整形をしない、人間が読む台本までで停止する。
   台本を確認・手直ししてから `draft` 等で再実行すれば、中間ファイルの再利用で続きから進める。
-- `clean` は work/ の回ごとの中間ファイルを削除するが、内部状態（`work/state/`）は残す
-  （消すと過去に見た記事を新着として拾い直し、重複紹介が起きるため）。作業コピーの取得元
-  revision（`.state_base_revision`）は消す。未完了の実行の作業コピーを破棄する手段になる。
+- `clean` は作業コピーの取得元 revision（`.state_base_revision`）を消す。未完了の実行の
+  作業コピーを破棄する手段になる。
 - BGM の作者名は `templates/index.html.erb` に固定で書いている。`assets.bgm_path` を変える
   ときはクレジット表記も直すこと。
 - `--ci` は、進捗表示をスピナーではなく開始と結果の 1 行ずつにする。CI のログに制御文字や
@@ -790,7 +806,8 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
   台本の生成に必要なのは digest の必須セクションだけなので、voicepeak/mixer/assets を
   持たなくても起動時検証を通る。
 - `Pipeline.stage_range_for` は、コマンドの到達工程が `pipeline.until` を超えると
-  `StageNotAllowed` にし、`#run` は Episode 構築より前に abort する。
+  `StageNotAllowed` にし、`#run` は Episode 構築より前に abort する。`StageNotAllowed` は
+  `ArgumentError` の派生にして、`miyamai_news.rb` の起動時の rescue でも拾えるようにしている。
 - `#clean_published_dist`（`Publisher#prunable_from_dist`）は、R2 の物理配置を見ず、台帳
   （`archives.csv`）と命名規則だけで dist/ の削除対象を決める。R2 の `episodes/` を見ると、
   `archived/` へ rotation 済みの回を「未公開」と誤判定して dist/ に残し続けるため。
@@ -804,8 +821,6 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
     dist 側は厳密に判定し、抽出できなければ台帳とのメンバーシップだけで扱う。
   - ファイル名からの `[date_tag, 日内順]` の抽出は `Slot.sort_key_from_filename` に一本化し、
     `UsedNewsHistory#episode_sort_key` もこれに委譲する（基準のドリフトを防ぐため）。
-- 収集時刻（`news_collected_at_<key>.txt`）を残すのは `ScriptGenerator`、それを読んで
-  収集 window を確定するのは `Pipeline#commit_episode!`。
 
 ### RemoteState / Handoff（R2 を経由した台本の受け渡し）
 
@@ -817,7 +832,8 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
 - 「現在の回」（`--date`/`--slot` を省略したときの date/slot）は、端末のタイムゾーンによらず
   実行時刻を JST に直してから決める。UTC で動くリモートと JST の手元で slot・日付がずれると、
   リモートが置いた handoff を手元が見つけられなくなるため。slot の区切りも挨拶文も JST 前提
-  なので、設定にはせず固定している。
+  なので、設定にはせず固定している。瞬間としては同じ時刻なので、収集時刻（`seen_at`・確定の
+  `at`）の比較には影響しない。
 - handoff まで進む実行（`Pipeline#prepare_handoff`）は、まず R2 に現在の回の
   `handoff/<episode_key>/` があるかを見る。あれば生成も状態の取り出しもせずに次へ進む。
 - handoff が無い場合、公開済みかどうかは `handoff_done/` ではなく公開台帳（`archives.csv`）で
@@ -838,7 +854,8 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
   合成に失敗したとき dist/ に mp3 の無い used/transcript だけが残らないようにするため。
 - `Handoff#mark_done!` は `tts_script.txt` から先に `handoff_done/` へ移す。途中で落ちても
   `handoff/` 側は「揃っていない」扱いになり、再実行で同じ台本を合成し直さない。同じ回の
-  `publish` を再実行すれば残りも移る。
+  `publish` を再実行すれば残りも移る。再実行しなければ残りは `handoff/<episode_key>/` に
+  残り続ける（揃っていないので誤って使われず、自動では掃除しない）。
 - パイプラインの内部状態は `work/state/`（`StateDir`）にまとめ、R2 の `state/` と 1 対 1 に
   対応させる。R2 側が正で、`work/state/` は作業コピー。同期（`R2Storage#sync_down` /
   `#sync_up`）は削除も反映する（`sync_down` は取得前に `work/state/` を消し、`sync_up` は
@@ -913,6 +930,9 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
 - **`work/` 直下の内部状態**: 内部状態を `work/` 直下に置いていた頃の配置は、
   `scripts/seed_remote_state.rb` が `StateDir.migrate_legacy!` で `work/state/` へ移してから
   R2 に置く。
+- **収集時刻の無い `news_<key>.txt`**: 収集時刻ファイル（`news_collected_at_<key>.txt`）を
+  書く仕組みの導入前に作られた中間ファイルは、確定する時刻が分からないので中断し、
+  `clean` で捨てさせる。
 - **`pipeline.mode`**: 旧キー `pipeline.mode` は読み替えずにロード時にエラーにする
   （`Config.ensure_no_legacy_keys!`）。dry-struct は未知のキーを黙って捨てるので、そのままだと
   `pipeline.until` 未設定扱いで既定の digest に落ち、publish 環境が気づかないまま止まり続けるため。
