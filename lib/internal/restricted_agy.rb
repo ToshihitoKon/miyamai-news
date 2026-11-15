@@ -27,13 +27,14 @@ module Internal
 
     def bin = ::Config.ai_agent.bin
 
-    def run(spinner_message, prompt, model:, workdir:, readable_dir: nil)
+    # progress: 進捗表示の生成元。並列に呼ぶときは Progress.group の戻り値を渡す。
+    def run(spinner_message, prompt, model:, workdir:, readable_dir: nil, progress: Progress)
       argv = [
         bin, "--model", model, "--settings", settings_json(readable_dir),
         "--print-timeout", ::Config.ai_agent.print_timeout,
         "--add-dir", workdir, "-p", prompt
       ]
-      spinner = Progress.start("#{spinner_message} [#{BIN_NAME}]")
+      spinner = progress.start("#{spinner_message} [#{BIN_NAME}]")
 
       start = EpisodeLogger.start_timer
       stdout, stderr, status = begin

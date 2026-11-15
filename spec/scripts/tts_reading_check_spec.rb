@@ -60,7 +60,7 @@ RSpec.describe TtsReadingCheck do
     check.run
 
     expect(Internal::RestrictedAgy).to have_received(:run)
-      .with(anything, anything, model: Config.ai_agent.model, workdir: wav_dir, readable_dir: wav_dir)
+      .with(anything, anything, model: Config.ai_agent.model, workdir: wav_dir, readable_dir: wav_dir, progress: anything)
     expect(Internal::RestrictedAgy).to have_received(:run)
       .with(anything, anything, model: Config.ai_agent.model, workdir: satisfy { |dir| dir != wav_dir }, readable_dir: nil)
   end
@@ -535,11 +535,31 @@ RSpec.describe TtsReadingCheck do
     it "calls agy once per batch with only that batch's wavs and joins the transcriptions in order" do
       check.run
 
-      expect(agy_prompts[:transcription].size).to eq(2)
-      expect(agy_prompts[:transcription][0]).to include(wav_paths[0]).and(satisfy { |p| !p.include?(wav_paths[1]) })
-      expect(agy_prompts[:transcription][1]).to include(wav_paths[1]).and(satisfy { |p| !p.include?(wav_paths[0]) })
+      expect(agy_prompts[:transcription]).to contain_exactly(
+        include(wav_paths[0]).and(satisfy { |p| !p.include?(wav_paths[1]) }),
+        include(wav_paths[1]).and(satisfy { |p| !p.include?(wav_paths[0]) })
+      )
       expect(agy_prompts[:judgement].first)
         .to match(/台本: 空のフォルダ。\n書き起こし: そらのふぉるだ.*台本: 十分です。\n書き起こし: じゅうぶんです/m)
+    end
+
+    it "runs the batches' agy calls at the same time" do
+      started = Queue.new
+      release = Queue.new
+      allow(Internal::RestrictedAgy).to receive(:run) do |_message, prompt, readable_dir:, **|
+        next judge_output unless readable_dir
+
+        started << prompt
+        release.pop(timeout: 5) or raise "the batch was not released"
+        batch_transcription(prompt)
+      end
+
+      runner = Thread.new { check.run }
+      runner.report_on_exception = false
+      2.times { started.pop(timeout: 5) or raise "the batches did not start at the same time" }
+      2.times { release << true }
+
+      expect(runner.value).to eq(report_path)
     end
 
     it "transcribes again only the batch whose wav changed" do
@@ -554,14 +574,20 @@ RSpec.describe TtsReadingCheck do
       expect(md).to include("2 回に分けたうち 1 回分は保存済みのものを使い回した")
     end
 
-    it "keeps the finished batches when a later batch fails, and transcribes only the rest on rerun" do
+    it "saves the other batches when one fails, and transcribes only the failed one on rerun" do
       allow(Internal::RestrictedAgy).to receive(:run) do |_message, prompt, readable_dir:, **|
         next judge_output unless readable_dir
-        raise Internal::RestrictedAgy::Error, "agy failed (no output)" if prompt.include?(wav_paths[1])
+        raise Internal::RestrictedAgy::Error, "agy failed (no output)" if prompt.include?(wav_paths[0])
 
         batch_transcription(prompt)
       end
-      expect { check.run }.to raise_error(SystemExit, /the first 1 batches are saved; rerun to reuse them/)
+      expect { check.run }.to raise_error(SystemExit) do |error|
+        expect(error.message).to eq(
+          "batch 1/2: transcription failed: agy failed (no output)\n" \
+          "(the other 1 batches are saved; rerun to reuse them)"
+        )
+      end
+      expect(File.read(File.join(work_dir, "tts_check_20261111_morning.transcribe.2.txt"))).to eq("1: じゅうぶんです")
 
       allow(Internal::RestrictedAgy).to receive(:run) do |_message, prompt, readable_dir:, **|
         next judge_output unless readable_dir
@@ -572,7 +598,24 @@ RSpec.describe TtsReadingCheck do
       check.run
 
       expect(agy_prompts[:transcription].size).to eq(1)
-      expect(agy_prompts[:transcription].first).to include(wav_paths[1])
+      expect(agy_prompts[:transcription].first).to include(wav_paths[0])
+    end
+
+    it "reports every failed batch at once and does not claim a saved batch when none is" do
+      allow(Internal::RestrictedAgy).to receive(:run) do |_message, prompt, readable_dir:, **|
+        next judge_output unless readable_dir
+        raise Internal::RestrictedAgy::Error, "agy failed (exit 1)" if prompt.include?(wav_paths[0])
+
+        "読み込めませんでした"
+      end
+
+      expect { check(retranscribe: true).run }.to raise_error(SystemExit) do |error|
+        lines = error.message.split("\n")
+        expect(lines.size).to eq(2)
+        expect(lines[0]).to eq("batch 1/2: transcription failed: agy failed (exit 1)")
+        expect(lines[1]).to start_with("batch 2/2: transcription output is unusable:")
+          .and include("rerun without --retranscribe to transcribe this batch again")
+      end
     end
   end
 
