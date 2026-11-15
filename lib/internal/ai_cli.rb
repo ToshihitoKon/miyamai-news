@@ -35,7 +35,7 @@ module Internal
         run_with_spinner(
           "#{spinner_message} [#{bin}]",
           "AI CLI failed",
-          bin, "--model", model, "--dangerously-skip-permissions",
+          bin, "--model", model, "--dangerously-skip-permissions", "--disable-slash-commands",
           "--print-timeout", ::Config.ai_agent.print_timeout,
           "--add-dir", Dir.pwd, "-p", prompt,
           fatal: fatal, log_meta: log_meta, cleanup_paths_on_timeout: cleanup_paths_on_timeout
