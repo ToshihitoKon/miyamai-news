@@ -18,7 +18,7 @@ RSpec.describe Internal::AiCli do
 
       expect(described_class).to have_received(:run_with_spinner).with(
         anything, anything, "agy", "--model", "gemini-3.8-flash-high", "--dangerously-skip-permissions",
-        "--print-timeout", "15m", "--add-dir", Dir.pwd, "-p", "prompt",
+        "--disable-slash-commands", "--print-timeout", "15m", "--add-dir", Dir.pwd, "-p", "prompt",
         fatal: true, log_meta: { bin: "agy", model: "gemini-3.8-flash-high" }, cleanup_paths_on_timeout: []
       )
     end
@@ -42,7 +42,7 @@ RSpec.describe Internal::AiCli do
 
       expect(described_class).to have_received(:run_with_spinner).with(
         anything, anything, "agy", "--model", "gemini-3.8-flash-high", "--dangerously-skip-permissions",
-        "--print-timeout", "15m", "--add-dir", Dir.pwd, "-p", "prompt",
+        "--disable-slash-commands", "--print-timeout", "15m", "--add-dir", Dir.pwd, "-p", "prompt",
         fatal: true, log_meta: { bin: "agy", model: "gemini-3.8-flash-high" },
         cleanup_paths_on_timeout: ["/tmp/news_facts.txt"]
       )

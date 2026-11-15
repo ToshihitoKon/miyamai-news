@@ -1159,6 +1159,18 @@ used_news のフォーマットが厳密に正しいかどうかを検証・保�
   の呼び出し全てに渡るため、`used_news_formatter` の `used_fix`
   （`fatal: false` 呼び出し）が1回あたり待てる時間も従来の agy 既定5分から
   `print_timeout` の値（既定15分）に伸びる。
+- agy の print mode は、プロンプト本文の途中に出てくる `/teamwork` もスラッシュコマンドとして
+  展開する。extractor と writer はニュースの本文をプロンプトに埋め込むため、ニュースの
+  文面がそのまま agy のコマンドになりうる。2026-11-15 朝の回で、Antigravity の
+  「Advancing science and engineering with Antigravity's /teamwork」が選定ニュースに入った。
+  そのため extractor と writer がマルチエージェントの teamwork に回り、要件の質問、
+  タスクプロンプトの承認、チームでの実行という手順を踏んだ（agy 1.5.9 のログに
+  `Print mode: expanded slash command "teamwork" (system)` が出る）。writer はこの手順だけで
+  `print_timeout` の 15 分を使い切り、台本を書く前に打ち切られる失敗を 3 回続けた。
+  selector はニュースのパスだけを渡すため、同じ回でも展開されていない。プロンプトの中身は
+  ニュース次第で防げないため、`Internal::AiCli.run` は agy に `--disable-slash-commands` を
+  渡し、スラッシュコマンドと skill の展開を止めている。付けた後の再実行では writer が
+  69 秒で台本を書き出した。
 
 ### UsedNewsHistory（紹介済みニュース履歴）
 
