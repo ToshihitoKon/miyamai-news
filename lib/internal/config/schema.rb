@@ -67,6 +67,7 @@ module Internal
 
     class ProgramDetails < Base
       attribute :total_news_count, Types::Strict::Integer
+      attribute :max_main_news_count, Types::Strict::Integer.constrained(gt: 0)
       attribute :categories, Types::Strict::Array.of(Category)
     end
 

@@ -38,6 +38,7 @@ ai_agent:
 
 program_details:
   total_news_count: 10
+  max_main_news_count: 8
   categories:
     - label: "生成AI"
       description: >-

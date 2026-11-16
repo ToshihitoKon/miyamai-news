@@ -19,6 +19,7 @@ ai_agent:
 
 program_details:
   total_news_count: 8
+  max_main_news_count: 6
   categories:
     - label: "生成AI"
       description: "LLM・生成AIモデルそのものに関する話題。"
