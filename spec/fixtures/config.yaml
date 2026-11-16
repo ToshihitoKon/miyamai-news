@@ -64,6 +64,7 @@ program_details:
   # 最低保証は設けない（話題が少ない日にカテゴリを無理に埋めさせないため。実際の配分は
   # ニュースの充実度を見て selector・extractor 段階の AI に判断させる）。
   total_news_count: 8
+  max_main_news_count: 6
   # カテゴリごとの表示名と選定方針。
   #   label: selector/extractor プロンプトで使う日本語の表示名
   #   description: このカテゴリで何を優先し、何を除外するかの自由記述。

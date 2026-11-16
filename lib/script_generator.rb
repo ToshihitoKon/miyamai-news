@@ -96,6 +96,7 @@ class ScriptGenerator
   end
 
   def total_news_count = Config.program_details.total_news_count
+  def max_main_news_count = Config.program_details.max_main_news_count
   def sources = Config.rss_feed_sources
   def lookback_hours = Config.collect.lookback_hours
   def retention_days = Config.collect.retention_days
@@ -382,6 +383,7 @@ class ScriptGenerator
       today_ja: @episode.today_ja,
       category_details:,
       total_news_count:,
+      max_main_news_count:,
       news_facts_path: File.expand_path(news_facts_path),
       used_news_path: File.expand_path(provisional_used_news_path))
   end
