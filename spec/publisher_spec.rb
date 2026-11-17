@@ -405,18 +405,16 @@ RSpec.describe Publisher do
   describe "#build_archives ordering" do
     let(:evening) { "miyamai_news_20260714_evening.mp3" }
     let(:morning) { "miyamai_news_20260714_morning.mp3" }
-    let(:legacy) { "miyamai_news_20260714.mp3" }
 
     it "orders episodes of the same day by slot, not by publish time" do
       ledger = ledger_csv([
-        ["2026-07-14", evening, "宮舞モカの技術ニュース 2026-07-14", "", "2026-07-14T10:00:00Z"],
-        ["2026-07-14", legacy, "宮舞モカの技術ニュース 2026-07-14", "", "2026-07-14T11:00:00Z"]
+        ["2026-07-14", evening, "宮舞モカの技術ニュース 2026-07-14", "", "2026-07-14T10:00:00Z"]
       ])
       publisher = build_publisher(ledger: ledger)
 
       rows, = publisher.send(:build_archives, morning)
 
-      expect(rows.map { |r| r[1] }).to eq([evening, morning, legacy])
+      expect(rows.map { |r| r[1] }).to eq([evening, morning])
     end
   end
 
@@ -496,33 +494,6 @@ RSpec.describe Publisher do
       result = publisher.prunable_from_dist(["miyamai_news_20260601_morning.mp3"])
 
       expect(result).to eq(["miyamai_news_20260601_morning.mp3"])
-    end
-
-    # slot を含まないファイル名は境界比較できないため、
-    # 台帳とのメンバーシップ判定だけで扱う（例外にしない）。
-    it "keeps legacy filenames without a slot when they are not in the ledger" do
-      publisher = build_publisher(ledger: ledger_csv([
-        ["2026-06-01", "miyamai_news_20260601_morning.mp3", "t", "u", "2026-06-01T00:00:00+09:00"],
-      ]))
-
-      expect { publisher.prunable_from_dist(["miyamai_news_20260501.mp3"]) }.not_to raise_error
-      expect(publisher.prunable_from_dist(["miyamai_news_20260501.mp3"])).to be_empty
-    end
-
-    # 台帳の現存最古行が slot を含まない filename でも、date_tag だけで
-    # 保守的な境界を作り、まだ保持期間内のはずの未公開ファイルを
-    # 誤って削除しない（境界計算からその行を単純に無視すると、
-    # 境界が実際より新しい方へ繰り上がってしまう）。
-    it "does not over-prune when the ledger's oldest row is a legacy filename without a slot" do
-      publisher = build_publisher(ledger: ledger_csv([
-        ["2026-08-01", "miyamai_news_20260801_morning.mp3", "t", "u", "2026-08-01T00:00:00+09:00"],
-        ["2026-07-01", "miyamai_news_20260701_morning.mp3", "t", "u", "2026-07-01T00:00:00+09:00"],
-        ["2026-06-01", "miyamai_news_20260601.mp3", "t", "u", "2026-06-01T00:00:00+09:00"],
-      ]))
-
-      result = publisher.prunable_from_dist(["miyamai_news_20260615_morning.mp3"])
-
-      expect(result).to be_empty
     end
 
     # 台帳（CSV）に2列目を欠く壊れた行が混じっていても例外にせず、

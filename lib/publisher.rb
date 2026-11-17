@@ -77,7 +77,7 @@ class Publisher
     return [] if rows.empty?
 
     ledger_names = rows.map { |r| r[1] }.compact
-    oldest = ledger_names.filter_map { |name| Slot.lenient_sort_key_from_filename(name) }.min
+    oldest = ledger_names.filter_map { |name| Slot.sort_key_from_filename(name) }.min
 
     mp3_filenames.select do |filename|
       next true if ledger_names.include?(filename)
@@ -174,7 +174,7 @@ class Publisher
   end
 
   def ledger_sort_key(row)
-    Slot.lenient_sort_key_from_filename(row[1].to_s) || [row[0].to_s.delete("-"), -1]
+    Slot.sort_key_from_filename(row[1].to_s) || ["", -1]
   end
 
   def abort_if_outside_retention(filename, expired_rows)

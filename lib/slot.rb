@@ -39,8 +39,7 @@ module Slot
 
   FILENAME_PATTERN = /_(#{JA_LABELS.keys.join('|')})\.mp3\z/
 
-  # ファイル名から slot を判定し日本語ラベルにする（表示用）。slot を持たない
-  # 旧ファイル名は空文字列を返す（後方互換）。
+  # ファイル名から slot を判定し日本語ラベルにする（表示用）。判定できなければ空文字列。
   def ja_label_from_filename(filename)
     m = filename.match(FILENAME_PATTERN)
     m ? ja_label(m[1]) : ""
@@ -55,16 +54,5 @@ module Slot
     return nil unless m
 
     [m[1], sort_key(m[2])]
-  end
-
-  RE_DATE_ONLY = /(\d{8})(?:\.mp3)?\z/
-
-  # sort_key_from_filename と同じ [date_tag, 日内順] を返すが、slot を
-  # 抽出できなければ date_tag だけからその日の最初（-1）として補う。
-  def lenient_sort_key_from_filename(filename)
-    sort_key_from_filename(filename) || begin
-      m = filename.match(RE_DATE_ONLY)
-      m ? [m[1], -1] : nil
-    end
   end
 end

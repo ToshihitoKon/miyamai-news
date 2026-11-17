@@ -434,7 +434,7 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
 - 既存の `updated_at` が空文字の行からは引き継がず現在時刻を入れる。空のまま引き継ぐと
   `<updated>` が空になり Atom として壊れる。
 - `build_archives` の並び替えキーは `[[date_tag, 日内順], updated_at]`
-  （`Slot.lenient_sort_key_from_filename`）。日付だけで並べて同日内を `updated_at`
+  （`Slot.sort_key_from_filename`）。日付だけで並べて同日内を `updated_at`
   に任せると、同じ日の早い slot を後から publish したときにその回が先頭に来てしまう。
 
 #### Web Push 通知（購読者管理・送信は Worker 側に同居）
@@ -821,9 +821,7 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
     （ローカルの `dist/` だけで、公開物には触らない）。
   - 境界の比較は `[date_tag, 日内順]` の `<=>` で行う（date だけでは同日複数 slot の境界を
     取り違える）。
-  - 台帳側は `Slot.lenient_sort_key_from_filename` で slot の無い行も date_tag だけから境界に
-    含める。無視すると境界が新しい方へ繰り上がり、保持期間内の未公開ファイルまで消える。
-    dist 側は厳密に判定し、抽出できなければ台帳とのメンバーシップだけで扱う。
+  - dist 側で `[date_tag, 日内順]` を抽出できないファイルは、台帳とのメンバーシップだけで扱う。
   - ファイル名からの `[date_tag, 日内順]` の抽出は `Slot.sort_key_from_filename` に一本化し、
     `UsedNewsHistory#episode_sort_key` もこれに委譲する（基準のドリフトを防ぐため）。
 
