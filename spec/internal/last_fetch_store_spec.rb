@@ -87,27 +87,6 @@ RSpec.describe LastFetchStore do
     end
   end
 
-  describe "legacy last_fetch.json (confirmed_at only)" do
-    before do
-      FileUtils.mkdir_p(File.dirname(described_class.path(work_dir)))
-      File.write(described_class.path(work_dir), JSON.generate(
-        "confirmed_at" => t1.iso8601, "pending_at" => t2.iso8601, "pending_episode" => "20260714_afternoon",
-        "rollback_at" => nil, "last_op" => nil
-      ))
-    end
-
-    it "treats confirmed_at as the oldest commit, so it becomes the start of the next collection" do
-      expect(described_class.since_for(work_dir, "20260714_afternoon")).to eq(t1)
-    end
-
-    it "ignores the pending window and rewrites the file in the new format on the next commit" do
-      commit("20260714_afternoon", t3)
-
-      expect(episodes).to eq(%w[20260714_afternoon legacy])
-      expect(JSON.parse(File.read(described_class.path(work_dir))).keys).to eq(["commits"])
-    end
-  end
-
   it "aborts instead of overwriting a last_fetch.json that is valid JSON but not an object" do
     FileUtils.mkdir_p(File.dirname(described_class.path(work_dir)))
     File.write(described_class.path(work_dir), "[]")

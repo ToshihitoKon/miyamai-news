@@ -429,7 +429,7 @@ RSpec.describe ScriptGenerator do
     end
 
     it "includes the recently used section when history exists" do
-      record_history("20260713_evening", "■ 生成AI\n・過去の話題\n   要約テキストです。\n   https://example.com/old\n   (2026-07-13 / OldSource)\n")
+      record_history("20260713_evening", "## 生成AI\n### [過去の話題](https://example.com/old)\n   要約テキストです。\n   (2026-07-13 / OldSource)\n")
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       stdin = capture_selector_stdin(generator)
@@ -449,8 +449,8 @@ RSpec.describe ScriptGenerator do
     end
 
     it "leaves out the history of the episode being regenerated" do
-      record_history("20260713_evening", "■ 生成AI\n・前の回の話題\n")
-      record_history("#{episode.date_tag}_#{episode.slot}", "■ 生成AI\n・この回自身の話題\n")
+      record_history("20260713_evening", "## 生成AI\n### 前の回の話題\n")
+      record_history("#{episode.date_tag}_#{episode.slot}", "## 生成AI\n### この回自身の話題\n")
       generator = described_class.new(work_dir: work_dir, episode: episode)
 
       stdin = capture_selector_stdin(generator)
@@ -650,13 +650,6 @@ RSpec.describe ScriptGenerator do
 
       expect { collect(generator) }.to raise_error(SystemExit)
       expect(fake_feed_cache).not_to have_received(:fetch)
-    end
-
-    it "aborts when news_*.txt exists without its collection time (left over from before this change)" do
-      generator = described_class.new(work_dir: work_dir, episode: episode)
-      File.write(generator.send(:news_collected_path), "1. Title A\n")
-
-      expect { collect(generator) }.to raise_error(SystemExit)
     end
 
     it "reuses news_*.txt and its collection time without fetching again" do

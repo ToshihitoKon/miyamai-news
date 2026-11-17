@@ -14,7 +14,6 @@ module LastFetchStore
   module_function
 
   KEEP_COMMITS = 3
-  LEGACY_EPISODE = "legacy"
 
   class OlderEpisodeError < StandardError; end
 
@@ -51,19 +50,15 @@ module LastFetchStore
   end
   private_class_method :ensure_not_older!
 
-  # 確定履歴導入前の形式（confirmed_at だけ）は、起点として効く最古扱いの確定に読み替える。
   def load(work_dir)
-    data = read_raw(work_dir) || {}
-    return { "commits" => data["commits"] } if data["commits"].is_a?(Array)
-    return { "commits" => [] } unless data["confirmed_at"]
-
-    { "commits" => [{ "episode" => LEGACY_EPISODE, "at" => data["confirmed_at"] }] }
+    commits = (read_raw(work_dir) || {})["commits"]
+    { "commits" => commits.is_a?(Array) ? commits : [] }
   end
   private_class_method :load
 
   def sort_newest_first(commits) = commits.sort_by { |c| sort_key(c["episode"]) }.reverse
 
-  # 未知の episode_key（LEGACY_EPISODE を含む）は最古扱い。
+  # 未知の episode_key は最古扱い。
   def sort_key(episode_key) = Slot.sort_key_from_filename(episode_key) || ["", -1]
   private_class_method :sort_key
 

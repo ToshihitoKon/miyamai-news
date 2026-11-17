@@ -33,14 +33,8 @@ module UsedNewsHistory
       .join("\n\n")
   end
 
-  # link を落とす。`### [タイトル](URL)` → `### タイトル` に畳み、独立した URL 行は
-  # 削除する。3 行以上の空行は 1 行に畳む。
-  def strip_links(text)
-    text
-      .gsub(/^(###\s+)\[(.+)\]\(\S+\)\s*$/, '\1\2')
-      .gsub(/^\s*https?:\S+\s*$\n?/, "")
-      .gsub(/\n{3,}/, "\n\n")
-  end
+  # link を落とす。`### [タイトル](URL)` → `### タイトル` に畳む。
+  def strip_links(text) = text.gsub(/^(###\s+)\[(.+)\]\(\S+\)\s*$/, '\1\2')
   private_class_method :strip_links
 
   # 履歴ディレクトリ内の <episode_key>.txt を、エピソードの時系列で新しい順に並べて

@@ -177,24 +177,4 @@ RSpec.describe Internal::RemoteState do
       expect(storage.get("state/last_fetch.json")).to include("confirmed_at")
     end
   end
-
-  describe "#seed!" do
-    it "uploads local tracked files and a revision when R2 has no state" do
-      empty_storage = InMemoryStorage.new
-      write_local("last_fetch.json", "{}")
-      write_local("feed_cache.json", "{}")
-
-      described_class.new(storage: empty_storage, work_dir: work_dir).seed!
-
-      expect(empty_storage.list("state/")).to eq(%w[state/feed_cache.json state/last_fetch.json])
-      expect(empty_storage.exist?("state_revision")).to be true
-    end
-
-    it "refuses to overwrite existing R2 state" do
-      write_local("last_fetch.json", "{}")
-
-      expect { state.seed! }.to raise_error(ArgumentError, /already exists/)
-      expect(storage.objects).to eq(remote_objects)
-    end
-  end
 end

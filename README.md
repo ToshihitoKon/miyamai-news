@@ -225,13 +225,6 @@ R2 の `handoff/<date_tag>_<slot>/` を経由する。`draft-synthesize-publish`
 次の実行がそのまま引き継ぐ。別の実行が先に R2 を更新していた場合は衝突として中断するので、
 `clean` で手元の作業コピーを破棄してから実行し直す。
 
-初回だけ、手元の状態を R2 に置く（`work/` 直下にある旧配置の状態は `work/state/` へ移してから置く）。
-
-```sh
-bundle exec ruby scripts/seed_remote_state.rb                              # 計画のみ
-envchain cloudflare bundle exec ruby scripts/seed_remote_state.rb --apply  # R2 に状態が無いときだけ置く
-```
-
 ### 収集window（last_fetch）の確定フロー
 
 収集windowは、台本一式を R2 に置く直前に、その回（`<date_tag>_<slot>`）の確定として進む
@@ -246,16 +239,6 @@ R2 へ書き戻さないので、収集windowは進まない。
 
 各フィードの取得結果は `work/state/feed_cache/<hash>.json` に URL ごと1ファイルで保持する。
 同じフィードを最後に取得してから `collect.fetch_skip_minutes` 以内に再実行した場合はキャッシュから結果を返す。`0` にするとスキップを無効化する。
-
-#### deprecated: `work/state/feed_cache.json`
-
-旧・単一ファイル形式のキャッシュ `work/state/feed_cache.json` は、URL 別形式への移行後も
-seen_at の継承元として残している。
-安全に削除できるかどうかのチェックスクリプトを同梱している。
-
-```sh
-bundle exec ruby scripts/check_legacy_feed_cache.rb
-```
 
 ### 日付と slot
 

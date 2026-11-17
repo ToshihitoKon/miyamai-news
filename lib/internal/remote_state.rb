@@ -30,7 +30,7 @@ module Internal
     # R2 と同じなら引き継ぐ（:resumed）。無ければ R2 から取得する（:pulled）。
     def checkout!(owner:)
       remote = remote_revision
-      raise Missing, "#{REVISION_KEY} not found in R2; the pipeline state is incomplete (re-seed it)" if remote.nil? && !@storage.list(PREFIX).empty?
+      raise Missing, "#{REVISION_KEY} not found in R2; the pipeline state is incomplete" if remote.nil? && !@storage.list(PREFIX).empty?
 
       base = base_revision
       return pull!(remote, owner) if base.nil?
@@ -69,24 +69,11 @@ module Internal
       release!
     end
 
-    # R2 側が空のときだけ、work/state/ をそのまま R2 へ置く（初回移行用）。
-    def seed!
-      raise ArgumentError, "pipeline state already exists under #{PREFIX} in R2" unless @storage.list(PREFIX).empty?
-
-      remove_partial_writes
-      @storage.sync_up(prefix: PREFIX, root: @work_dir)
-      @storage.put(REVISION_KEY, new_revision, content_type: "text/plain")
-    end
-
-    def local_files
-      Dir.glob(File.join(StateDir.path(@work_dir), "**", "*")).select { |path| File.file?(path) }.sort
-    end
-
     private
 
     # R2 の状態で work/state/ を置き換える。
     def pull!(remote, owner)
-      raise Missing, "no pipeline state found under #{PREFIX} in R2 (seed it with scripts/seed_remote_state.rb)" if @storage.list(PREFIX).empty?
+      raise Missing, "no pipeline state found under #{PREFIX} in R2" if @storage.list(PREFIX).empty?
 
       @storage.sync_down(prefix: PREFIX, root: @work_dir)
       write_base(remote.to_s, owner)

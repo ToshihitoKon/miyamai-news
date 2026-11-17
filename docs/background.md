@@ -888,7 +888,7 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
   - `state/` があるのに `state_revision` が無い場合も中断する。revision が無いまま取り出すと、
     以後の比較が R2 の更新有無によらず一致してしまうため。
   - R2 の `state/` が空なら中断する。空の状態から収集すると全記事が新着扱いになり、大量の
-    二重紹介になるため。初回は `scripts/seed_remote_state.rb` で手元の状態を置く。
+    二重紹介になるため。
 - 音声・公開側の実行は `state/` に触らない。状態を書き換えるのは台本を生成する実行だけ。
 
 ### 再生ページの JS（templates/index.html.erb）
@@ -915,35 +915,4 @@ R2 のキー構成（台本の受け渡しと状態のキーは「RemoteState / 
 ## 移行互換（旧データが消えたら削除）
 
 旧形式のデータを読むために残している処理。本番（R2 の `state/` と公開物）に旧形式が
-残っていないことを確かめたら、ここの項目ごとコードを消す。
-
-- **旧・単一ファイルのフィードキャッシュ（`work/state/feed_cache.json`）**:
-  `FeedCache` は、まだ一度も fetch していないフィードの新規 entry の seen_at を、この旧台帳に
-  その link があれば継承する（URL 別ファイルへ分割したとき、旧来から知っていた記事が一斉に
-  新着扱いになるのを防ぐため）。旧台帳は `initialize` で一度だけ読む。
-  消してよいかは `scripts/check_legacy_feed_cache.rb` が判定し、削除は人が行う。旧台帳は
-  どの link がどのフィード由来か分からないので、「あるフィードが一巡した」だけでは消せない。
-  安全条件は `max(旧台帳の全 entry の seen_at) < now - retention_days`（継承しても
-  どのみち purge される情報しか残っていない状態）。
-- **フィードキャッシュの旧 `"bookmarks"` キー**: `meta_extra` は、extra フィールド導入前の
-  形式との互換のため、トップレベルの `"bookmarks"` キーも読む。
-- **`last_fetch.json` の旧形式**: 確定履歴導入前の形式（`confirmed_at` だけを持つ）は、
-  `confirmed_at` を最古扱いの確定（episode `legacy`）として読み替え、次に書き込むときに
-  新しい形式になる。旧形式の `pending_at` は読み捨てる（起点は進まないので、その回の記事は
-  次の回で集め直される。取りこぼしより重複の方が安全）。`scripts/seed_remote_state.rb` は
-  残っていれば警告する。
-- **`work/` 直下の内部状態**: 内部状態を `work/` 直下に置いていた頃の配置は、
-  `scripts/seed_remote_state.rb` が `StateDir.migrate_legacy!` で `work/state/` へ移してから
-  R2 に置く。
-- **収集時刻の無い `news_<key>.txt`**: 収集時刻ファイル（`news_collected_at_<key>.txt`）を
-  書く仕組みの導入前に作られた中間ファイルは、確定する時刻が分からないので中断し、
-  `clean` で捨てさせる。
-- **`pipeline.mode`**: 旧キー `pipeline.mode` は読み替えずにロード時にエラーにする
-  （`Config.ensure_no_legacy_keys!`）。dry-struct は未知のキーを黙って捨てるので、そのままだと
-  `pipeline.until` 未設定扱いで既定の digest に落ち、publish 環境が気づかないまま止まり続けるため。
-- **紹介済み履歴の旧・独立 URL 行**: `strip_links` は、URL がタイトル行に入る前の形式の
-  独立した URL 行も除去する。
-- **`.used.html` の無い旧フォーマットの回**: 移行前の `.used.txt`（`■` 見出し + `・タイトル` +
-  独立 URL 行）の回には `.used.html` が無く、再生ページの JS は `.used.txt` の生表示に
-  フォールバックする。この回が retention で公開から外れれば、旧フォーマットを前提にした
-  説明は要らない（フォールバック自体は `ok=false` の回のために残す）。
+残っていないことを確かめたら、ここの項目ごとコードを消す。現在は該当する処理は無い。
