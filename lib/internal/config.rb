@@ -99,18 +99,9 @@ module Config
     end
 
     def load_app_config
-      data = raw_data
-      ensure_no_legacy_keys!(data)
-      Internal::Config::AppConfig.new(data).tap { |cfg| ensure_known_stage!(cfg.pipeline.until) }
+      Internal::Config::AppConfig.new(raw_data).tap { |cfg| ensure_known_stage!(cfg.pipeline.until) }
     rescue Dry::Struct::Error, Psych::Exception => e
       raise InvalidConfigError, "invalid config: #{e.message}"
-    end
-
-    def ensure_no_legacy_keys!(data)
-      pipeline = data.is_a?(Hash) ? data["pipeline"] : nil
-      return unless pipeline.is_a?(Hash) && pipeline.key?("mode")
-
-      raise InvalidConfigError, "invalid config: pipeline.mode was renamed to pipeline.until (#{STAGES.join('/')})"
     end
 
     def ensure_known_stage!(stage)

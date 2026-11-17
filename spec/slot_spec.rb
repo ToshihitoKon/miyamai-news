@@ -51,10 +51,6 @@ RSpec.describe Slot do
       expect(Slot.ja_label_from_filename("miyamai_news_20260714_midnight.mp3")).to eq("深夜")
     end
 
-    it "returns an empty string for a legacy filename without a slot suffix" do
-      expect(Slot.ja_label_from_filename("miyamai_news_20260714.mp3")).to eq("")
-    end
-
     it "returns an empty string when the slot suffix is not at the very end" do
       expect(Slot.ja_label_from_filename("miyamai_news_morning_extra.mp3")).to eq("")
     end
@@ -101,7 +97,7 @@ RSpec.describe Slot do
         .to eq(["20260714", Slot.sort_key("afternoon")])
     end
 
-    it "returns nil for a legacy filename without a slot suffix" do
+    it "returns nil for a filename without a slot suffix" do
       expect(Slot.sort_key_from_filename("miyamai_news_20260714.mp3")).to be_nil
     end
 
@@ -110,29 +106,6 @@ RSpec.describe Slot do
       newer = Slot.sort_key_from_filename("20260801_morning")
 
       expect(older <=> newer).to eq(-1)
-    end
-  end
-
-  describe ".lenient_sort_key_from_filename" do
-    it "delegates to sort_key_from_filename when a slot is present" do
-      expect(Slot.lenient_sort_key_from_filename("miyamai_news_20260714_afternoon.mp3"))
-        .to eq(["20260714", Slot.sort_key("afternoon")])
-    end
-
-    it "treats a filename without a slot as the earliest slot of that day" do
-      expect(Slot.lenient_sort_key_from_filename("miyamai_news_20260714.mp3"))
-        .to eq(["20260714", -1])
-    end
-
-    it "sorts earlier than any real slot on the same date_tag" do
-      without_slot = Slot.lenient_sort_key_from_filename("miyamai_news_20260714.mp3")
-      morning = Slot.sort_key_from_filename("miyamai_news_20260714_morning.mp3")
-
-      expect(without_slot <=> morning).to eq(-1)
-    end
-
-    it "returns nil when even the date_tag cannot be extracted" do
-      expect(Slot.lenient_sort_key_from_filename("not_a_valid_filename")).to be_nil
     end
   end
 end

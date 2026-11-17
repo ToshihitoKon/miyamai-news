@@ -24,7 +24,6 @@ class ScriptGenerator
   CollectStats = Struct.new(:per_source, :failed_sources, :total_before_dedup, :total_after_dedup, keyword_init: true)
 
   def self.feed_cache_dir(work_dir) = File.join(StateDir.path(work_dir), "feed_cache")
-  def self.legacy_feed_cache_path(work_dir) = File.join(StateDir.path(work_dir), "feed_cache.json")
 
   def self.work_globs(work_dir)
     %w[news_*.txt script_*.txt tts_script_*.txt]
@@ -214,7 +213,6 @@ class ScriptGenerator
   # 残し、あれば再利用する。収集時刻は news_collected_at_*.txt に残す。
   def load_or_collect_news
     if File.exist?(news_collected_path)
-      abort "#{relative(news_collected_path)} has no collection time; discard it with the clean command and run again" unless collected_at
       warn "reuse: #{relative(news_collected_path)}"
       return File.read(news_collected_path)
     end
@@ -277,7 +275,6 @@ class ScriptGenerator
   def build_feed_cache
     FeedCache.new(
       dir: self.class.feed_cache_dir(@work_dir),
-      legacy_path: self.class.legacy_feed_cache_path(@work_dir),
       retention_days:,
       skip_window_sec: fetch_skip_minutes * 60,
       retry_deadline: Internal::Deadline.in(fetch_retry_timeout_sec),

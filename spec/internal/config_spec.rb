@@ -38,13 +38,6 @@ RSpec.describe Config do
           .to raise_error(Config::InvalidConfigError, /pipeline\.until must be one of/)
       end
     end
-
-    it "rejects the legacy pipeline.mode key instead of silently falling back to digest" do
-      Dir.mktmpdir do |dir|
-        expect { load_pipeline(dir, { "mode" => "publish" }) }
-          .to raise_error(Config::InvalidConfigError, /renamed to pipeline\.until/)
-      end
-    end
   end
 
   describe ".validate_for!" do

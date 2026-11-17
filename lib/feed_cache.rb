@@ -12,13 +12,12 @@ require_relative "internal/feed_parser"
 class FeedCache
   class FetchError < StandardError; end
 
-  def initialize(dir:, retention_days:, retry_deadline:, skip_window_sec: 0, legacy_path: nil,
+  def initialize(dir:, retention_days:, retry_deadline:, skip_window_sec: 0,
                  retry_base_sec: 2.0, retry_max_interval_sec: 10.0)
     @dir = dir
     @retention_days = retention_days
     @skip_window_sec = skip_window_sec
     @fetcher = Internal::HttpFetcher.new(retry_deadline:, retry_base_sec:, retry_max_interval_sec:)
-    @legacy_seen_at = load_legacy_seen_at(legacy_path)
   end
 
   # 1 フィード（単一 URL）を取得・パースし、seen_at を更新したうえで seen_at > since の
@@ -80,29 +79,18 @@ class FeedCache
   end
 
   # 今回フィードに登場した entry を seen_at 付きでキャッシュに反映する。既にある link は
-  # title/date/last_fetched_at/extra だけ最新化する。新規 link の seen_at 初期値は
-  # initial_seen_at。
+  # title/date/last_fetched_at/extra だけ最新化する。新規 link の seen_at は now。
   def record_seen(entries, fetched, now)
     fetched.each do |entry|
       existing = entries[entry[:link]]
       entries[entry[:link]] = {
-        "seen_at" => existing ? existing["seen_at"] : initial_seen_at(entry, now),
+        "seen_at" => existing ? existing["seen_at"] : now.iso8601,
         "last_fetched_at" => now.iso8601,
         "title" => entry[:title],
         "date" => entry[:date],
-        "extra" => entry[:extra] || existing_extra(existing),
+        "extra" => entry[:extra] || existing&.dig("extra"),
       }
     end
-  end
-
-  # 既存キャッシュから extra を引き継ぐ。
-  def existing_extra(existing)
-    existing && meta_extra(existing)
-  end
-
-  # 新規 link の seen_at 初期値。旧台帳にあればその値を継承し、無ければ now。
-  def initial_seen_at(entry, now)
-    @legacy_seen_at[entry[:link]] || now.iso8601
   end
 
   # last_fetched_at が保持期間より古い entry を間引く。
@@ -124,15 +112,10 @@ class FeedCache
       next if seen_at <= since
 
       { link: entry[:link], title: meta["title"], date: meta["date"],
-        seen_at: meta["seen_at"], extra: meta_extra(meta) }
+        seen_at: meta["seen_at"], extra: meta["extra"] }
     rescue ArgumentError
       nil
     end
-  end
-
-  # 旧キャッシュ（トップレベルの "bookmarks"）を読むフォールバック。
-  def meta_extra(meta)
-    meta["extra"] || (meta["bookmarks"] ? { "bookmarks" => meta["bookmarks"] } : nil)
   end
 
   # URL に対応するキャッシュファイルのパス。正規化した URL の SHA1 を名前にする。
@@ -165,18 +148,5 @@ class FeedCache
     tmp = "#{path}.tmp"
     File.write(tmp, JSON.pretty_generate(cache))
     File.rename(tmp, path)
-  end
-
-  # 旧・単一ファイル形式のキャッシュから link => seen_at の対応を読む。書き換えはしない。
-  # 無い/壊れていれば空 Hash。
-  def load_legacy_seen_at(legacy_path)
-    return {} unless legacy_path && File.exist?(legacy_path)
-
-    JSON.parse(File.read(legacy_path)).each_with_object({}) do |(link, meta), acc|
-      seen_at = meta.is_a?(Hash) && meta["seen_at"]
-      acc[link] = seen_at if seen_at
-    end
-  rescue JSON::ParserError
-    {}
   end
 end

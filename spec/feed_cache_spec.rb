@@ -22,9 +22,9 @@ RSpec.describe FeedCache do
     "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel>#{body}</channel></rss>"
   end
 
-  def build_cache(skip_window_sec: 0, retention_days: 7, legacy_path: nil)
+  def build_cache(skip_window_sec: 0, retention_days: 7)
     cache = FeedCache.new(dir: dir, retention_days: retention_days, retry_deadline: Internal::Deadline.in(0),
-      skip_window_sec: skip_window_sec, legacy_path: legacy_path)
+      skip_window_sec: skip_window_sec)
     cache.instance_variable_set(:@fetcher, fetcher)
     cache
   end
@@ -92,34 +92,6 @@ RSpec.describe FeedCache do
       result = cache.send(:select_since_for, entries, [{ link: link }, { link: link }], since)
 
       expect(result.size).to eq(1)
-    end
-  end
-
-  describe "#meta_extra" do
-    let(:cache) { build_cache }
-
-    it "returns the extra hash as-is when present" do
-      meta = { "extra" => { "bookmarks" => 42 } }
-
-      expect(cache.send(:meta_extra, meta)).to eq({ "bookmarks" => 42 })
-    end
-
-    it "falls back to the legacy top-level bookmarks key when extra is absent" do
-      meta = { "bookmarks" => 7 }
-
-      expect(cache.send(:meta_extra, meta)).to eq({ "bookmarks" => 7 })
-    end
-
-    it "prefers extra over the legacy bookmarks key when both are present" do
-      meta = { "extra" => { "bookmarks" => 42 }, "bookmarks" => 7 }
-
-      expect(cache.send(:meta_extra, meta)).to eq({ "bookmarks" => 42 })
-    end
-
-    it "returns nil when neither extra nor the legacy bookmarks key is present" do
-      meta = { "title" => "No metadata here" }
-
-      expect(cache.send(:meta_extra, meta)).to be_nil
     end
   end
 
@@ -297,36 +269,6 @@ RSpec.describe FeedCache do
         cache.fetch(url, now: now, since: since)
 
         expect(read_cache_file["entries"].keys).to include("https://example.com/long-lived")
-      end
-    end
-
-    context "legacy seen_at inheritance" do
-      let(:legacy_path) { File.join(dir, "legacy.json") }
-      let(:legacy_seen_at) { Time.utc(2026, 6, 15).iso8601 }
-
-      before do
-        # 旧・単一ファイル形式（link キーのフラット構造）に既知の記事を置く。
-        File.write(legacy_path, JSON.generate(
-          "https://example.com/a" => { "seen_at" => legacy_seen_at, "title" => "Alpha" }
-        ))
-      end
-
-      it "inherits seen_at from the legacy ledger on a feed's first fetch" do
-        cache = build_cache(legacy_path: legacy_path)
-        allow(fetcher).to receive(:get).and_return(rss_for([["https://example.com/a", "Alpha"]]))
-
-        cache.fetch(url, now: now, since: since)
-
-        expect(read_cache_file["entries"]["https://example.com/a"]["seen_at"]).to eq(legacy_seen_at)
-      end
-
-      it "uses now for a link that is not in the legacy ledger" do
-        cache = build_cache(legacy_path: legacy_path)
-        allow(fetcher).to receive(:get).and_return(rss_for([["https://example.com/fresh", "Fresh"]]))
-
-        cache.fetch(url, now: now, since: since)
-
-        expect(read_cache_file["entries"]["https://example.com/fresh"]["seen_at"]).to eq(now.iso8601)
       end
     end
   end
